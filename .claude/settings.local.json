@@ -66,7 +66,23 @@
       "Bash(python -c \"import json, sys; d=json.load\\(sys.stdin\\); print\\(''''Ball:'''', d[''''valves''''][''''ball'''']\\); print\\(''''Gate:'''', d[''''valves''''][''''gate'''']\\); print\\(''''Check:'''', d[''''valves''''][''''check'''']\\)\")",
       "Bash(curl -s -X POST http://localhost:8001/api/download-excel -H \"Content-Type: application/json\" -d '{\"\"\"\"piping_class\"\"\"\":\"\"\"\"F20N\"\"\"\",\"\"\"\"rating\"\"\"\":\"\"\"\"1500#\"\"\"\",\"\"\"\"material\"\"\"\":\"\"\"\"DSS NACE\"\"\"\",\"\"\"\"corrosion_allowance\"\"\"\":\"\"\"\"NIL\"\"\"\",\"\"\"\"service\"\"\"\":\"\"\"\"Corrosive Hydro Carbon service\"\"\"\"}' -w \"\\\\n%{http_code}\\\\n\")",
       "Bash(timeout 120 curl -s -X POST http://localhost:8001/api/download-excel -H \"Content-Type: application/json\" -d '{\"\"piping_class\"\":\"\"F20N\"\",\"\"rating\"\":\"\"1500#\"\",\"\"material\"\":\"\"DSS NACE\"\",\"\"corrosion_allowance\"\":\"\"NIL\"\",\"\"service\"\":\"\"Corrosive Hydro Carbon service\"\"}' -o /tmp/test.xlsx -w \"Status: %{http_code}\\\\n\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(python:*)",
+      "Bash(curl -X POST http://localhost:8000/api/generate-pms -H \"Content-Type: application/json\" -d '{:*)",
+      "Bash(curl -X POST http://localhost:8000/api/download-excel -H \"Content-Type: application/json\" -d '{\"\"piping_class\"\": \"\"E1\"\", \"\"material\"\": \"\"CS\"\", \"\"corrosion_allowance\"\": \"\"3 mm\"\", \"\"service\"\": \"\"Diesel, Water Injection, Hydro Carbon\"\"}' -o \"C:\\\\Users\\\\Rishabh_Rawat\\\\Downloads\\\\test_E1_generated.xlsx\" -w \"\\\\nStatus: %{http_code}\\\\nContent-Type: %{content_type}\\\\n\")",
+      "Bash(curl -X POST http://localhost:8000/api/download-excel -H \"Content-Type: application/json\" -d '{:*)",
+      "Bash(env)",
+      "Bash(find /d/targeticon/pms-generator -name .env* -type f)",
+      "Bash(export ANTHROPIC_API_KEY=\"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\")",
+      "Bash(__NEW_LINE_022a53205d0797aa__ curl -X POST http://localhost:8000/api/download-excel -H \"Content-Type: application/json\" -d '{:*)",
+      "Bash(/tmp/verification_report.txt:*)",
+      "Bash(cp /tmp/verification_report.txt \"/c/Users/Rishabh_Rawat/Downloads/VERIFICATION_REPORT_E1_MERGED_FITTINGS.txt\")",
+      "Bash(ls -lh \"/c/Users/Rishabh_Rawat/Downloads/\"test_E1_merged_fittings.xlsx /c/Users/Rishabh_Rawat/Downloads/VERIFICATION_REPORT*.txt)",
+      "Bash(find D:targeticonpms-generator -type f \\\\\\(-name *test* -o -name *dummy* -o -name *example* -o -name *sample* \\\\\\))",
+      "Bash(dir \"D:\\\\targeticon\\\\pms-generator\\\\app\\\\data\"\")",
+      "Bash(find D:targeticonpms-generator -type f \\\\\\(-name test_*.xlsx -o -name test_*.json -o -name test_*.py -o -name *_test.* -o -name dummy* -o -name temp* \\\\\\))",
+      "Bash(find D:targeticonpms-generator -type f \\\\\\(-name test_*.xlsx -o -name test_*.json -o -name test_*.py \\\\\\) ! -path ./.venv/*)",
+      "Bash(cat:*)"
     ]
   }
 }

@@ -21,32 +21,6 @@ const barg2mpa = (b) => b * 0.1;
 const psi2mpa = (p) => p * 0.00689476;
 const mpa2psi = (m) => m / 0.00689476;
 
-// Allowable stress data (at typical design temperatures)
-const MATERIAL_DATA = {
-    'CS':         { stress_psi: 20000, stress_mpa: 137.9, grade: 'A106 Gr.B', spec: 'ASTM A106' },
-    'CS NACE':    { stress_psi: 20000, stress_mpa: 137.9, grade: 'A106 Gr.B', spec: 'ASTM A106' },
-    'LTCS':       { stress_psi: 20000, stress_mpa: 137.9, grade: 'A333 Gr.6', spec: 'ASTM A333' },
-    'LTCS NACE':  { stress_psi: 20000, stress_mpa: 137.9, grade: 'A333 Gr.6', spec: 'ASTM A333' },
-    'SS316L':     { stress_psi: 16700, stress_mpa: 115.1, grade: 'A312 TP316L', spec: 'ASTM A312' },
-    'SS316L NACE':{ stress_psi: 16700, stress_mpa: 115.1, grade: 'A312 TP316L', spec: 'ASTM A312' },
-    'Alloy 625':  { stress_psi: 33300, stress_mpa: 229.6, grade: 'B444 N06625', spec: 'ASTM B444' },
-    'Super Duplex':{ stress_psi: 30000, stress_mpa: 206.8, grade: 'A790 S32750', spec: 'ASTM A790' },
-    'Duplex SS':  { stress_psi: 25000, stress_mpa: 172.4, grade: 'A790 S31803', spec: 'ASTM A790' },
-    'GRE':        { stress_psi: 10000, stress_mpa: 68.9, grade: 'GRE', spec: 'ASTM D2996' },
-    'CS Galv':    { stress_psi: 20000, stress_mpa: 137.9, grade: 'A106 Gr.B', spec: 'ASTM A106' },
-    'CS Epoxy':   { stress_psi: 20000, stress_mpa: 137.9, grade: 'A106 Gr.B', spec: 'ASTM A106' },
-};
-
-const JOINT_E = { 'Seamless': 1.0, 'ERW': 0.85, 'EFW, 100% RT': 1.0, 'EFW': 0.85 };
-
-function getMaterialData(material) {
-    if (MATERIAL_DATA[material]) return MATERIAL_DATA[material];
-    for (const [k, v] of Object.entries(MATERIAL_DATA)) {
-        if (material.toUpperCase().includes(k.toUpperCase())) return v;
-    }
-    return MATERIAL_DATA['CS'];
-}
-
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
@@ -251,7 +225,7 @@ function initDesignInputs() {
         document.getElementById('tempFahrenheit').textContent = `= ${c2f(dtv)} \u00b0F`;
         document.getElementById('mdmtFahrenheit').textContent = `= ${c2f(mv)} \u00b0F`;
 
-        document.getElementById('jointRef').textContent = `ASME B31.3 Table A-1B \u2014 E = ${(JOINT_E[jt.value] || 1.0).toFixed(2)}`;
+        document.getElementById('jointRef').textContent = `ASME B31.3 Table A-1B`;
 
         if (currentPMS) updateCalculations();
     };
@@ -508,12 +482,11 @@ function renderPTTable(pms, designTemp) {
 function renderScheduleTab(pms) {
     const dpVal = parseFloat(document.getElementById('designPressure').value) || 0;
     const dtVal = parseFloat(document.getElementById('designTemperature').value) || 0;
-    const E = JOINT_E[document.getElementById('jointType').value] || 1.0;
+    const E = 1.0;  // Seamless butt weld joint efficiency
     const W = 1.0;
     const Y = 0.4;
-    const matData = getMaterialData(pms.material);
-    const S_psi = matData.stress_psi;
-    const S_mpa = matData.stress_mpa;
+    const S_psi = 20000;  // Reference allowable stress (per ASME B31.3)
+    const S_mpa = 137.9;
     const P_psig = parseFloat(barg2psig(dpVal));
     const P_mpa = barg2mpa(dpVal);
     const dtF = parseFloat(c2f(dtVal));
@@ -556,13 +529,13 @@ function renderScheduleTab(pms) {
         tags.map(t => `<span class="service-tag" style="background:${t.color}">${t.label}</span>`).join('');
 
     // Design Parameters
+    const materialSpec = pms.pipe_data.length ? pms.pipe_data[0].material_spec : '\u2014';
     setKVList('designParamsList', [
         { l: 'PMS Class', v: `<strong>${pms.piping_class}</strong> (${pms.rating})` },
         { l: 'Design Pressure (P)', v: `${P_psig} psig (${dpVal} barg)` },
         { l: 'Design Temperature', v: `${dtF}\u00b0F (${dtVal}\u00b0C)` },
-        { l: 'Material Grade', v: matData.grade },
-        { l: 'Material Spec', v: matData.spec },
-        { l: 'Allowable Stress S(T)', v: `${S_psi.toLocaleString()} psi (${S_mpa} MPa)` },
+        { l: 'Material Spec', v: materialSpec },
+        { l: 'Reference Allowable Stress S(T)', v: `${S_psi.toLocaleString()} psi (${S_mpa} MPa) @ Design Temp` },
     ]);
 
     // Code Factors

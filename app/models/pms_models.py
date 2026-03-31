@@ -40,6 +40,19 @@ class FittingsData(BaseModel):
     weldolet_spec: str = Field(default="", description="Weldolet specification")
 
 
+class FittingBySize(BaseModel):
+    size_inch: str = Field(..., description="Nominal pipe size in inches")
+    type: str = Field(..., description="Seamless or Welded")
+    fitting_type: str = Field(default="", description="Fitting connection type")
+    material_spec: str = Field(default="", description="ASTM material specification")
+    elbow_standard: str = Field(default="", description="Elbow standard code")
+    tee_standard: str = Field(default="", description="Tee standard code")
+    reducer_standard: str = Field(default="", description="Reducer standard code")
+    cap_standard: str = Field(default="", description="Cap standard code")
+    plug_standard: str = Field(default="", description="Plug standard code")
+    weldolet_spec: str = Field(default="", description="Weldolet specification")
+
+
 class ExtraFittings(BaseModel):
     coupling: str = Field(default="", description="Coupling standard")
     hex_plug: str = Field(default="", description="Hex head plug standard")
@@ -92,6 +105,7 @@ class PMSResponse(BaseModel):
     pipe_data: list[PipeSize] = Field(default_factory=list)
     fittings: FittingsData = Field(default_factory=FittingsData)
     fittings_welded: Optional[FittingsData] = None
+    fittings_by_size: list[FittingBySize] = Field(default_factory=list)
     extra_fittings: ExtraFittings = Field(default_factory=ExtraFittings)
     flange: FlangeData = Field(default_factory=FlangeData)
     spectacle_blind: SpectacleBlind = Field(default_factory=SpectacleBlind)

@@ -15,7 +15,7 @@ from cachetools import TTLCache
 from app.config import settings
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
-    PipeSize, FittingsData, ExtraFittings, FlangeData,
+    PipeSize, FittingsData, FittingBySize, ExtraFittings, FlangeData,
     SpectacleBlind, BoltsNutsGaskets, ValveData,
 )
 from app.services.ai_service import generate_pms_with_ai
@@ -82,6 +82,22 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             weldolet_spec=fw.get("weldolet_spec", ""),
         )
 
+    # Parse fittings_by_size from AI
+    fittings_by_size = []
+    for fb in ai_data.get("fittings_by_size", []):
+        fittings_by_size.append(FittingBySize(
+            size_inch=str(fb.get("size_inch", "")),
+            type=fb.get("type", ""),
+            fitting_type=fb.get("fitting_type", ""),
+            material_spec=fb.get("material_spec", ""),
+            elbow_standard=fb.get("elbow_standard", ""),
+            tee_standard=fb.get("tee_standard", ""),
+            reducer_standard=fb.get("reducer_standard", ""),
+            cap_standard=fb.get("cap_standard", ""),
+            plug_standard=fb.get("plug_standard", ""),
+            weldolet_spec=fb.get("weldolet_spec", ""),
+        ))
+
     # Parse extra_fittings from AI
     ef = ai_data.get("extra_fittings", {})
     extra_fittings = ExtraFittings(
@@ -144,6 +160,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         pipe_data=pipe_data,
         fittings=fittings,
         fittings_welded=fittings_welded,
+        fittings_by_size=fittings_by_size,
         extra_fittings=extra_fittings,
         flange=flange,
         spectacle_blind=spectacle,

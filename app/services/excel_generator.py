@@ -193,52 +193,58 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     row += 1
 
-    # === FITTINGS (PRIMARY) ===
-    ft_label = pms.fittings.fitting_type or "Fittings"
-    _write_section_header(ws, row, f"Fittings — {ft_label}", col_end=total_cols)
+    # === FITTINGS (SIZE-WISE DATA) ===
+    _write_section_header(ws, row, "Fittings — Butt Weld (SCH to match pipe)", col_end=total_cols)
     row += 1
 
-    fitting_rows = [
-        ("Type", pms.fittings.fitting_type),
-        ("MOC", pms.fittings.material_spec),
-        ("Elbow", pms.fittings.elbow_standard),
-        ("Tee", pms.fittings.tee_standard),
-        ("Reducer", pms.fittings.reducer_standard),
-        ("Cap", pms.fittings.cap_standard),
-        ("Plug", pms.fittings.plug_standard),
-        ("Weldolet", pms.fittings.weldolet_spec),
+    # Size columns header
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT)
+    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
+    for i, fitting in enumerate(pms.fittings_by_size):
+        col = 3 + i
+        if col <= total_cols:
+            _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = fitting.size_inch
+    for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+        _apply_style(ws, row, c, fill=ALT_FILL)
+    row += 1
+
+    # Type row (Seamless/Welded)
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT)
+    _apply_style(ws, row, 2, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Type"
+    for i, fitting in enumerate(pms.fittings_by_size):
+        col = 3 + i
+        if col <= total_cols:
+            type_short = "Seam." if fitting.type == "Seamless" else "Weld."
+            _apply_style(ws, row, col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER).value = type_short
+    for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+        _apply_style(ws, row, c, fill=DATA_FILL)
+    row += 1
+
+    # Fitting properties (MOC, Elbow, Tee, etc.)
+    fitting_props = [
+        ("MOC", lambda f: f.material_spec),
+        ("Elbow", lambda f: f.elbow_standard),
+        ("Tee", lambda f: f.tee_standard),
+        ("Red.", lambda f: f.reducer_standard),
+        ("Cap", lambda f: f.cap_standard),
+        ("Plug", lambda f: f.plug_standard),
+        ("Weldolet", lambda f: f.weldolet_spec),
     ]
-    for i, (label, value) in enumerate(fitting_rows):
-        fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-        _write_label_value_row(ws, row, label, value, col_end=total_cols)
-        for c in range(1, total_cols + 1):
-            ws.cell(row=row, column=c).fill = fill
+
+    for prop_idx, (label, getter) in enumerate(fitting_props):
+        fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
+        _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT)
+        _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+        for i, fitting in enumerate(pms.fittings_by_size):
+            col = 3 + i
+            if col <= total_cols:
+                val = getter(fitting)
+                _apply_style(ws, row, col, font=DATA_FONT, fill=fill, alignment=CENTER).value = val or ""
+        for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+            _apply_style(ws, row, c, fill=fill)
         row += 1
 
     row += 1
-
-    # === FITTINGS (SECONDARY) ===
-    if pms.fittings_welded:
-        fw_label = pms.fittings_welded.fitting_type or "Fittings (Welded)"
-        _write_section_header(ws, row, f"Fittings — {fw_label}", col_end=total_cols)
-        row += 1
-
-        for i, (label, value) in enumerate([
-            ("Type", pms.fittings_welded.fitting_type),
-            ("MOC", pms.fittings_welded.material_spec),
-            ("Elbow", pms.fittings_welded.elbow_standard),
-            ("Tee", pms.fittings_welded.tee_standard),
-            ("Reducer", pms.fittings_welded.reducer_standard),
-            ("Cap", pms.fittings_welded.cap_standard),
-            ("Plug", pms.fittings_welded.plug_standard),
-            ("Weldolet", pms.fittings_welded.weldolet_spec),
-        ]):
-            fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-            _write_label_value_row(ws, row, label, value, col_end=total_cols)
-            for c in range(1, total_cols + 1):
-                ws.cell(row=row, column=c).fill = fill
-            row += 1
-        row += 1
 
     # === EXTRA FITTINGS ===
     ef = pms.extra_fittings
@@ -459,40 +465,54 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         row += 1
     row += 1
 
-    # Fittings (Primary)
-    ft_label = pms.fittings.fitting_type or "Fittings"
-    _write_section_header(ws, row, f"Fittings — {ft_label}", col_end=total_cols)
+    # Fittings (SIZE-WISE DATA)
+    _write_section_header(ws, row, "Fittings — Butt Weld (SCH to match pipe)", col_end=total_cols)
     row += 1
 
-    for i, (lbl, val) in enumerate([
-        ("Type", pms.fittings.fitting_type), ("MOC", pms.fittings.material_spec),
-        ("Elbow", pms.fittings.elbow_standard), ("Tee", pms.fittings.tee_standard),
-        ("Reducer", pms.fittings.reducer_standard), ("Cap", pms.fittings.cap_standard),
-        ("Plug", pms.fittings.plug_standard), ("Weldolet", pms.fittings.weldolet_spec),
-    ]):
-        _write_label_value_row(ws, row, lbl, val, col_end=total_cols)
-        for c in range(1, total_cols + 1):
-            ws.cell(row=row, column=c).fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-        row += 1
+    # Size columns header
+    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
+    for i, fitting in enumerate(pms.fittings_by_size):
+        col = 3 + i
+        if col <= total_cols:
+            _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = fitting.size_inch
+    for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+        _apply_style(ws, row, c, fill=ALT_FILL)
     row += 1
 
-    # Fittings (Secondary)
-    if pms.fittings_welded:
-        fw_label = pms.fittings_welded.fitting_type or "Fittings (Welded)"
-        _write_section_header(ws, row, f"Fittings — {fw_label}", col_end=total_cols)
-        row += 1
+    # Type row (Seamless/Welded)
+    _apply_style(ws, row, 2, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Type"
+    for i, fitting in enumerate(pms.fittings_by_size):
+        col = 3 + i
+        if col <= total_cols:
+            type_short = "Seam." if fitting.type == "Seamless" else "Weld."
+            _apply_style(ws, row, col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER).value = type_short
+    for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+        _apply_style(ws, row, c, fill=DATA_FILL)
+    row += 1
 
-        for i, (lbl, val) in enumerate([
-            ("Type", pms.fittings_welded.fitting_type), ("MOC", pms.fittings_welded.material_spec),
-            ("Elbow", pms.fittings_welded.elbow_standard), ("Tee", pms.fittings_welded.tee_standard),
-            ("Reducer", pms.fittings_welded.reducer_standard), ("Cap", pms.fittings_welded.cap_standard),
-            ("Plug", pms.fittings_welded.plug_standard), ("Weldolet", pms.fittings_welded.weldolet_spec),
-        ]):
-            _write_label_value_row(ws, row, lbl, val, col_end=total_cols)
-            for c in range(1, total_cols + 1):
-                ws.cell(row=row, column=c).fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-            row += 1
+    # Fitting properties (MOC, Elbow, Tee, etc.)
+    fitting_props = [
+        ("MOC", lambda f: f.material_spec),
+        ("Elbow", lambda f: f.elbow_standard),
+        ("Tee", lambda f: f.tee_standard),
+        ("Red.", lambda f: f.reducer_standard),
+        ("Cap", lambda f: f.cap_standard),
+        ("Plug", lambda f: f.plug_standard),
+        ("Weldolet", lambda f: f.weldolet_spec),
+    ]
+
+    for prop_idx, (label, getter) in enumerate(fitting_props):
+        fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
+        _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+        for i, fitting in enumerate(pms.fittings_by_size):
+            col = 3 + i
+            if col <= total_cols:
+                val = getter(fitting)
+                _apply_style(ws, row, col, font=DATA_FONT, fill=fill, alignment=CENTER).value = val or ""
+        for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+            _apply_style(ws, row, c, fill=fill)
         row += 1
+    row += 1
 
     # Extra Fittings
     ef = pms.extra_fittings
