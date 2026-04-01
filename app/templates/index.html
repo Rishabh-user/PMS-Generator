@@ -1,23 +1,25 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PMS Generator — Piping Material Specification</title>
-    <link rel="stylesheet" href="/static/css/styles.css?v=6">
+    <title>PMS Generator — Shapoorji Pallonji Energy</title>
+    <link rel="icon" type="image/png" href="https://www.shapoorjipallonjienergy.com/spEnergy-Tag.png">
+    <link rel="stylesheet" href="/static/css/styles.css?v=10">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
     <!-- Top Nav -->
     <header class="top-nav">
         <div class="nav-left">
             <div class="logo">
-                <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-                    <rect width="32" height="32" rx="8" fill="#1e3a5f"/>
-                    <path d="M8 16h16M16 8v16" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-                </svg>
-                <span class="logo-text">PMS Generator</span>
+                <img src="/static/images/logo.png" alt="SP Energy" class="logo-img" onerror="this.style.display='none'">
+                <div class="logo-divider"></div>
+                <div>
+                    <div class="logo-text">PMS Generator</div>
+                    <div class="logo-subtitle">Piping Material Specification</div>
+                </div>
             </div>
         </div>
         <nav class="nav-tabs">
@@ -25,9 +27,10 @@
             <a href="#" class="nav-tab" data-tab="browse">Browse Classes</a>
         </nav>
         <div class="nav-right">
+            <!-- Theme toggle hidden but kept for JS compatibility -->
             <button class="theme-toggle" id="themeToggle" title="Toggle Dark/Light Mode">
-                <span class="icon" id="themeIcon">&#9790;</span>
-                <span id="themeLabel">Dark</span>
+                <span class="icon" id="themeIcon">&#9788;</span>
+                <span id="themeLabel">Light</span>
             </button>
             <div class="api-badge" id="apiBadge">
                 <span class="dot"></span> API
@@ -366,6 +369,12 @@
     <!-- Toast -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=6"></script>
+    <!-- Footer -->
+    <footer class="footer-bar">
+        <a href="https://www.shapoorjipallonjienergy.com/" target="_blank">Shapoorji Pallonji Energy</a>
+        &nbsp;&bull;&nbsp; PMS Generator
+    </footer>
+
+    <script src="/static/js/app.js?v=10"></script>
 </body>
 </html>

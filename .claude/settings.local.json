@@ -82,7 +82,13 @@
       "Bash(dir \"D:\\\\targeticon\\\\pms-generator\\\\app\\\\data\"\")",
       "Bash(find D:targeticonpms-generator -type f \\\\\\(-name test_*.xlsx -o -name test_*.json -o -name test_*.py -o -name *_test.* -o -name dummy* -o -name temp* \\\\\\))",
       "Bash(find D:targeticonpms-generator -type f \\\\\\(-name test_*.xlsx -o -name test_*.json -o -name test_*.py \\\\\\) ! -path ./.venv/*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(find D:targeticonpms-generator -type f \\\\\\(-name *.json -o -name *.csv -o -name *.txt -o -name *.db -o -name *.sqlite \\\\\\) ! -path ./.venv/* ! -path ./.git/* ! -path */__pycache__/*)",
+      "WebFetch(domain:www.shapoorjipallonjienergy.com)",
+      "WebSearch",
+      "WebFetch(domain:whatthelogo.com)",
+      "Bash(timeout 60 bash -c 'while true; do curl -s http://localhost:8001/health | grep -q \"\"ok\"\" && break; sleep 2; done')",
+      "Bash(ping -n 20 127.0.0.1)"
     ]
   }
 }
