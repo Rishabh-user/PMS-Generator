@@ -16,9 +16,10 @@ from app.config import settings
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
     PipeSize, FittingsData, FittingBySize, ExtraFittings, FlangeData,
-    SpectacleBlind, BoltsNutsGaskets, ValveData,
+    SpectacleBlind, BoltsNutsGaskets, ValveData, ValveSizeEntry,
 )
 from app.services.ai_service import generate_pms_with_ai
+from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
 
@@ -40,6 +41,15 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         pressures=pt_data.get("pressures", []),
         temp_labels=pt_data.get("temp_labels", []),
     )
+
+    # Calculate hydrotest pressure from P-T data (1.5 × max design pressure)
+    pressures = pt_data.get("pressures", [])
+    if pressures:
+        max_design_pressure = max(pressures)
+        hydrotest = round(max_design_pressure * 1.5, 2)
+        hydrotest_str = str(hydrotest)
+    else:
+        hydrotest_str = ai_data.get("hydrotest_pressure", "")
 
     # Parse pipe_data from AI
     pipe_data = []
@@ -124,6 +134,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
     spectacle = SpectacleBlind(
         material_spec=sb.get("material_spec", ""),
         standard=sb.get("standard", ""),
+        standard_large=sb.get("standard_large", ""),
     )
 
     # Parse bolts_nuts_gaskets from AI
@@ -134,8 +145,17 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         gasket=bg.get("gasket", ""),
     )
 
-    # Parse valves from AI
+    # Parse valves from AI (supports both class-level and size-specific codes)
     v = ai_data.get("valves", {})
+
+    def _parse_valve_by_size(entries) -> list[ValveSizeEntry]:
+        if not entries or not isinstance(entries, list):
+            return []
+        return [
+            ValveSizeEntry(size_inch=str(e.get("size_inch", "")), code=e.get("code", ""))
+            for e in entries if isinstance(e, dict)
+        ]
+
     valves = ValveData(
         rating=v.get("rating", ""),
         ball=v.get("ball", ""),
@@ -143,6 +163,11 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         globe=v.get("globe", ""),
         check=v.get("check", ""),
         butterfly=v.get("butterfly", ""),
+        ball_by_size=_parse_valve_by_size(v.get("ball_by_size")),
+        gate_by_size=_parse_valve_by_size(v.get("gate_by_size")),
+        globe_by_size=_parse_valve_by_size(v.get("globe_by_size")),
+        check_by_size=_parse_valve_by_size(v.get("check_by_size")),
+        butterfly_by_size=_parse_valve_by_size(v.get("butterfly_by_size")),
     )
 
     return PMSResponse(
@@ -154,7 +179,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         design_code=ai_data.get("design_code", ""),
         service=req.service,
         branch_chart=ai_data.get("branch_chart", ""),
-        hydrotest_pressure=ai_data.get("hydrotest_pressure", ""),
+        hydrotest_pressure=hydrotest_str,
         pressure_temperature=pt,
         pipe_code=ai_data.get("pipe_code", ""),
         pipe_data=pipe_data,
@@ -166,6 +191,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         spectacle_blind=spectacle,
         bolts_nuts_gaskets=bng,
         valves=valves,
+        branch_charts=get_charts_for_class(req.piping_class),
         notes=ai_data.get("notes", []),
     )
 
@@ -226,6 +252,12 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
     _pms_cache[key] = pms
     logger.info("Generated PMS for %s (P-T from JSON, rest from AI)", req.piping_class)
     return pms
+
+
+def clear_cache():
+    """Clear the PMS cache to force fresh AI generation."""
+    _pms_cache.clear()
+    logger.info("PMS cache cleared — next request will re-generate from AI")
 
 
 def generate_excel(pms: PMSResponse) -> bytes:

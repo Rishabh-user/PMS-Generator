@@ -72,7 +72,8 @@ class FlangeData(BaseModel):
 
 class SpectacleBlind(BaseModel):
     material_spec: str = Field(default="", description="ASTM material specification")
-    standard: str = Field(default="", description="Standard code")
+    standard: str = Field(default="", description="Standard code for standard sizes")
+    standard_large: str = Field(default="", description="Standard code for large sizes (e.g. Spacer and blind as per ASME B 16.48)")
 
 
 class BoltsNutsGaskets(BaseModel):
@@ -81,13 +82,41 @@ class BoltsNutsGaskets(BaseModel):
     gasket: str = Field(default="", description="Gasket specification")
 
 
+class ValveSizeEntry(BaseModel):
+    """Valve VDS code for a specific size or size range."""
+    size_inch: str = Field(default="", description="Pipe size in inches (e.g. '0.5', '2', '6')")
+    code: str = Field(default="", description="VDS code(s) for this size, e.g. 'CHPMA1R' or 'CHSMA1R, CHDMA1R'")
+
+
 class ValveData(BaseModel):
     rating: str = Field(default="", description="Valve rating")
-    ball: str = Field(default="", description="Ball valve code")
-    gate: str = Field(default="", description="Gate valve code")
-    globe: str = Field(default="", description="Globe valve code")
-    check: str = Field(default="", description="Check valve code")
-    butterfly: str = Field(default="", description="Butterfly valve code")
+    ball: str = Field(default="", description="Ball valve code (class-level fallback)")
+    gate: str = Field(default="", description="Gate valve code (class-level fallback)")
+    globe: str = Field(default="", description="Globe valve code (class-level fallback)")
+    check: str = Field(default="", description="Check valve code (class-level fallback)")
+    butterfly: str = Field(default="", description="Butterfly valve code (class-level fallback)")
+    ball_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Ball valve codes by size")
+    gate_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Gate valve codes by size")
+    globe_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Globe valve codes by size")
+    check_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Check valve codes by size")
+    butterfly_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Butterfly valve codes by size")
+
+
+class BranchChartCell(BaseModel):
+    """Single cell in a branch connection chart: run_size × branch_size → connection type."""
+    run_size: str = Field(..., description="Run pipe size (NPS)")
+    branch_size: str = Field(..., description="Branch pipe size (NPS)")
+    connection: str = Field(default="", description="Connection type: T=Tee, W=Weldolet, H=Threadolet, S=Sockolet, RT=Reducing Tee, -=Not applicable")
+
+
+class BranchChart(BaseModel):
+    """Branch connection chart (Appendix-1)."""
+    chart_id: str = Field(default="1", description="Chart number (1, 2, 3, 4)")
+    title: str = Field(default="", description="Chart title, e.g. 'CS, LTCS, SS, DSS, SDSS'")
+    run_sizes: list[str] = Field(default_factory=list, description="Row headers — run pipe sizes")
+    branch_sizes: list[str] = Field(default_factory=list, description="Column headers — branch pipe sizes")
+    grid: list[list[str]] = Field(default_factory=list, description="2D grid [run_idx][branch_idx] of connection types")
+    legend: dict[str, str] = Field(default_factory=dict, description="Legend mapping, e.g. {'W': 'WELDOLET', 'T': 'TEE'}")
 
 
 class PMSResponse(BaseModel):
@@ -111,6 +140,7 @@ class PMSResponse(BaseModel):
     spectacle_blind: SpectacleBlind = Field(default_factory=SpectacleBlind)
     bolts_nuts_gaskets: BoltsNutsGaskets = Field(default_factory=BoltsNutsGaskets)
     valves: ValveData = Field(default_factory=ValveData)
+    branch_charts: list[BranchChart] = Field(default_factory=list, description="Branch connection charts (Appendix-1)")
     notes: list[str] = Field(default_factory=list)
 
 

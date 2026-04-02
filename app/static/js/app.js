@@ -922,10 +922,14 @@ function renderComponentsTab(pms) {
     }
     setKVList('valvesList', valveItems);
 
-    setKVList('spectacleList', [
+    const spectacleItems = [
         { l: 'MOC', v: pms.spectacle_blind.material_spec },
         { l: 'Standard', v: pms.spectacle_blind.standard },
-    ]);
+    ];
+    if (pms.spectacle_blind.standard_large) {
+        spectacleItems.push({ l: 'Standard (Large)', v: pms.spectacle_blind.standard_large });
+    }
+    setKVList('spectacleList', spectacleItems);
 
     if (pms.notes && pms.notes.length) {
         document.getElementById('notesCard').style.display = '';

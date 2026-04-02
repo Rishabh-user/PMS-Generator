@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.pms_models import PMSRequest, PMSResponse
-from app.services.pms_service import generate_excel, generate_pms
+from app.services.pms_service import generate_excel, generate_pms, clear_cache
+from app.services.branch_chart_service import get_all_charts, get_branch_chart
 from app.services import data_service
 from app.utils.engineering import (
     check_pt_adequacy,
@@ -82,3 +83,23 @@ async def get_pms_by_class(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.get("/branch-charts")
+async def api_branch_charts():
+    """Get all branch connection charts."""
+    return [c.model_dump() for c in get_all_charts()]
+
+
+@router.get("/branch-charts/{chart_id}")
+async def api_branch_chart(chart_id: str):
+    """Get a specific branch connection chart by ID."""
+    chart = get_branch_chart(chart_id)
+    if not chart:
+        raise HTTPException(status_code=404, detail=f"Chart {chart_id} not found")
+    return chart.model_dump()
+
+
+@router.post("/clear-cache")
+async def api_clear_cache():
+    """Clear the PMS generation cache to force fresh AI re-generation."""
+    clear_cache()
+    return {"status": "ok", "message": "Cache cleared. Next generation will use fresh AI data."}
