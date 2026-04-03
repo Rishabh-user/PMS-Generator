@@ -372,10 +372,13 @@ async def generate_pms_with_ai(
         rating, reference_entries,
     )
 
-    try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    logger.info("Calling Anthropic API for class %s with model %s", piping_class, settings.anthropic_model)
+    logger.info("API key present: %s (length: %d)", bool(settings.anthropic_api_key), len(settings.anthropic_api_key))
 
-        message = client.messages.create(
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+        message = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=16384,
             system=SYSTEM_PROMPT,
@@ -395,11 +398,17 @@ async def generate_pms_with_ai(
         return data
 
     except json.JSONDecodeError as e:
-        logger.error("AI returned invalid JSON for %s: %s", piping_class, e)
+        logger.error("AI returned invalid JSON for %s: %s\nRaw response: %s", piping_class, e, response_text[:500])
+        return None
+    except anthropic.AuthenticationError as e:
+        logger.error("Anthropic AUTH ERROR for %s: %s — Check your ANTHROPIC_API_KEY", piping_class, e)
+        return None
+    except anthropic.NotFoundError as e:
+        logger.error("Anthropic MODEL NOT FOUND for %s: model='%s' — %s", piping_class, settings.anthropic_model, e)
         return None
     except anthropic.APIError as e:
         logger.error("Anthropic API error for %s: %s", piping_class, e)
         return None
     except Exception as e:
-        logger.error("Unexpected error in AI generation for %s: %s", piping_class, e)
+        logger.error("Unexpected error in AI generation for %s: %s", piping_class, e, exc_info=True)
         return None
