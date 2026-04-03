@@ -60,4 +60,11 @@ async def index(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": settings.app_version}
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "api_key_set": bool(settings.anthropic_api_key),
+        "api_key_length": len(settings.anthropic_api_key),
+        "api_key_prefix": settings.anthropic_api_key[:12] + "..." if settings.anthropic_api_key else "EMPTY",
+        "model": settings.anthropic_model,
+    }
