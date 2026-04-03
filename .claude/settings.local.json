@@ -89,7 +89,10 @@
       "WebFetch(domain:whatthelogo.com)",
       "Bash(timeout 60 bash -c 'while true; do curl -s http://localhost:8001/health | grep -q \"\"ok\"\" && break; sleep 2; done')",
       "Bash(ping -n 20 127.0.0.1)",
-      "Bash(find D:targeticonpms-generator -type f \\\\\\(-name *.md -o -name *.txt -o -name *prompt* -o -name *template* \\\\\\))"
+      "Bash(find D:targeticonpms-generator -type f \\\\\\(-name *.md -o -name *.txt -o -name *prompt* -o -name *template* \\\\\\))",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
