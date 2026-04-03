@@ -155,10 +155,7 @@ def get_charts_for_class(piping_class: str) -> list[BranchChart]:
     """Determine which branch charts apply to a piping class based on its material family."""
     cls = piping_class.upper()
 
-    # GALV classes → Chart 2
-    if any(cls.startswith(pfx) for pfx in ["A3", "A4", "A5", "A6", "B4", "D4"]):
-        return [ALL_CHARTS["2"]]
-
+    # Check specific material codes BEFORE generic patterns
     # CuNi → Chart 3
     if cls.startswith("A30"):
         return [ALL_CHARTS["3"]]
@@ -166,6 +163,19 @@ def get_charts_for_class(piping_class: str) -> list[BranchChart]:
     # GRE → Chart 4
     if any(cls.startswith(pfx) for pfx in ["A50", "A51", "A52"]):
         return [ALL_CHARTS["4"]]
+
+    # Copper, CPVC, Titanium — no specific branch chart, use Chart 1 as default
+    if any(cls.startswith(pfx) for pfx in ["A40", "A60", "A70"]):
+        return [ALL_CHARTS["1"]]
+
+    # Tubing — no branch chart applicable
+    if cls.startswith("T"):
+        return []
+
+    # GALV classes (A3, A4, A5, A6, B4, D4) → Chart 2
+    if any(cls == pfx or (cls.startswith(pfx) and len(cls) == len(pfx))
+           for pfx in ["A3", "A4", "A5", "A6", "B4", "D4"]):
+        return [ALL_CHARTS["2"]]
 
     # All other mainstream classes (CS, LTCS, SS, DSS, SDSS) → Chart 1
     return [ALL_CHARTS["1"]]

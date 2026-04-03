@@ -395,8 +395,12 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         ("Globe", pms.valves.globe, pms.valves.globe_by_size),
         ("Check", pms.valves.check, pms.valves.check_by_size),
         ("Butterfly", pms.valves.butterfly, pms.valves.butterfly_by_size),
+        ("DBB (Inst)", pms.valves.dbb_inst, pms.valves.dbb_inst_by_size),
+        ("DBB", pms.valves.dbb, pms.valves.dbb_by_size),
     ]
     for i, (label, fallback, by_size) in enumerate(valve_types):
+        if not fallback and not by_size:
+            continue
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
             # Size-specific rendering — map codes to pipe size columns
@@ -689,8 +693,12 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         ("Globe", pms.valves.globe, pms.valves.globe_by_size),
         ("Check", pms.valves.check, pms.valves.check_by_size),
         ("Butterfly", pms.valves.butterfly, pms.valves.butterfly_by_size),
+        ("DBB (Inst)", pms.valves.dbb_inst, pms.valves.dbb_inst_by_size),
+        ("DBB", pms.valves.dbb, pms.valves.dbb_by_size),
     ]
     for i, (lbl, fallback, by_size) in enumerate(valve_types):
+        if not fallback and not by_size:
+            continue
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
             size_code_map = {e.size_inch: e.code for e in by_size}

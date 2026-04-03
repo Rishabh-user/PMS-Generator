@@ -95,11 +95,16 @@ class ValveData(BaseModel):
     globe: str = Field(default="", description="Globe valve code (class-level fallback)")
     check: str = Field(default="", description="Check valve code (class-level fallback)")
     butterfly: str = Field(default="", description="Butterfly valve code (class-level fallback)")
+    dbb: str = Field(default="", description="Double Block & Bleed valve code")
+    dbb_inst: str = Field(default="", description="Double Block & Bleed (Instrument) valve code")
+    needle: str = Field(default="", description="Needle valve code (tubing)")
     ball_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Ball valve codes by size")
     gate_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Gate valve codes by size")
     globe_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Globe valve codes by size")
     check_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Check valve codes by size")
     butterfly_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="Butterfly valve codes by size")
+    dbb_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="DBB valve codes by size")
+    dbb_inst_by_size: list[ValveSizeEntry] = Field(default_factory=list, description="DBB (Inst) valve codes by size")
 
 
 class BranchChartCell(BaseModel):
@@ -124,6 +129,7 @@ class PMSResponse(BaseModel):
     rating: str = ""
     material: str
     corrosion_allowance: str
+    class_type: str = Field(default="standard", description="Class type: standard, galv_screwed, cuni, gre, cpvc, tubing")
     mill_tolerance: str = ""
     design_code: str
     service: str

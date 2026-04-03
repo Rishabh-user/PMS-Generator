@@ -33,6 +33,29 @@ def _cache_key(req: PMSRequest) -> str:
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+def _determine_class_type(piping_class: str) -> str:
+    """Determine the class type from the piping class name."""
+    cls = piping_class.upper()
+    if cls.startswith("T"):
+        return "tubing"
+    # Check specific material codes BEFORE generic GALV pattern
+    if cls.startswith("A30"):
+        return "cuni"
+    if cls.startswith("A40"):
+        return "copper"
+    if any(cls.startswith(pfx) for pfx in ["A50", "A51", "A52"]):
+        return "gre"
+    if cls.startswith("A60"):
+        return "cpvc"
+    if cls.startswith("A70"):
+        return "titanium"
+    # GALV screwed classes: A3, A4, A5, A6, B4, D4 (but NOT A30, A40, A50, etc.)
+    if any(cls == pfx or cls.startswith(pfx) and len(cls) == len(pfx)
+           for pfx in ["A3", "A4", "A5", "A6", "B4", "D4"]):
+        return "galv_screwed"
+    return "standard"
+
+
 def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSResponse:
     """Merge JSON P-T data with AI-generated fields into a PMSResponse."""
     pt_data = entry.get("pressure_temperature", {})
@@ -163,16 +186,24 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         globe=v.get("globe", ""),
         check=v.get("check", ""),
         butterfly=v.get("butterfly", ""),
+        dbb=v.get("dbb", ""),
+        dbb_inst=v.get("dbb_inst", ""),
+        needle=v.get("needle", ""),
         ball_by_size=_parse_valve_by_size(v.get("ball_by_size")),
         gate_by_size=_parse_valve_by_size(v.get("gate_by_size")),
         globe_by_size=_parse_valve_by_size(v.get("globe_by_size")),
         check_by_size=_parse_valve_by_size(v.get("check_by_size")),
         butterfly_by_size=_parse_valve_by_size(v.get("butterfly_by_size")),
+        dbb_by_size=_parse_valve_by_size(v.get("dbb_by_size")),
+        dbb_inst_by_size=_parse_valve_by_size(v.get("dbb_inst_by_size")),
     )
+
+    class_type = _determine_class_type(req.piping_class)
 
     return PMSResponse(
         piping_class=req.piping_class,
         rating=entry.get("rating", ""),
+        class_type=class_type,
         material=req.material,
         corrosion_allowance=req.corrosion_allowance,
         mill_tolerance=ai_data.get("mill_tolerance", ""),

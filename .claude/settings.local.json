@@ -92,7 +92,18 @@
       "Bash(find D:targeticonpms-generator -type f \\\\\\(-name *.md -o -name *.txt -o -name *prompt* -o -name *template* \\\\\\))",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(timeout 5)",
+      "Bash(ping -n 3 127.0.0.1)",
+      "Bash(curl -s -X POST http://localhost:8001/api/generate-pms -H \"Content-Type: application/json\" -d \"{\"\"piping_class\"\":\"\"B1\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:8001/api/generate-pms -H \"Content-Type: application/json\" -d \"{\"\"piping_class\"\":\"\"B1\"\",\"\"material\"\":\"\"CS\"\",\"\"corrosion_allowance\"\":\"\"3 mm\"\",\"\"service\"\":\"\"General\"\"}\")",
+      "Bash(cmd /c type \"D:\\\\targeticon\\\\pms-generator\\\\.env\")",
+      "Bash(curl -s -X POST https://api.anthropic.com/v1/messages -H \"Content-Type: application/json\" -H \"x-api-key: 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\" -H \"anthropic-version: 2023-06-01\" -d \"{\"\"model\"\":\"\"claude-sonnet-4-20250514\"\",\"\"max_tokens\"\":10,\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"Hi\"\"}]}\")",
+      "Bash(git reset:*)",
+      "Bash(git rm:*)",
+      "Bash(curl -s https://pms-generator.onrender.com/health)",
+      "Bash(ping -n 60 127.0.0.1)",
+      "Bash(.venv/Scripts/python -c \"from app.models.pms_models import ValveData, PMSResponse; print\\(''Models OK''\\); from app.services.pms_service import _build_pms_response; print\\(''Service OK''\\)\")"
     ]
   }
 }

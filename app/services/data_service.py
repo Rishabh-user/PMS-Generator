@@ -89,21 +89,41 @@ def find_by_rating_material(rating: str, material: str) -> dict | None:
     mat_upper = material.upper().strip()
 
     def mat_family(m: str) -> str:
-        m = m.upper().strip().replace(" NACE", "")
+        m = m.upper().strip()
+        # Remove NACE suffix for family matching
+        m = m.replace(" NACE", "")
+        # Normalize material families
         if "GALV" in m or "EPOXY" in m:
             return "CS"
+        if "CUNI" in m or "CU-NI" in m or "COPPER-NICKEL" in m:
+            return "CUNI"
+        if "TUBING" in m:
+            return "TUBING"
+        if "GRE" in m or "GRV" in m or "BONSTRAND" in m:
+            return "GRE"
+        if "CPVC" in m:
+            return "CPVC"
+        if "COPPER" in m:
+            return "COPPER"
+        if "TITANIUM" in m:
+            return "TITANIUM"
+        if "6MO" in m or "6 MO" in m:
+            return "6MO"
         return m
 
     target_family = mat_family(mat_upper)
 
+    # Exact match first
     for e in data:
         if e.get("rating") == rating and e.get("material", "").upper().strip() == mat_upper:
             return e
 
+    # Family match
     for e in data:
         if e.get("rating") == rating and mat_family(e.get("material", "")) == target_family:
             return e
 
+    # Any with same rating
     for e in data:
         if e.get("rating") == rating:
             return e

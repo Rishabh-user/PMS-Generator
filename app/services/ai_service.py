@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a senior piping materials engineer with deep expertise in:
 - ASME B31.3 (Process Piping), B36.10M (Welded/Seamless Wrought Steel Pipe), B36.19M (Stainless Steel Pipe)
 - ASME B16.5 (Flanges), B16.9 (BW Fittings), B16.11 (Forged Fittings), B16.20 (Gaskets), B16.47 (Large Flanges), B16.48 (Line Blanks)
-- ASTM material standards for CS, LTCS, SS316L, Duplex, Super Duplex, CuNi, Titanium, GRE, CPVC
+- ASTM material standards for CS, LTCS, SS316L, Duplex, Super Duplex, CuNi, Titanium, GRE, CPVC, Copper
+- EEMUA 234 (CuNi piping systems)
 - NACE MR-01-75 / ISO 15156 sour service requirements
 - Industrial valve specifications and coding conventions
 
@@ -45,44 +46,62 @@ def _build_generation_prompt(
 
 Do NOT generate P-T data or hydrotest_pressure (handled separately). Set hydrotest_pressure to "".
 
-=== CLASS NAMING CONVENTION (decode the class name) ===
-Format: [Letter][Number][Suffix]
+=== CLASS NAMING CONVENTION (3-Part System per PMS Doc) ===
+Format: [PART1][PART2][PART3]
 
-LETTER = Rating:
-  A=150# | B=300# | D=600# | E=900# | F=1500# | G=2500# | T=Tubing
+PART 1 — RATING (letter):
+  A=150# | B=300# | D=600# | E=900# | F=1500# | G=2500# | J=5000# | K=10000# | T=Tubing
 
-NUMBER = Material Family:
-  1 = Carbon Steel (CS): Pipe=ASTM A 106 Gr. B (seamless), API 5L Gr. B or ASTM A 671 CC60 Class 22 (welded)
-  1L = Low-Temp CS (LTCS): Pipe=ASTM A 333 Gr.6 (seamless), ASTM A 671 CC60 Class 22 (welded)
-  2 = CS Heavy Wall (same MOC as 1-series but heavier schedules)
-  3,4 = CS Galvanized Screwed: Pipe=ASTM A 106 Gr. B (Galvanized)
-  5 = CS Galvanized: Pipe=ASTM A 106 Gr. B (Galvanized)
-  6 = CS Epoxy Lined: Pipe=ASTM A 106 Gr. B (Galvanized)
-  10 = SS 316L: Pipe=ASTM A 312 TP 316L (seamless), ASTM A 358 TP 316L (welded)
-  20 = Duplex SS (DSS) UNS S31803: Pipe=ASTM A 790 Gr. S31803 (both seamless & welded)
-  25 = Super Duplex SS (SDSS) UNS S32750: Pipe=ASTM A 790 Gr. S32750 (both seamless & welded)
-  30 = CuNi 90/10 | 40 = Copper | 50,52 = GRE | 51 = GRE Bonstrand | 60 = CPVC | 70 = Titanium
-  80A/B/C = SS316L Tubing | 90A/B/C = 6MO Tubing
+PART 2 — MATERIAL (number):
+  1  = CS, 3mm Corrosion Allowance
+  2  = CS, 6mm Corrosion Allowance (heavy wall)
+  3  = CS Galvanized, 3mm CA (screwed fittings)
+  4  = CS Galvanized, 1.5mm CA (screwed fittings)
+  5  = CS Galvanized, 6mm CA
+  6  = CS Internally Epoxy Coated
+  9  = SS316 (not used in this project)
+  10 = SS316L
+  20 = Duplex SS (DSS) UNS S31803
+  25 = Super Duplex SS (SDSS) UNS S32750
+  30 = 90/10 CuNi (Copper-Nickel)
+  31 = Copper
+  40 = GRE (Glass Reinforced Epoxy)
+  41 = GRV — BONSTRAND Series 5000C
+  42 = CPVC
+  50 = SS316L/SS316 Tubing
+  60 = 6Mo Tubing
+  70 = Titanium
 
-SUFFIX:
-  N = NACE (sour service) — adds "NACE-MR-01-75/ISO-15156-1/2/3" to design code
+PART 3 — IDENTIFIER (optional suffix):
+  N = NACE (sour service, adds NACE-MR-01-75/ISO-15156 to design code)
   L = Low Temperature variant
-  LN = Low Temp + NACE
+  LN = Low Temp + NACE combined
+  A = 125 Barg Pressure (tubing)
+  B = 200 Barg Pressure (tubing)
+  C = 325 Barg Pressure (tubing)
+
+Examples: A1 = 150# CS 3mm CA | B1N = 300# CS 3mm CA NACE | A2LN = 150# CS 6mm CA LTCS+NACE | T80A = SS316L Tubing 125 Barg
 
 === PIPE SIZES — STANDARD NPS RANGES ===
 Generate ALL standard NPS sizes for the class. Typical ranges:
-  A-series 150# CS (1/1N): 0.5" to 36" (A1=22 sizes, A1N=21 sizes to 32")
+  A-series 150# CS (1/1N): 0.5" to 36" (22 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36)
   A-series 150# LTCS (1L/1LN): 0.5" to 30" (20 sizes)
   A-series 150# SS/DSS/SDSS (10/20/25): 0.5" to 24-32" (17-21 sizes)
+  A-series 150# 2-series (A2/A2N): 0.5" to 30" (20 sizes)
   B-series 300#: 0.5" to 24" (17 sizes) — for DSS/SDSS up to 32" (21 sizes)
   D-series 600#: 0.5" to 24" (17 sizes)
   E-series 900#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
   F-series 1500#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
-  G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14), 2N/2LN start at 1" (15 sizes)
+  G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14)
+  GALV (3/4/5/6): 0.5" to 24" (17 sizes)
+  CuNi (30): 0.5" to 36" (22 sizes — per EEMUA 234 size range)
+  GRE (40/41/42): 0.75" to 24" (14 sizes)
+  Tubing (T80/T90): Single size 0.5" only
+
 Standard NPS sequence: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36
 
 === PIPE SCHEDULES — RULES BY MATERIAL FAMILY AND RATING ===
-Use ASME B36.10M for CS/LTCS, ASME B36.19M for SS/DSS/SDSS.
+Use ASME B36.10M for CS/LTCS/GALV, ASME B36.19M for SS/DSS/SDSS.
 Wall thicknesses must be EXACT standard values from the appropriate ASME table.
 
 CS 1-series (A1/B1/D1/E1/F1/G1 and N variants):
@@ -101,7 +120,7 @@ LTCS 1L-series:
   F1L (1500#): 0.5-1.5"→XXS | 2-8"→XXS | 10-24"→"-" (special wall thickness)
   G1L (2500#): 0.5-1"→XXS | 1.5-24"→"-" (special wall thickness)
 
-CS 2-series (heavy wall/NACE — A2/A2N/B2N/D2N/E2N/F2N/G2N + LN variants):
+CS 2-series (heavy wall — A2/A2N/B2N/D2N/E2N/F2N/G2N + LN variants):
   A2 (150#): 0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-14"→40 | 16"→40 | 18"→30 | 20-28"→XS | 30"→30
   B2N (300#): 0.5-1.5"→XXS | 2"→160 | 3"→160 | 4"→120 | 6"→XS | 8-10"→XS | 12-24"→60
   D2N (600#): 0.5-0.75"→"-" | 1-1.5"→XXS | 2"→XXS | 3-4"→160 | 6"→120 | 8-24"→100/120 mix
@@ -133,6 +152,27 @@ SDSS 25-series (UNS S32750, use "S" suffix):
   F25 (1500#): 0.5-2"→80S | 3"→40S | 4-8"→80S | 10-12"→80 | 14-24"→100
   G25 (2500#): 0.5-2"→80S | 3"→160 | 4"→120 | 6-10"→160 | 12-14"→140 | 16-24"→140/160 mix
 
+GALV classes (A3/A4/B4/D4/A5/A6):
+  A3/A4 (150# GALV screwed): 0.5-1.5"→XXS | 2-6"→80 | 8-24"→STD
+  B4 (300# GALV): 0.5-1.5"→XXS | 2-6"→80 | 8-24"→40
+  D4 (600# GALV): 0.5-2"→160 | 3-24"→80
+  A5 (150# GALV 6mm): same as A3
+  A6 (150# Epoxy): same as A3
+
+CuNi 30-series (EEMUA 234):
+  A30: No standard schedule — uses EEMUA 234 wall thickness tables
+  Sizes (mm OD): 0.5"=16, 0.75"=19, 1"=25, 1.5"=38, 2"=57, 3"=76, 4"=108, 6"=159, 8"=219, 10"=267, 12"=324, 14"=356, 16"=406, 18"=457, 20"=508, 24"=610, 28"=711, 32"=813, 36"=914
+  WT: 2, 2, 2, 2, 2.5, 3, 3, 3.5, 4, 4.5, 5, 5, 6, 6, 6.5, 8, 8, 10, 12
+  Schedule: "-" for all (EEMUA has its own thickness system)
+
+GRE (A50/A51/A52):
+  All sizes use manufacturer standard wall thickness per GRE system. Schedule = "-"
+
+Tubing (T80/T90):
+  T80A/T90A: 0.5" OD, wall thickness 1.245mm (125 Barg)
+  T80B/T90B: 0.5" OD, wall thickness 1.651mm (200 Barg)
+  T80C/T90C: 0.5" OD, wall thickness 2.108mm (325 Barg)
+
 === PIPE TYPE TRANSITION (Seamless → Welded) ===
 All mainstream classes have TWO pipe types with a size-based transition:
   CS 1-series (A1/A1N): Seamless → LSAW, 100% RT (transition at ~20")
@@ -143,21 +183,19 @@ All mainstream classes have TWO pipe types with a size-based transition:
   DSS 20-series: Seamless → Welded (Longitudinally) with 100% RT (transition at ~10")
   SDSS 25-series: Seamless → Welded (Longitudinally) with 100% RT (transition at ~10")
   GALV 3/4/5/6/B4/D4: Seamless → LSAW, 100% RT (transition at ~14")
-  Special classes (30,40,50-52,60,70,T-series): Single type (manufacturer standard or seamless only)
-
-IMPORTANT: The exact transition size depends on the class. Use your ASME knowledge to determine the correct transition point. Generally:
-  150# classes transition later (larger sizes still seamless)
-  Higher ratings transition earlier (need welded sooner for larger pipe availability)
+  CuNi (30): ALL Seamless (no transition)
+  GRE (40/41/42): ALL manufacturer standard (single type)
+  CPVC (60): ALL manufacturer standard
+  Tubing (T80/T90): ALL Seamless
 
 === PIPE MOC RULES ===
 CS (1-series, 2-series):
   Seamless: ASTM A 106 Gr. B
   Welded (A-series 150#, GALV): API 5L Gr. B
   Welded (B/D/E-series): ASTM A 671 - CC60 Class 22
-  D1/E1 mid-range sizes (12-14"): ASTM A 333 Gr.6 (intermediate transition)
   F1/G1 (1500#/2500#): API 5L Gr, X60 PSL-2 (ALL sizes, single MOC)
 
-LTCS (1L-series):
+LTCS (1L-series, 2LN-series):
   Seamless: ASTM A 333 Gr.6
   Welded: ASTM A 671 - CC60 Class 22
 
@@ -176,9 +214,31 @@ GALV (3/4/5/6,B4,D4):
   Seamless: ASTM A 106 Gr. B (Galvanized)
   Welded: API 5L Gr. B (Galvanized)
 
+CuNi (30):
+  Annealed tube 90-10 CU-NI ALLOY UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102
+
+Copper (31/40):
+  ASTM B 88 Type K or ASTM B 75
+
+GRE (50/51/52):
+  Manufacturer standard per GRE system rating
+
+CPVC (42/60):
+  ASTM F441/F442
+
+Titanium (70):
+  ASTM B 861 Gr. 2
+
+Tubing:
+  T80 (SS316L Tubing): ASTM A269 Type 316/316L SML, Annealed, Hardness <= 90 HRB
+  T90 (6Mo Tubing): ASTM B 677 UNS N08926
+
 === FITTINGS RULES ===
 TYPE split mirrors pipe type: "Butt Weld (SCH to match pipe), Seamless" for small sizes, "Butt Weld (SCH to match pipe), Welded" for large sizes.
 GALV screwed classes (3/4): Small sizes = "Screwed (SCRD), #3000", larger = "Butt Weld (SCH to match pipe), Seamless/Welded"
+CuNi (30): Small sizes = "SW" (Socket Weld), larger = "Butt Weld (SCH to match pipe), Seamless"
+GRE/CPVC: Manufacturer standard (adhesive bonded / laminated)
+Tubing (T80/T90): "Compression Fitting" — body AISI 316, ferrules and nuts in AISI 316
 
 FITTINGS MOC BY MATERIAL:
   CS (A1/A1N/A2/A2N): ASTM A 234 Gr. WPB (same for ALL sizes — seamless AND welded)
@@ -189,12 +249,16 @@ FITTINGS MOC BY MATERIAL:
   DSS (20-series): Seamless=ASTM A 815 Gr.WP-S UNS S31803, Welded=ASTM A 815 Gr.WP-WX UNS S31803
   SDSS (25-series): Seamless=ASTM A 815 Gr.WP-S UNS S32750, Welded=ASTM A 815 Gr.WP-WX UNS S32750
   GALV (3/4/5/6,B4,D4): Screwed=ASTM A 105N-Galvanized, BW=ASTM A 234 Gr. WPB, Seamless Galvanized
+  CuNi (30): 90-10 Cu-Ni per EEMUA 234
+  Titanium (70): ASTM B 363 Gr. 2
 
 STANDARDS (apply to ALL material families unless noted):
   Elbow: ASME B 16.9 | Tee: ASME B 16.9 | Reducer: ASME B 16.9 | Cap: ASME B 16.9
   Plug: Hex Head Plug, ASME B 16.11 (or "Hex Head, ASME B 16.11")
   Weldolet: MSS SP 97, [flange MOC] (e.g., "MSS SP 97, ASTM A 105N" for CS)
   GALV screwed classes: Elbow/Tee/Red/Cap = ASME B 16.11
+  CuNi classes: All fittings per EEMUA 234; additional: Coupling, Union, Sockolet, Nipple, Swage per EEMUA 234
+  GRE classes: All per manufacturer/GRE system standard
 
 fittings_by_size: One entry per pipe size. Each entry includes size_inch, type (Seamless/Welded), fitting_type, material_spec, and all standards. material_spec may differ between seamless and welded sizes.
 
@@ -205,51 +269,60 @@ MOC by material family:
   LTCS (all 1L/2LN): ASTM A 350 Gr. LF2
   SS316L (10-series): ASTM A 182 F 316L
   DSS (20-series): ASTM A 182 Gr. F51
-  SDSS (25-series): ASTM A 182 Gr. F53
-  GALV (3/4/5/6,B4,D4): MSS SP 97
+  SDSS (25-series): ASTM A 182 Gr. F53 (or Gr. F55 in some variants)
+  GALV (3/4/5/6,B4,D4): ASTM A 105N Galvanized (screwed flanges for small, WN for large)
+  CuNi (30): 90-10Cu-Ni per EEMUA 234 20 BAR; Blind Flange = ASTM A 105N FF with 3mm 90-10 CuNi weld deposit
 
 FACE by rating:
   150#: "150# RF, Serrated Finish"
   300#: "300# RF, Serrated Finish"
   600#: "600# RF, Serrated Finish"
-  900#: "1500#, RTJ" (note: 900# classes use 1500# RTJ face)
-  1500#: "1500#, RTJ"
-  2500#: "2500#, RTJ"
+  900# (E-series): Small bore (0.5-1.5") = "1500#, RTJ", Larger sizes (2"+) = "900#, RTJ"
+  1500# (F-series): "1500#, RTJ"
+  2500# (G-series): "2500#, RTJ"
+  CuNi EEMUA: "EEMUA 20 bar, FF" (Flat Face)
+  GALV: "150# RF, Serrated Finish" (same as 150#)
 
 TYPE:
-  Classes with sizes >24": "Weld Neck, ASME B 16.5/ 16.47A, Butt Welding ends as per ASME B 16.25"
-  Classes with sizes ≤24": "Weld Neck, ASME B 16.5, Butt Welding ends as per ASME B 16.25"
-  E/F series (900#/1500#): Add RTJ groove reference and Note 6,7 or 8,9
-  G series (2500#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, RTJ, Note 8,9"
+  Standard (sizes ≤24"): "Weld Neck, ASME B 16.5, Butt Welding ends as per ASME B 16.25"
+  Large (sizes >24"): "Weld Neck, ASME B 16.5/ 16.47A, Butt Welding ends as per ASME B 16.25"
+  E-series (900#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, Note 8,9"
+  F-series (1500#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, RTJ, Note 6,7"
+  G-series (2500#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, RTJ, Note 8,9"
+  GALV screwed: Small = "Screwed (SCRD)", Large = "WN"
+  CuNi: Small = "SW Flange", Large = "WN Flange" per EEMUA 234
 
 === SPECTACLE BLIND ===
 MOC: Same as flange MOC
-Standard: "ASME B 16.48" (small/mid sizes)
-Standard (large): "Spacer and blind as per ASME B 16.48 (Note 5)" (large sizes not covered by B16.48)
-F/G series (1500#/2500#): Often EMPTY (no spectacle blind data)
-GALV classes: "150# RF, Serrated Finish"
+Standard: "ASME B 16.48" (standard sizes)
+Standard (large): "Spacer and blind as per ASME B 16.48 (Note 5)" (sizes not covered by B16.48)
+F/G series (1500#/2500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48"
+GALV classes: MOC = "ASTM A 105N Galvanized"
 
 === BOLTS / NUTS / GASKETS ===
 STUD BOLTS by material family:
-  CS (1/2-series, 150#-900#): ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
-  LTCS + SS316L (1L/10-series, 150#-900#): ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
+  CS (1/2-series, 150#-2500#): ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
+  LTCS (1L-series, 150#-2500#): ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
+  SS316L (10-series): ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
   DSS + SDSS (20/25-series): ASTM A 453 Gr. 660
-  F/G series (1500#/2500#): ASME B 16.48
-  GALV/T-series: empty
+  CuNi (30): ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
+  GALV classes: ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
 
 HEX NUTS:
   CS: ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
   LTCS + SS316L: ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
   DSS + SDSS: ASTM A 453 Gr. 660
-  F/G series: empty
+  CuNi + GALV: ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm
 
 GASKETS:
   RF classes (150#-600#):
     CS/LTCS/SS: ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler
     DSS: ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler
     SDSS: ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler
+    GALV: 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
+    CuNi: 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
   RTJ classes (900#+):
-    CS/LTCS: OCT Ring, Soft Iron, HDG, Max 90 BHN Hardness, ASME B16.20
+    CS/LTCS: ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG
     SS: OCT Ring, SS316L, Max 160 BHN Hardness, ASME B16.20
     DSS: OCT Ring, DSS UNS S31803, Max 22 HRC Hardness, ASME B16.20
     SDSS: OCT Ring, SDSS UNS S32750, Max 22 HRC Hardness, ASME B16.20
@@ -257,28 +330,35 @@ GASKETS:
 === VALVE CODES ===
 Pattern: [TYPE PREFIX][CLASS CODE][FACE SUFFIX]
   CLASS CODE = exact piping class name (A1, B1N, D20, E25N, etc.)
-  FACE SUFFIX: R = RF (150#-600#) | J = RTJ (900#-2500#) | F = FF (GRE/CPVC)
+  FACE SUFFIX: R = RF (150#-600#) | J = RTJ (900#-2500#) | F = FF (CuNi/GRE/CPVC) | JT = (Tubing)
 
 Standard valve prefixes:
   Ball Reduced Trunnion: BLRT | Ball Full Trunnion: BLFT
-  Ball Reduced Port: BLRP | Ball Full Port: BLFP (used in D-series and some E+ classes)
-  Gate Y-body: GAYM | Globe Y-body: GLYM
+  Ball Reduced Port: BLRP | Ball Full Port: BLFP (used in E/F/G-series 900#+ classes)
+  Ball Full Metal: BLFM | Ball Reduced Metal: BLRM (used in G-series 2500#)
+  Gate Y-body: GAYM
+  Globe Y-body: GLYM
   Check Piston: CHPM | Check Swing: CHSM | Check Dual-Plate: CHDM
   Butterfly Wafer: BFWT | Butterfly Triple-Offset: BFTP
-  DSS/SDSS 25-series uses: BSR/BSF (ball), GAW (gate), GLS (globe), CSW/CDP (check)
-  Double Block: DBFP/DBRP (used in E-series and tubing)
+  DBB Reduced Port: DBRP (Double Block & Bleed — available in 900#+ classes like E/F/G-series)
+  DBB (Inst): Same as DBB but with T suffix appended (e.g., DBRPE20NJ → DBRPE20NJT for instrument variant)
+  Tubing valves: DBB=DBFP, Needle=NEIP, Ball=BLFP, Check=CHPM (with JT suffix)
 
 Special valve rules:
-  E-series (900#) Ball: Small sizes → "USE GATE VALVE", larger sizes → actual ball codes (BLRP/BLFP)
-  F/G-series (1500#/2500#) Globe: "USE GATE VALVE" for small sizes, BLRP/BLFP codes for larger
-  F/G-series Gate: Show as rating text "1500#, RTJ" or "2500#, RTJ"
-  F/G-series Butterfly: Uses GLYM prefix (globe-style in butterfly slot)
+  E-series (900#) Ball: Small sizes → "USE GATE VALVE", larger sizes (typically 6"+) → BLRP/BLFP codes
+  F/G-series (1500#/2500#) Ball: Small sizes → "USE GATE VALVE", larger sizes → BLRP/BLFP codes
+  G1 (2500#) has additional valve types: BLFMG1J, BLRMG1J alongside BLRPG1J, BLFPG1J
+  DBB valves: Available for 900#+ (E/F/G-series) classes. Pattern: DBRP + class code + face suffix
+    Example: E20NJ → DBB = "DBRPE20NJ", DBB (Inst) = "DBRPE20NJT"
+    DBB (Inst) code = DBB code + "T" suffix appended
+  CuNi (30): Use F suffix (FF face). Codes: BLRTA30F, BLFTA30F, GAYMA30F, GLYMA30F, CHPMA30F, etc.
+  GALV (3/4/5/6,B4,D4): Use R suffix. Codes: BLRTA3R, BLFTA3R, GAYMA3R, GLYMA3R, CHPMA3R, etc.
 
 IMPORTANT — SIZE-SPECIFIC VALVE CODES:
 Valve VDS codes are NOT uniform across all sizes. Different codes apply at different size ranges.
 Example for class A1:
   - Check: 0.5"-3" → "CHPMA1R", 4"-24" → "CHSMA1R, CHDMA1R" (swing/dual-plate for larger sizes)
-  - Butterfly: Only available for 6"+ → "BFWTA1R, BFTPA1R" (empty for smaller sizes)
+  - Butterfly: Only available for 3"+ (typically 6"+) → "BFWTA1R, BFTPA1R" (empty for smaller sizes)
   - Ball: 0.5"-2" → "BLRTA1R" (reduced trunnion), 2.5"-24" → "BLRTA1R, BLFTA1R" (both reduced + full)
 
 You MUST provide valve codes using the *_by_size arrays to capture these size-specific differences.
@@ -286,21 +366,42 @@ Each entry is {{"size_inch": "...", "code": "..."}}. One entry per pipe size in 
 If a valve type is not available at a given size, set code to "".
 The class-level string fields (ball, gate, globe, check, butterfly) serve as fallback descriptions only.
 
-Multiple valve types in one field → comma-separated: "BLRT{piping_class}R, BLFT{piping_class}R"
+Multiple valve types in one field → comma-separated: "BLRT{{piping_class}}R, BLFT{{piping_class}}R"
 
 === EXTRA FITTINGS ===
-Coupling: "ASME B 16.11, sizes 0.5\" to 2.0\" only" — ONLY for 150#/300# classes
-Union: "ASME B 16.11, sizes 0.5\" to 2.0\" only" — ONLY for 150# classes
-Hex Plug: "ASME B 16.11, all sizes" — ALL classes
-Olet: "MSS SP 97, [flange MOC], all sizes" — ALL classes
-Swage: empty
+Standard piping classes:
+  Coupling: "ASME B 16.11, sizes 0.5\\" to 2.0\\" only" — ONLY for 150#/300# classes
+  Union: "ASME B 16.11, sizes 0.5\\" to 2.0\\" only" — ONLY for 150# classes
+  Hex Plug: "ASME B 16.11, all sizes" — ALL classes
+  Olet: "MSS SP 97, [flange MOC], all sizes" — ALL classes
+  Swage: empty
+
+CuNi (30) extra fittings:
+  Coupling: EEMUA 234
+  Union: EEMUA 234
+  Sockolet: EEMUA 234
+  Nipple: EEMUA 234, MOC Same as pipe
+  Swage: EEMUA 234, MOC Same as pipe
+  Weldolet: EEMUA 234
+
+Tubing (T80/T90):
+  Only "Compression Fitting" — body AISI 316, ferrules and nuts in AISI 316
+  Ends: OD X THD, OD X OD, & OD X SW (Manufacturer Standard)
 
 === MISC ===
-Design Code: "ASME B 31.3" + ", NACE-MR-01-75/ISO-15156-1/2/3" if N suffix in class name
-Pipe Code: ASME B 36.10M (CS/LTCS) or ASME B 36.19M (SS/DSS/SDSS)
-Mill Tolerance: 12.5% (standard) or 0.125
-Branch Chart: Ref. APPENDIX-1, Chart 1
-Ends: "BE" (mainstream), special for GRE/CPVC/Tubing/CuNi/Copper
+Design Code:
+  Standard: "ASME B 31.3"
+  + NACE suffix: ", NACE-MR-01-75/ISO-15156-1/2/3" if N or LN in class name
+  CuNi: "ASME B 31.3 / EEMUA 234"
+
+Pipe Code: ASME B 36.10M (CS/LTCS/GALV) or ASME B 36.19M (SS/DSS/SDSS) or EEMUA 234 (CuNi)
+Mill Tolerance: 12.5% (standard) — 0.125
+Branch Chart:
+  CS/LTCS/SS/DSS/SDSS: Ref. APPENDIX-1, Chart 1
+  GALV: Ref. APPENDIX-1, Chart 2
+  CuNi: Ref. APPENDIX-1, Chart 3
+  GRE: Ref. APPENDIX-1, Chart 4
+Ends: "BE" (bevel end for standard piping), "PE" (plain end for CuNi/tubing), special for GRE/CPVC
 
 === OUTPUT JSON SCHEMA ===
 {{
@@ -332,22 +433,29 @@ Ends: "BE" (mainstream), special for GRE/CPVC/Tubing/CuNi/Copper
     "valves": {{
         "rating": "...",
         "ball": "...", "gate": "...", "globe": "...", "check": "...", "butterfly": "...",
+        "dbb": "...", "dbb_inst": "...",
         "ball_by_size": [{{"size_inch": "0.5", "code": "BLRTA1R"}}, {{"size_inch": "2", "code": "BLRTA1R, BLFTA1R"}}, ...],
         "gate_by_size": [{{"size_inch": "0.5", "code": "GAYMA1R"}}, ...],
         "globe_by_size": [{{"size_inch": "0.5", "code": "GLYMA1R"}}, ...],
         "check_by_size": [{{"size_inch": "0.5", "code": "CHPMA1R"}}, {{"size_inch": "4", "code": "CHSMA1R, CHDMA1R"}}, ...],
-        "butterfly_by_size": [{{"size_inch": "6", "code": "BFWTA1R, BFTPA1R"}}, ...]
+        "butterfly_by_size": [{{"size_inch": "6", "code": "BFWTA1R, BFTPA1R"}}, ...],
+        "dbb_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJ"}}, ...],
+        "dbb_inst_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJT"}}, ...]
     }},
     "notes": ["PMS to be read in conjunction with Project Piping Design Basis, and Valve Material Specification.", ...]
 }}
 
 CRITICAL:
 1. Valve *_by_size arrays MUST have one entry per pipe size (matching pipe_data count). Use "" for sizes where valve type is not available.
-2. The top-level valve string fields (ball, gate, etc.) are fallback descriptions — the *_by_size arrays hold the actual per-size codes.
+2. The top-level valve string fields (ball, gate, dbb, dbb_inst, etc.) are fallback descriptions — the *_by_size arrays hold the actual per-size codes.
+3. For 900#+ classes (E/F/G-series), include dbb and dbb_inst fields with DBRP prefix codes. dbb_inst code = dbb code + "T" suffix. Omit dbb/dbb_inst for 150#-600# classes.
 3. fittings_by_size count MUST match pipe_data count.
 4. fittings_welded MUST be populated (not null) if class has welded fittings.
 5. Wall thickness must be EXACT ASME B36.10M / B36.19M values — do NOT estimate.
 6. Return ONLY JSON. No markdown fences, no commentary.
+7. For GALV classes, gasket is neoprene/EPDM rubber (NOT spiral wound).
+8. For CuNi classes, use EEMUA 234 standards throughout.
+9. For Tubing classes, use compression fitting data, NOT standard piping format.
 
 Generate PMS for class **{piping_class}** now."""
 

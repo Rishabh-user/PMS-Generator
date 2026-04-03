@@ -912,13 +912,27 @@ function renderComponentsTab(pms) {
 
     const valveItems = [
         { l: 'Rating', v: pms.valves.rating },
-        { l: 'Ball', v: pms.valves.ball },
-        { l: 'Gate', v: pms.valves.gate },
-        { l: 'Globe', v: pms.valves.globe },
-        { l: 'Check', v: pms.valves.check },
     ];
-    if (pms.valves.butterfly) {
-        valveItems.push({ l: 'Butterfly', v: pms.valves.butterfly });
+    // Tubing classes have different valve types (DBB, Needle, Ball Inst, Check Inst)
+    if (pms.class_type === 'tubing') {
+        if (pms.valves.dbb) valveItems.push({ l: 'DBB (Inst)', v: pms.valves.dbb });
+        if (pms.valves.needle) valveItems.push({ l: 'Needle (Inst)', v: pms.valves.needle });
+        if (pms.valves.ball) valveItems.push({ l: 'Ball (Inst)', v: pms.valves.ball });
+        if (pms.valves.check) valveItems.push({ l: 'Check (Inst)', v: pms.valves.check });
+    } else {
+        valveItems.push({ l: 'Ball', v: pms.valves.ball });
+        valveItems.push({ l: 'Gate', v: pms.valves.gate });
+        valveItems.push({ l: 'Globe', v: pms.valves.globe });
+        valveItems.push({ l: 'Check', v: pms.valves.check });
+        if (pms.valves.butterfly) {
+            valveItems.push({ l: 'Butterfly', v: pms.valves.butterfly });
+        }
+        if (pms.valves.dbb_inst) {
+            valveItems.push({ l: 'DBB (Inst)', v: pms.valves.dbb_inst });
+        }
+        if (pms.valves.dbb) {
+            valveItems.push({ l: 'DBB', v: pms.valves.dbb });
+        }
     }
     setKVList('valvesList', valveItems);
 
