@@ -105,35 +105,51 @@ Use ASME B36.10M for CS/LTCS/GALV, ASME B36.19M for SS/DSS/SDSS.
 Wall thicknesses must be EXACT standard values from the appropriate ASME table.
 
 CS 1-series (A1/B1/D1/E1/F1/G1 and N variants):
-  A1 (150#): 0.5-1.5"→160 | 2-6"→80 | 8-28"→STD | 30-36"→XS
-  B1 (300#): 0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
-  D1 (600#): 0.5-2"→160 | 3-24"→80
-  E1 (900#): 0.5-2"→160 | 3"→160 | 4-24"→120
+  A1 (150#): 0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-28"→STD | 30-36"→XS
+  B1 (300#): 0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
+  D1 (600#): 0.5-1.5"→XXS | 2"→160 | 3-24"→80
+  E1 (900#): 0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
   F1 (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12,14"→160 | 16,18"→varies(140/160) | 20-24"→140/160 alternating
   G1 (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-24"→"-" (special calc wall thickness)
 
+CS 1-series NACE (A1N/B1N/D1N/E1N/F1N/G1N):
+  A1N (150#): 0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10"→40 | 12-16"→40 | 18"→30 | 20-24"→XS | 30"→30
+  B1N (300#): 0.5-1.5"→XXS | 2"→160 | 3"→160 | 4"→120 | 6-10"→XS | 12-24"→60
+  D1N (600#): 0.5-0.75"→"-" (calc WT) | 1-1.5"→XXS | 2"→XXS | 3-24"→80
+  E1N (900#): 0.5-0.75"→"-" (calc WT) | 1-1.5"→XXS | 2-3"→160 | 4-24"→120
+  F1N (1500#): 0.5-2"→"-" (calc WT) | 3-6"→160 | 8"→XXS | 10"→140 | 12-24"→varies(140/160)
+  G1N (2500#): all sizes→"-" (special calculated wall thickness)
+
 LTCS 1L-series:
-  A1L (150#): 0.5-1.5"→160 | 2-28"→XS | 30"→30
-  B1L (300#): 0.5-1.5"→160 | 2-6"→XS | 8-20"→40 | 22"→"-" | 24"→40
-  D1L (600#): 0.5-2"→160 | 3-6"→XS | 8"→XS | 10-24"→80
+  A1L (150#): 0.5"→XXS | 0.75-1.5"→160 | 2-28"→XS | 30"→30
+  B1L (300#): 0.5"→XXS | 0.75-1.5"→160 | 2-6"→XS | 8-20"→40 | 22"→"-" | 24"→40
+  D1L (600#): 0.5-1.5"→XXS | 2"→160 | 3-6"→XS | 8"→XS | 10-24"→80
   E1L (900#): 0.5-1.5"→XXS | 2"→160 | 3"→160 | 4-24"→120
   F1L (1500#): 0.5-1.5"→XXS | 2-8"→XXS | 10-24"→"-" (special wall thickness)
   G1L (2500#): 0.5-1"→XXS | 1.5-24"→"-" (special wall thickness)
 
+LTCS NACE 1LN-series (same schedule as 1L, follow same rules):
+  A1LN: same as A1L
+  B1LN: same as B1L
+  D1LN: 0.5"→160 | 0.75-1.5"→XXS | 2"→160 | 3-24"→80
+  E1LN: 0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
+  F1LN: 0.5-1.5"→XXS | 2-8"→XXS | 10-24"→"-" (special wall thickness)
+  G1LN: 0.5-1"→XXS | 1.5-24"→"-" (special wall thickness)
+
 CS 2-series (heavy wall — A2/A2N/B2N/D2N/E2N/F2N/G2N + LN variants):
-  A2 (150#): 0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-14"→40 | 16"→40 | 18"→30 | 20-28"→XS | 30"→30
-  B2N (300#): 0.5-1.5"→XXS | 2"→160 | 3"→160 | 4"→120 | 6"→XS | 8-10"→XS | 12-24"→60
-  D2N (600#): 0.5-0.75"→"-" | 1-1.5"→XXS | 2"→XXS | 3-4"→160 | 6"→120 | 8-24"→100/120 mix
-  E2N (900#): starts at 1" | 2-6"→XXS | 8"→XXS | 10"→160 | 12-24"→140/120 mix
-  F2N (1500#): starts at 1" | 2-4"→"-" | 6-10"→XXS | 12-24"→"-"/160 mix
-  G2N (2500#): starts at 1" | all "-" (special calculated wall thicknesses)
+  A2 (150#): 0.5"→XXS | 0.75-1.5"→160 | 2"→80 | 3-6"→80 | 8"→STD | 10-16"→STD | 18"→STD | 20-28"→XS | 30"→30
+  B2N (300#): 0.5-0.75"→XXS | 1-1.5"→160 | 2"→80 | 3-6"→80 | 8-20"→40 | 22"→60 | 24"→40
+  D2N (600#): 0.5-0.75"→XXS(OD shifted: 0.5"=26.7, 0.75"=33.4) | 1-2"→XXS | 3-24"→80
+  E2N (900#): starts at 1" | 1-1.5"→XXS | 2-6"→XXS | 8"→XXS | 10"→160 | 12-24"→140/120 mix
+  F2N (1500#): starts at 1" | 1-1.5"→XXS | 2-4"→"-" | 6-10"→XXS | 12-24"→"-"/160 mix
+  G2N (2500#): starts at 1" | 1-1.5"→XXS | 2-24"→"-" (special calculated wall thicknesses)
 
 SS 316L 10-series (use "S" suffix for schedules from B36.19M):
-  A10 (150#): 0.5-0.75"→160 | 1-6"→80S | 8-24"→40S (22"→STD)
-  B10 (300#): 0.5-1.5"→160 | 2"→80S | 3-18"→40S | 20,24"→80S | 22"→XS
-  D10 (600#): 0.5-1.5"→160 | 2-6"→80S | 8-24"→60 (22"→"-")
-  E10 (900#): 0.5-1.5"→160 | 2-6"→80S | 8-24"→100
-  F10 (1500#): all sizes→160
+  A10 (150#): 0.5-1.5"→80S | 2-6"→40S | 8"→40S | 10-14"→10S | 16-24"→40S (22"→STD) | 30"→STD
+  B10 (300#): 0.5-1.5"→160 | 2-8"→40S | 10"→40S | 12-18"→40S | 20,24"→80S | 22"→60 | 30"→"-"
+  D10 (600#): 0.5"→XXS | 0.75-1.5"→160 | 2-6"→80S | 8-24"→80 (22"→80)
+  E10 (900#): 0.5" starts at 0.75" | 0.75"→XXS | 1-1.5"→160 | 2-6"→80S | 8-24"→100
+  F10 (1500#): 0.5-1.5"→XXS | 2-24"→160
   G10 (2500#): 0.5-2"→XXS | 3"→XXS | 4-12"→"-" (11 sizes max to 12")
 
 DSS 20-series (UNS S31803, use "S" suffix):
@@ -153,11 +169,12 @@ SDSS 25-series (UNS S32750, use "S" suffix):
   G25 (2500#): 0.5-2"→80S | 3"→160 | 4"→120 | 6-10"→160 | 12-14"→140 | 16-24"→140/160 mix
 
 GALV classes (A3/A4/B4/D4/A5/A6):
-  A3/A4 (150# GALV screwed): 0.5-1.5"→XXS | 2-6"→80 | 8-24"→STD
-  B4 (300# GALV): 0.5-1.5"→XXS | 2-6"→80 | 8-24"→40
-  D4 (600# GALV): 0.5-2"→160 | 3-24"→80
+  A3 (150# GALV screwed): 0.5-1.5"→XXS | 2-6"→80 | 8-24"→STD
+  A4 (150# GALV screwed): 0.5-1.5"→160 | 2-6"→80 | 8-24"→STD
+  B4 (300# GALV): 0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-24"→40
+  D4 (600# GALV): 0.5-1.5"→XXS | 2"→160 | 3-24"→80
   A5 (150# GALV 6mm): same as A3
-  A6 (150# Epoxy): same as A3
+  A6 (150# Epoxy): 0.5"→80S | 0.75-1.5"→80 | 2-6"→80 | 8-24"→STD
 
 CuNi 30-series (EEMUA 234):
   A30: No standard schedule — uses EEMUA 234 wall thickness tables
@@ -451,7 +468,7 @@ CRITICAL:
 3. For 900#+ classes (E/F/G-series), include dbb and dbb_inst fields with DBRP prefix codes. dbb_inst code = dbb code + "T" suffix. Omit dbb/dbb_inst for 150#-600# classes.
 3. fittings_by_size count MUST match pipe_data count.
 4. fittings_welded MUST be populated (not null) if class has welded fittings.
-5. Wall thickness must be EXACT ASME B36.10M / B36.19M values — do NOT estimate.
+5. Wall thickness values will be auto-corrected from ASME B36.10M/B36.19M lookup tables after generation. Focus on selecting the CORRECT SCHEDULE for each size — the WT will be looked up. For "-" schedule sizes (calculated WT), provide the calculated WT value.
 6. Return ONLY JSON. No markdown fences, no commentary.
 7. For GALV classes, gasket is neoprene/EPDM rubber (NOT spiral wound).
 8. For CuNi classes, use EEMUA 234 standards throughout.

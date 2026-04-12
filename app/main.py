@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import settings
 from app.routes.pms_routes import router as pms_router
 from app.services import data_service
+from app.services import db_service
 
 # Configure logging
 logging.basicConfig(
@@ -46,10 +47,23 @@ app.include_router(pms_router)
 
 @app.on_event("startup")
 async def startup():
-    """Load embedded pipe class data on startup."""
+    """Load pipe class data and initialize DB connection pool on startup."""
     logger.info("Starting %s v%s", settings.app_name, settings.app_version)
     classes = data_service.get_available_classes()
-    logger.info("Ready. %d pipe classes loaded from embedded data.", len(classes))
+    logger.info("%d pipe classes loaded from embedded data.", len(classes))
+    # Initialize PostgreSQL cache (gracefully skipped if DATABASE_URL not set)
+    await db_service.init_pool()
+    if db_service.is_available():
+        logger.info("PostgreSQL cache enabled")
+    else:
+        logger.info("PostgreSQL cache disabled — using AI-only mode")
+    logger.info("Ready.")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Close DB connection pool on shutdown."""
+    await db_service.close_pool()
 
 
 @app.get("/", response_class=HTMLResponse)

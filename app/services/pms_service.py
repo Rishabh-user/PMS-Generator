@@ -1,11 +1,13 @@
 """
-Core PMS service — orchestrates P-T lookup from JSON and AI generation.
+Core PMS service — orchestrates P-T lookup from JSON, DB cache, and AI generation.
 
 Flow:
-  1. Look up P-T data + identifiers from embedded JSON (pipe_classes.json)
-  2. Call Claude AI to generate all other fields (pipe data, fittings, flanges, etc.)
-  3. Merge P-T from JSON with AI-generated data
-  4. Cache the result to avoid repeated API calls
+  1. Check in-memory cache (L1) and PostgreSQL cache (L2)
+  2. If cached, return instantly
+  3. If not cached, call Claude AI to generate all fields
+  4. Correct wall thickness using ASME lookup tables
+  5. Store result in both DB and memory cache
+  6. Regenerate endpoint bypasses cache and forces fresh AI call
 """
 import hashlib
 import logging
@@ -22,6 +24,8 @@ from app.services.ai_service import generate_pms_with_ai
 from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
+from app.services import db_service
+from app.utils.pipe_data import correct_pipe_data
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,6 @@ def _determine_class_type(piping_class: str) -> str:
     cls = piping_class.upper()
     if cls.startswith("T"):
         return "tubing"
-    # Check specific material codes BEFORE generic GALV pattern
     if cls.startswith("A30"):
         return "cuni"
     if cls.startswith("A40"):
@@ -49,7 +52,6 @@ def _determine_class_type(piping_class: str) -> str:
         return "cpvc"
     if cls.startswith("A70"):
         return "titanium"
-    # GALV screwed classes: A3, A4, A5, A6, B4, D4 (but NOT A30, A40, A50, etc.)
     if any(cls == pfx or cls.startswith(pfx) and len(cls) == len(pfx)
            for pfx in ["A3", "A4", "A5", "A6", "B4", "D4"]):
         return "galv_screwed"
@@ -65,16 +67,12 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         temp_labels=pt_data.get("temp_labels", []),
     )
 
-    # Calculate hydrotest pressure from P-T data (1.5 × max design pressure)
     pressures = pt_data.get("pressures", [])
     if pressures:
-        max_design_pressure = max(pressures)
-        hydrotest = round(max_design_pressure * 1.5, 2)
-        hydrotest_str = str(hydrotest)
+        hydrotest_str = str(round(max(pressures) * 1.5, 2))
     else:
         hydrotest_str = ai_data.get("hydrotest_pressure", "")
 
-    # Parse pipe_data from AI
     pipe_data = []
     for p in ai_data.get("pipe_data", []):
         pipe_data.append(PipeSize(
@@ -87,7 +85,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             ends=p.get("ends", "BE"),
         ))
 
-    # Parse fittings from AI
     f = ai_data.get("fittings", {})
     fittings = FittingsData(
         fitting_type=f.get("fitting_type", ""),
@@ -100,7 +97,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         weldolet_spec=f.get("weldolet_spec", ""),
     )
 
-    # Parse fittings_welded from AI
     fw = ai_data.get("fittings_welded")
     fittings_welded = None
     if fw and isinstance(fw, dict):
@@ -115,7 +111,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             weldolet_spec=fw.get("weldolet_spec", ""),
         )
 
-    # Parse fittings_by_size from AI
     fittings_by_size = []
     for fb in ai_data.get("fittings_by_size", []):
         fittings_by_size.append(FittingBySize(
@@ -131,7 +126,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             weldolet_spec=fb.get("weldolet_spec", ""),
         ))
 
-    # Parse extra_fittings from AI
     ef = ai_data.get("extra_fittings", {})
     extra_fittings = ExtraFittings(
         coupling=ef.get("coupling", ""),
@@ -143,7 +137,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         swage=ef.get("swage", ""),
     )
 
-    # Parse flange from AI
     fl = ai_data.get("flange", {})
     flange = FlangeData(
         material_spec=fl.get("material_spec", ""),
@@ -152,7 +145,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         standard=fl.get("standard", ""),
     )
 
-    # Parse spectacle_blind from AI
     sb = ai_data.get("spectacle_blind", {})
     spectacle = SpectacleBlind(
         material_spec=sb.get("material_spec", ""),
@@ -160,7 +152,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         standard_large=sb.get("standard_large", ""),
     )
 
-    # Parse bolts_nuts_gaskets from AI
     bg = ai_data.get("bolts_nuts_gaskets", {})
     bng = BoltsNutsGaskets(
         stud_bolts=bg.get("stud_bolts", ""),
@@ -168,7 +159,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         gasket=bg.get("gasket", ""),
     )
 
-    # Parse valves from AI (supports both class-level and size-specific codes)
     v = ai_data.get("valves", {})
 
     def _parse_valve_by_size(entries) -> list[ValveSizeEntry]:
@@ -227,20 +217,9 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
     )
 
 
-async def generate_pms(req: PMSRequest) -> PMSResponse:
-    """
-    Generate PMS:
-      1. Look up P-T data from JSON by piping_class
-      2. Call Claude AI to generate all other data
-      3. Merge and return
-    """
-    key = _cache_key(req)
-
-    if key in _pms_cache:
-        logger.info("Cache hit for %s", req.piping_class)
-        return _pms_cache[key]
-
-    # Step 1: Find P-T data from JSON
+async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
+    """Core AI generation logic — shared by generate_pms and regenerate_pms."""
+    # Find P-T data from JSON
     entry = data_service.find_entry(req.piping_class)
     if not entry:
         raise RuntimeError(
@@ -248,21 +227,20 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
             "Only classes with P-T data in the system can be generated."
         )
 
-    # Step 2: Get reference entries for AI context (same rating)
+    # Get reference entries for AI context
     all_entries = data_service.get_all_entries()
     rating = entry.get("rating", "")
     reference_entries = [
         e for e in all_entries
         if e.get("rating") == rating and e["piping_class"] != req.piping_class
     ][:3]
-    # Add a couple from different ratings for broader context
     other_entries = [
         e for e in all_entries
         if e.get("rating") != rating
     ][:2]
     reference_entries.extend(other_entries)
 
-    # Step 3: Call AI to generate everything except P-T
+    # Call AI to generate everything except P-T
     ai_data = await generate_pms_with_ai(
         piping_class=req.piping_class,
         material=req.material,
@@ -278,17 +256,81 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
             "Please check that ANTHROPIC_API_KEY is configured correctly."
         )
 
-    # Step 4: Merge P-T from JSON + AI-generated data
+    # Correct wall thickness values using ASME lookup tables
+    if "pipe_data" in ai_data:
+        correct_pipe_data(ai_data["pipe_data"])
+        logger.info("Corrected pipe wall thickness values from ASME B36.10M/B36.19M tables")
+
+    # Merge P-T from JSON + AI-generated data
     pms = _build_pms_response(entry, ai_data, req)
-    _pms_cache[key] = pms
-    logger.info("Generated PMS for %s (P-T from JSON, rest from AI)", req.piping_class)
+    logger.info("Generated PMS for %s via AI (P-T from JSON, rest from AI)", req.piping_class)
     return pms
 
 
-def clear_cache():
-    """Clear the PMS cache to force fresh AI generation."""
+async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
+    """Store PMS in both in-memory cache and PostgreSQL."""
+    _pms_cache[key] = pms
+    if db_service.is_available():
+        await db_service.store_pms(
+            cache_key=key,
+            piping_class=req.piping_class,
+            material=req.material,
+            corrosion_allowance=req.corrosion_allowance,
+            service=req.service,
+            response=pms.model_dump(),
+        )
+
+
+async def generate_pms(req: PMSRequest) -> PMSResponse:
+    """
+    Generate PMS with layered caching:
+      L1: In-memory TTLCache (fast, session-scoped)
+      L2: PostgreSQL (persistent across restarts)
+      L3: Claude AI (expensive, only if not cached)
+    """
+    key = _cache_key(req)
+
+    # L1: In-memory cache
+    if key in _pms_cache:
+        logger.info("L1 memory cache hit for %s", req.piping_class)
+        return _pms_cache[key]
+
+    # L2: PostgreSQL cache
+    if db_service.is_available():
+        cached = await db_service.get_cached_pms(key)
+        if cached:
+            logger.info("L2 database cache hit for %s", req.piping_class)
+            pms = PMSResponse(**cached)
+            _pms_cache[key] = pms  # Promote to L1
+            return pms
+
+    # L3: AI generation
+    logger.info("Cache miss for %s — generating via AI", req.piping_class)
+    pms = await _generate_from_ai(req)
+    await _store_in_caches(key, req, pms)
+    return pms
+
+
+async def regenerate_pms(req: PMSRequest) -> PMSResponse:
+    """
+    Force fresh AI generation, bypassing all caches.
+    Overwrites the existing cached result in both L1 and L2.
+    """
+    key = _cache_key(req)
+    logger.info("Regenerating PMS for %s via AI (forced, bypassing cache)", req.piping_class)
+
+    pms = await _generate_from_ai(req)
+    await _store_in_caches(key, req, pms)
+    return pms
+
+
+async def clear_cache():
+    """Clear both in-memory and database caches."""
     _pms_cache.clear()
-    logger.info("PMS cache cleared — next request will re-generate from AI")
+    count = 0
+    if db_service.is_available():
+        count = await db_service.clear_all_cache()
+    logger.info("Cache cleared — memory + %d DB entries", count)
 
 
 def generate_excel(pms: PMSResponse) -> bytes:

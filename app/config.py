@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     cache_ttl: int = 3600
     cache_max_size: int = 256
 
+    database_url: str = ""  # PostgreSQL DSN, e.g. postgresql://user:pass@localhost:5432/pms_generator
+
     class Config:
         env_file = ".env"
         extra = "ignore"

@@ -573,6 +573,64 @@ body {
     font-family: 'Courier New', monospace;
     letter-spacing: 1px;
 }
+.pms-banner-action {
+    margin-top: 20px;
+}
+.btn-generate-full {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 32px;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, #0e3a5c 0%, #1a6b8a 100%);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: all 0.25s ease;
+    box-shadow: 0 4px 14px rgba(14, 58, 92, 0.35);
+}
+.btn-generate-full:hover {
+    background: linear-gradient(135deg, #1a6b8a 0%, #0e3a5c 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(14, 58, 92, 0.45);
+}
+.btn-generate-full:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+.btn-generate-full svg { flex-shrink: 0; }
+.btn-regenerate {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 24px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, #b45309 0%, #d97706 100%);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    box-shadow: 0 3px 10px rgba(180, 83, 9, 0.3);
+}
+.btn-regenerate:hover {
+    background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 16px rgba(180, 83, 9, 0.4);
+}
+.btn-regenerate:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+.btn-regenerate svg { flex-shrink: 0; }
+.spinner-icon { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ================================================================
    RESULT TABS — Underline style (not pills)

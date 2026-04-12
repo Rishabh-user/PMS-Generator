@@ -3,8 +3,12 @@ let currentPMS = null;
 let allClasses = [];
 let indexData = [];
 
+let pendingPMSRequest = null;  // Stores the request data between Step 1 and Step 2
+
 const API = {
+    previewPMS: (data) => fetch('/api/preview-pms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     generatePMS: (data) => fetch('/api/generate-pms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+    regeneratePMS: (data) => fetch('/api/regenerate-pms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     downloadExcel: (data) => fetch('/api/download-excel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     listClasses: () => fetch('/api/pipe-classes'),
     listCodes: () => fetch('/api/pipe-classes/codes'),
@@ -97,6 +101,9 @@ async function loadJsonFromClipboard() {
         renderPMSCodeBanner(currentPMS);
         renderFullResult(currentPMS);
         document.getElementById('resultsContainer').style.display = '';
+        document.querySelector('.result-tabs-nav').style.display = '';
+        document.querySelectorAll('.result-panel').forEach(p => p.style.display = '');
+        document.getElementById('actionBar').style.display = '';
         showToast(`Loaded PMS for ${pms.piping_class} from clipboard`, 'success');
     } catch (err) {
         if (err.name === 'NotAllowedError') {
@@ -110,6 +117,9 @@ async function loadJsonFromClipboard() {
                 renderPMSCodeBanner(currentPMS);
                 renderFullResult(currentPMS);
                 document.getElementById('resultsContainer').style.display = '';
+                document.querySelector('.result-tabs-nav').style.display = '';
+                document.querySelectorAll('.result-panel').forEach(p => p.style.display = '');
+                document.getElementById('actionBar').style.display = '';
                 showToast(`Loaded PMS for ${pms.piping_class} from JSON`, 'success');
             } catch { showToast('Invalid JSON format', 'error'); }
         } else {
@@ -234,7 +244,7 @@ function initDesignInputs() {
     update();
 }
 
-// === Generate PMS ===
+// === Step 1: Preview PMS (no AI call) ===
 async function generatePMS() {
     const selectedRating = document.getElementById('pipingClass').value.trim();
     const selectedMaterial = document.getElementById('material').value;
@@ -243,7 +253,6 @@ async function generatePMS() {
 
     if (!selectedRating || !selectedMaterial) { showToast('Please select Rating and Material', 'error'); return; }
 
-    // Resolve piping class from rating + material + CA
     const resolvedClass = resolvePipingClass(selectedRating, selectedMaterial, selectedCA);
     if (!resolvedClass) { showToast('No matching piping class found for this combination', 'error'); return; }
 
@@ -254,29 +263,93 @@ async function generatePMS() {
         service: selectedService || 'General',
     };
 
-    showLoading('Loading PMS from reference data...');
+    // Save request for Step 2
+    pendingPMSRequest = data;
+
+    showLoading('Resolving piping class...');
     try {
-        const res = await API.generatePMS(data);
+        const res = await API.previewPMS(data);
+        if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Preview failed'); }
+        const preview = await res.json();
+
+        // Show banner card with "Generate Full PMS" button — no tabs yet
+        renderPreviewBanner(preview);
+        document.getElementById('resultsContainer').style.display = '';
+        // Hide tabs, panels, and action bar until full generation
+        document.querySelector('.result-tabs-nav').style.display = 'none';
+        document.querySelectorAll('.result-panel').forEach(p => p.style.display = 'none');
+        document.getElementById('actionBar').style.display = 'none';
+        document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        showToast(`Class ${preview.piping_class} resolved — click "Generate Full PMS" to load all data`, 'info');
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { hideLoading(); }
+}
+
+// === Step 2: Full AI Generation (triggered from card button) ===
+async function generateFullPMS() {
+    if (!pendingPMSRequest) { showToast('No class selected. Please generate preview first.', 'error'); return; }
+
+    // Disable the generate button and show loading state on it
+    const btn = document.getElementById('bannerGenerateBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<svg class="spinner-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg> Generating with AI...`;
+    }
+
+    showLoading('Generating full PMS with AI — this may take 15-30 seconds...');
+    try {
+        const res = await API.generatePMS(pendingPMSRequest);
         if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Generation failed'); }
         currentPMS = await res.json();
 
-        // Render PMS Code Banner
+        // Replace preview banner with final banner
         renderPMSCodeBanner(currentPMS);
 
+        // Show tabs, action bar, and render full result
         renderFullResult(currentPMS);
-        document.getElementById('resultsContainer').style.display = '';
+        document.querySelector('.result-tabs-nav').style.display = '';
+        document.querySelectorAll('.result-panel').forEach(p => p.style.display = '');
+        document.getElementById('actionBar').style.display = '';
         // Activate first result tab
         document.querySelectorAll('.result-tab').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.result-panel').forEach(p => p.classList.remove('active'));
         document.querySelector('.result-tab').classList.add('active');
         document.querySelector('.result-panel').classList.add('active');
-        document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
-        showToast('PMS loaded from reference data!', 'success');
-    } catch (err) { showToast(err.message, 'error'); }
+        showToast('Full PMS generated successfully!', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+        // Re-enable button on error
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> Generate Full PMS`;
+        }
+    }
     finally { hideLoading(); }
 }
 
-// === PMS Code Banner ===
+// === Preview Banner (Step 1 — with Generate button) ===
+function renderPreviewBanner(preview) {
+    const banner = document.getElementById('pmsCodeBanner');
+    banner.innerHTML = `
+        <div class="pms-banner-header">Generated PMS Code</div>
+        <div class="pms-banner-code">${preview.piping_class}</div>
+        <div class="pms-banner-details">
+            <span class="pms-banner-tag rating">${preview.rating}</span>
+            <span class="pms-banner-tag material">${preview.material}</span>
+            <span class="pms-banner-tag ca">${preview.corrosion_allowance} CA</span>
+            <span class="pms-banner-tag service">${preview.service}</span>
+        </div>
+        <div class="pms-banner-id">PMS-${preview.piping_class}</div>
+        <div class="pms-banner-action">
+            <button class="btn btn-generate-full" id="bannerGenerateBtn" onclick="generateFullPMS()">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                Generate Full PMS
+            </button>
+        </div>
+    `;
+}
+
+// === Final PMS Code Banner (Step 2 — after full generation, with Regenerate button) ===
 function renderPMSCodeBanner(pms) {
     const banner = document.getElementById('pmsCodeBanner');
     banner.innerHTML = `
@@ -289,7 +362,42 @@ function renderPMSCodeBanner(pms) {
             <span class="pms-banner-tag service">${pms.service}</span>
         </div>
         <div class="pms-banner-id">PMS-${pms.piping_class}</div>
+        <div class="pms-banner-action">
+            <button class="btn btn-regenerate" id="regenerateBtn" onclick="regenerateFullPMS()">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+                Regenerate with AI
+            </button>
+        </div>
     `;
+}
+
+// === Regenerate PMS (force fresh AI call, bypass DB cache) ===
+async function regenerateFullPMS() {
+    if (!pendingPMSRequest) { showToast('No class selected. Please generate first.', 'error'); return; }
+
+    const btn = document.getElementById('regenerateBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<svg class="spinner-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg> Regenerating...`;
+    }
+
+    showLoading('Regenerating PMS with fresh AI data — this may take 15-30 seconds...');
+    try {
+        const res = await API.regeneratePMS(pendingPMSRequest);
+        if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Regeneration failed'); }
+        currentPMS = await res.json();
+
+        renderPMSCodeBanner(currentPMS);
+        renderFullResult(currentPMS);
+        showToast('PMS regenerated with fresh AI data!', 'success');
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        hideLoading();
+        // Re-enable button (it's re-rendered by renderPMSCodeBanner, but just in case)
+        const newBtn = document.getElementById('regenerateBtn');
+        if (newBtn) { newBtn.disabled = false; }
+    }
 }
 
 // === Render Full Result ===
@@ -562,6 +670,10 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
     const flags = [];
     const svc = pms.service.toLowerCase();
     const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
+    // Base pressure for hydrotest: max P-T rated pressure if available, otherwise design pressure
+    const ptPressures = pms.pressure_temperature && pms.pressure_temperature.pressures ? pms.pressure_temperature.pressures : [];
+    const maxRatedP = ptPressures.length > 0 ? Math.max(...ptPressures) : dpVal;
+    const htBaseP = pms.hydrotest_pressure ? (ht / 1.5) : dpVal;  // back-calculate the base used
 
     if (isNACE) {
         flags.push({
@@ -606,7 +718,7 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
         flags.push({
             level: 'mandatory', badge: 'MANDATORY',
             title: 'NDE: 100% RT or UT \u2014 NACE / Sour Service (B31.3 \u00a7341.4.2)',
-            body: 'Weld examination: 100% RT or UT \u2014 NACE / Sour Service (B31.3 \u00a7341.4.2). PWHT: Required \u2014 NACE MR0175 hardness control (HAZ \u2264 250 HBW). Pressure test: hydrostatic at ' + ht.toFixed(1) + ' barg (1.5 \u00d7 DP) per B31.3 \u00a7345.4.2.'
+            body: 'Weld examination: 100% RT or UT \u2014 NACE / Sour Service (B31.3 \u00a7341.4.2). PWHT: Required \u2014 NACE MR0175 hardness control (HAZ \u2264 250 HBW). Pressure test: hydrostatic at ' + ht.toFixed(1) + ' barg (1.5 \u00d7 ' + htBaseP.toFixed(1) + ' barg) per B31.3 \u00a7345.4.2.'
         });
     }
 
@@ -621,8 +733,8 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
     // Always add hydrotest flag
     flags.push({
         level: 'mandatory', badge: 'MANDATORY',
-        title: `Hydrostatic Test Pressure: ${ht.toFixed(1)} barg (= 1.5 \u00d7 ${dpVal} barg DP)`,
-        body: `Shop test: ${ht.toFixed(1)} barg per ASME B31.3 \u00a7345.4.2. Medium: potable water (deionised for SS). Duration: minimum 10 minutes. Verify all flanges rated \u2265 ${ht.toFixed(1)} barg at test temperature.`
+        title: `Hydrostatic Test Pressure: ${ht.toFixed(1)} barg (= 1.5 \u00d7 ${htBaseP.toFixed(1)} barg max rated pressure)`,
+        body: `Shop test: ${ht.toFixed(1)} barg per ASME B31.3 \u00a7345.4.2. Base: max P-T rated pressure = ${htBaseP.toFixed(1)} barg (at ambient). Medium: potable water (deionised for SS). Duration: minimum 10 minutes. Verify all flanges rated \u2265 ${ht.toFixed(1)} barg at test temperature.`
     });
 
     const container = document.getElementById('engineeringFlags');
