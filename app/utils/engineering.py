@@ -4,6 +4,11 @@ Unit conversions, P-T ratings, adequacy checks per ASME standards.
 """
 import math
 
+from app.utils.engineering_constants import (
+    HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
+    MILL_TOLERANCE_FRACTION, Y_COEFFICIENT, WELD_STRENGTH_W,
+)
+
 # === Unit Conversions ===
 
 def barg_to_psig(barg: float) -> float:
@@ -28,17 +33,17 @@ def inch_to_mm(inch: float) -> float:
 
 # === Design Calculations ===
 
-def hydrotest_pressure(design_pressure: float, factor: float = 1.5) -> float:
+def hydrotest_pressure(design_pressure: float, factor: float = HYDROTEST_FACTOR) -> float:
     """Calculate hydrotest pressure per ASME B31.3 (typically 1.5x DP)."""
     return round(design_pressure * factor, 2)
 
 
-def operating_pressure_estimate(design_pressure: float, factor: float = 0.8) -> float:
+def operating_pressure_estimate(design_pressure: float, factor: float = OPERATING_PRESSURE_FACTOR) -> float:
     """Estimate operating pressure (typically 80% of design)."""
     return round(design_pressure * factor, 2)
 
 
-def operating_temp_estimate(design_temp: float, factor: float = 0.8) -> float:
+def operating_temp_estimate(design_temp: float, factor: float = OPERATING_TEMP_FACTOR) -> float:
     """Estimate operating temperature (typically 80% of design)."""
     return round(design_temp * factor, 1)
 
@@ -99,8 +104,8 @@ def calculate_wall_thickness(
     allowable_stress_mpa: float,
     joint_factor: float,
     corrosion_allowance_mm: float,
-    mill_tolerance: float = 0.125,
-    coefficient_y: float = 0.4,
+    mill_tolerance: float = MILL_TOLERANCE_FRACTION,
+    coefficient_y: float = Y_COEFFICIENT,
 ) -> dict:
     """
     Calculate minimum wall thickness per ASME B31.3 Eq. 3a.
@@ -111,7 +116,7 @@ def calculate_wall_thickness(
     D = od_mm
     S = allowable_stress_mpa
     E = joint_factor
-    W = 1.0  # Weld strength reduction factor (1.0 for non-longitudinal welds)
+    W = WELD_STRENGTH_W  # Weld strength reduction factor per ASME B31.3 Table 302.3.5
     Y = coefficient_y
 
     # Minimum required thickness

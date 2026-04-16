@@ -14,6 +14,14 @@ from app.services import data_service
 from app.utils.engineering import (
     check_pt_adequacy,
 )
+from app.utils.engineering_constants import (
+    HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
+    MILL_TOLERANCE_PERCENT, MILL_TOLERANCE_FRACTION,
+    JOINT_EFFICIENCY_E, WELD_STRENGTH_W, Y_COEFFICIENT,
+    SMALL_BORE_CUTOFF_NPS, AI_MAX_TOKENS,
+    DEFAULT_CORROSION_ALLOWANCE, DEFAULT_SERVICE,
+    STRESS_CS, STRESS_SS316L, STRESS_SS304L, STRESS_DSS, STRESS_SDSS, STRESS_CUNI,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["PMS"])
@@ -46,7 +54,7 @@ async def api_preview_pms(req: PMSRequest):
         )
     pt = entry.get("pressure_temperature", {})
     pressures = pt.get("pressures", [])
-    hydrotest = str(round(max(pressures) * 1.5, 2)) if pressures else ""
+    hydrotest = str(round(max(pressures) * HYDROTEST_FACTOR, 2)) if pressures else ""
     return {
         "piping_class": req.piping_class,
         "rating": entry.get("rating", ""),
@@ -110,8 +118,8 @@ async def get_pms_by_class(
     req = PMSRequest(
         piping_class=piping_class,
         material=material or piping_class,
-        corrosion_allowance=corrosion_allowance or "3 mm",
-        service=service or "General",
+        corrosion_allowance=corrosion_allowance or DEFAULT_CORROSION_ALLOWANCE,
+        service=service or DEFAULT_SERVICE,
     )
     try:
         return await generate_pms(req)
@@ -132,6 +140,32 @@ async def api_branch_chart(chart_id: str):
     if not chart:
         raise HTTPException(status_code=404, detail=f"Chart {chart_id} not found")
     return chart.model_dump()
+
+
+@router.get("/engineering-constants")
+async def api_engineering_constants():
+    """Return all engineering constants so the frontend uses the same values as backend."""
+    return {
+        "hydrotest_factor": HYDROTEST_FACTOR,
+        "operating_pressure_factor": OPERATING_PRESSURE_FACTOR,
+        "operating_temp_factor": OPERATING_TEMP_FACTOR,
+        "mill_tolerance_percent": MILL_TOLERANCE_PERCENT,
+        "mill_tolerance_fraction": MILL_TOLERANCE_FRACTION,
+        "joint_efficiency_E": JOINT_EFFICIENCY_E,
+        "weld_strength_W": WELD_STRENGTH_W,
+        "y_coefficient": Y_COEFFICIENT,
+        "small_bore_cutoff_nps": SMALL_BORE_CUTOFF_NPS,
+        "default_corrosion_allowance": DEFAULT_CORROSION_ALLOWANCE,
+        "default_service": DEFAULT_SERVICE,
+        "stress_tables": {
+            "CS": STRESS_CS,
+            "SS316L": STRESS_SS316L,
+            "SS304L": STRESS_SS304L,
+            "DSS": STRESS_DSS,
+            "SDSS": STRESS_SDSS,
+            "CUNI": STRESS_CUNI,
+        },
+    }
 
 
 @router.post("/clear-cache")

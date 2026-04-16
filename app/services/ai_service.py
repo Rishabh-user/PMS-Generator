@@ -12,6 +12,7 @@ import logging
 import anthropic
 
 from app.config import settings
+from app.utils.engineering_constants import AI_MAX_TOKENS, MILL_TOLERANCE_PERCENT
 
 logger = logging.getLogger(__name__)
 
@@ -412,7 +413,7 @@ Design Code:
   CuNi: "ASME B 31.3 / EEMUA 234"
 
 Pipe Code: ASME B 36.10M (CS/LTCS/GALV) or ASME B 36.19M (SS/DSS/SDSS) or EEMUA 234 (CuNi)
-Mill Tolerance: 12.5% (standard) — 0.125
+Mill Tolerance: {MILL_TOLERANCE_PERCENT}% (standard) — {MILL_TOLERANCE_PERCENT / 100}
 Branch Chart:
   CS/LTCS/SS/DSS/SDSS: Ref. APPENDIX-1, Chart 1
   GALV: Ref. APPENDIX-1, Chart 2
@@ -424,7 +425,7 @@ Ends: "BE" (bevel end for standard piping), "PE" (plain end for CuNi/tubing), sp
 {{
     "design_code": "...",
     "pipe_code": "...",
-    "mill_tolerance": "12.5%",
+    "mill_tolerance": "{MILL_TOLERANCE_PERCENT}%",
     "branch_chart": "Ref. APPENDIX-1, Chart 1",
     "hydrotest_pressure": "",
     "pipe_data": [
@@ -505,7 +506,7 @@ async def generate_pms_with_ai(
 
         message = await client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=16384,
+            max_tokens=AI_MAX_TOKENS,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )

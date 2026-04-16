@@ -26,6 +26,7 @@ from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
 from app.services import db_service
 from app.utils.pipe_data import correct_pipe_data
+from app.utils.engineering_constants import HYDROTEST_FACTOR
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
 
     pressures = pt_data.get("pressures", [])
     if pressures:
-        hydrotest_str = str(round(max(pressures) * 1.5, 2))
+        hydrotest_str = str(round(max(pressures) * HYDROTEST_FACTOR, 2))
     else:
         hydrotest_str = ai_data.get("hydrotest_pressure", "")
 

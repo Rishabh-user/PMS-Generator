@@ -5,6 +5,30 @@ let indexData = [];
 
 let pendingPMSRequest = null;  // Stores the request data between Step 1 and Step 2
 
+// === Engineering Constants (loaded from backend on startup) ===
+// Defaults here are fallbacks — overwritten by /api/engineering-constants
+let ENG = {
+    hydrotest_factor: 1.5,
+    operating_pressure_factor: 0.8,
+    operating_temp_factor: 0.8,
+    mill_tolerance_percent: 12.5,
+    mill_tolerance_fraction: 0.125,
+    joint_efficiency_E: 1.0,
+    weld_strength_W: 1.0,
+    y_coefficient: 0.4,
+    small_bore_cutoff_nps: 2.0,
+    default_corrosion_allowance: "3 mm",
+    default_service: "General",
+    stress_tables: {
+        CS:     { 38: 20000, 50: 20000, 100: 20000, 150: 18900, 200: 17700, 250: 16500, 300: 15600, 350: 14800, 400: 12100 },
+        SS316L: { 38: 16700, 50: 16700, 100: 16700, 150: 14500, 200: 13300, 250: 12500, 300: 11800, 350: 11300, 400: 10900 },
+        SS304L: { 38: 16700, 50: 16700, 100: 16700, 150: 13800, 200: 12700, 250: 11800, 300: 11200, 350: 10700, 400: 10300 },
+        DSS:    { 38: 25000, 50: 25000, 100: 23300, 150: 22000, 200: 21000, 250: 20400, 300: 20000 },
+        SDSS:   { 38: 36700, 50: 36700, 100: 35000, 150: 33100, 200: 31900, 250: 31000, 300: 30500 },
+        CUNI:   { 38: 10000, 50: 10000, 100: 10000, 150: 10000, 200: 9400, 250: 8600 },
+    },
+};
+
 const API = {
     previewPMS: (data) => fetch('/api/preview-pms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     generatePMS: (data) => fetch('/api/generate-pms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
@@ -13,10 +37,11 @@ const API = {
     listClasses: () => fetch('/api/pipe-classes'),
     listCodes: () => fetch('/api/pipe-classes/codes'),
     indexData: () => fetch('/api/index-data'),
+    engineeringConstants: () => fetch('/api/engineering-constants'),
     health: () => fetch('/health'),
 };
 
-// === Engineering Constants ===
+// === Unit Conversions (physical constants — never change) ===
 const barg2psig = (b) => (b * 14.5038).toFixed(1);
 const c2f = (c) => (c * 9 / 5 + 32).toFixed(1);
 const mm2inch = (mm) => mm / 25.4;
@@ -24,6 +49,20 @@ const inch2mm = (inch) => inch * 25.4;
 const barg2mpa = (b) => b * 0.1;
 const psi2mpa = (p) => p * 0.00689476;
 const mpa2psi = (m) => m / 0.00689476;
+
+// === Load Engineering Constants from Backend ===
+async function loadEngineeringConstants() {
+    try {
+        const res = await API.engineeringConstants();
+        if (res.ok) {
+            const data = await res.json();
+            ENG = { ...ENG, ...data };
+            console.log('Engineering constants loaded from backend:', ENG);
+        }
+    } catch (e) {
+        console.warn('Failed to load engineering constants — using defaults:', e);
+    }
+}
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
@@ -36,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAPI();
     loadBrowseData();
     loadIndexData();
+    loadEngineeringConstants();
 });
 
 // === Theme Toggle ===
@@ -474,10 +514,10 @@ function updateCalculations() {
     const dtVal = parseFloat(document.getElementById('designTemperature').value) || 0;
     const mdmtVal = parseFloat(document.getElementById('mdmt').value) || 0;
 
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
+    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
     const htStr = typeof ht === 'number' ? ht.toFixed(1) : String(ht);
-    const op = (dpVal * 0.8).toFixed(1);
-    const opT = (dtVal * 0.8).toFixed(1);
+    const op = (dpVal * ENG.operating_pressure_factor).toFixed(1);
+    const opT = (dtVal * ENG.operating_temp_factor).toFixed(1);
 
     setKVList('pressureCalcList', [
         { l: 'Design Pressure', v: `<strong>${dpVal} barg</strong> <span class="unit">(${barg2psig(dpVal)} psig)</span>` },
@@ -588,40 +628,27 @@ function renderPTTable(pms, designTemp) {
 // === TAB 2: Schedule & Wall Thickness
 // ============================================================
 // === ASME B31.3 Table A-1: Allowable Stress S(T) by material family (psi) ===
-// Values at common design temperatures per ASME B31.3-2022
+// Tables loaded from backend via ENG.stress_tables — single source of truth
 function getAllowableStress(material, tempC) {
     const mat = material.toUpperCase();
-    // Allowable stress tables: { tempC: S_psi }
-    // CS — ASTM A106 Gr.B / A333 Gr.6 (LTCS same stress as CS)
-    const CS_STRESS = { 38: 20000, 50: 20000, 100: 20000, 150: 18900, 200: 17700, 250: 16500, 300: 15600, 350: 14800, 400: 12100 };
-    // SS 316L — ASTM A312 TP316L
-    const SS316L_STRESS = { 38: 16700, 50: 16700, 100: 16700, 150: 14500, 200: 13300, 250: 12500, 300: 11800, 350: 11300, 400: 10900 };
-    // SS 304L — ASTM A312 TP304L
-    const SS304L_STRESS = { 38: 16700, 50: 16700, 100: 16700, 150: 13800, 200: 12700, 250: 11800, 300: 11200, 350: 10700, 400: 10300 };
-    // DSS — ASTM A790 S31803 (UNS S31803)
-    const DSS_STRESS = { 38: 25000, 50: 25000, 100: 23300, 150: 22000, 200: 21000, 250: 20400, 300: 20000 };
-    // SDSS — ASTM A790 S32750 (UNS S32750)
-    const SDSS_STRESS = { 38: 36700, 50: 36700, 100: 35000, 150: 33100, 200: 31900, 250: 31000, 300: 30500 };
-    // CuNi 90/10 — ASTM B466 C70600
-    const CUNI_STRESS = { 38: 10000, 50: 10000, 100: 10000, 150: 10000, 200: 9400, 250: 8600 };
-    // GALV is still CS pipe
-    const GALV_STRESS = CS_STRESS;
+    const tables = ENG.stress_tables;
 
-    let table = CS_STRESS;  // default
+    // Determine which table to use
+    let table = tables.CS;  // default
     if (mat.includes('SDSS') || mat.includes('S32750') || mat.includes('SUPER DUPLEX')) {
-        table = SDSS_STRESS;
+        table = tables.SDSS;
     } else if (mat.includes('DSS') || mat.includes('S31803') || mat.includes('DUPLEX')) {
-        table = DSS_STRESS;
+        table = tables.DSS;
     } else if (mat.includes('316L')) {
-        table = SS316L_STRESS;
+        table = tables.SS316L;
     } else if (mat.includes('304L')) {
-        table = SS304L_STRESS;
+        table = tables.SS304L;
     } else if (mat.includes('SS') || mat.includes('STAINLESS')) {
-        table = SS316L_STRESS;  // default SS
+        table = tables.SS316L;  // default SS
     } else if (mat.includes('CUNI') || mat.includes('CU-NI') || mat.includes('COPPER') || mat.includes('C70600')) {
-        table = CUNI_STRESS;
+        table = tables.CUNI;
     } else if (mat.includes('GALV')) {
-        table = GALV_STRESS;
+        table = tables.CS;
     }
     // CS, LTCS, NACE variants all use CS table (NACE is just a service condition, same material)
 
@@ -644,9 +671,9 @@ function getAllowableStress(material, tempC) {
 function renderScheduleTab(pms) {
     const dpVal = parseFloat(document.getElementById('designPressure').value) || 0;
     const dtVal = parseFloat(document.getElementById('designTemperature').value) || 0;
-    const E = 1.0;  // Seamless butt weld joint efficiency
-    const W = 1.0;
-    const Y = 0.4;
+    const E = ENG.joint_efficiency_E;
+    const W = ENG.weld_strength_W;
+    const Y = ENG.y_coefficient;
     // Material-specific allowable stress from ASME B31.3 Table A-1
     const stressData = getAllowableStress(pms.material, dtVal);
     const S_psi = stressData.S_psi;
@@ -659,7 +686,7 @@ function renderScheduleTab(pms) {
     const isDSS = pms.material.toUpperCase().includes('DSS') || pms.material.toUpperCase().includes('DUPLEX');
     const isSDSS = pms.material.toUpperCase().includes('SDSS') || pms.material.toUpperCase().includes('SUPER DUPLEX') || pms.material.toUpperCase().includes('S32750');
     const isSS = pms.material.toUpperCase().includes('SS') || pms.material.toUpperCase().includes('STAINLESS');
-    const millTol = parseFloat(pms.mill_tolerance) || 12.5;
+    const millTol = parseFloat(pms.mill_tolerance) || ENG.mill_tolerance_percent;
     const millFrac = millTol / 100;
 
     // Parse CA in mm — respect NIL / 0 corrosion allowance
@@ -710,7 +737,7 @@ function renderScheduleTab(pms) {
     ]);
 
     // Code Factors
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
+    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
     setKVList('codeFactorsList', [
         { l: 'Pipe Standard', v: pipeStandard, bold: true },
         { l: 'Joint Type', v: document.getElementById('jointType').value, bold: true },
@@ -733,11 +760,11 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
     const flags = [];
     const svc = pms.service.toLowerCase();
     const mat = pms.material.toUpperCase();
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
+    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
     // Base pressure for hydrotest: max P-T rated pressure if available, otherwise design pressure
     const ptPressures = pms.pressure_temperature && pms.pressure_temperature.pressures ? pms.pressure_temperature.pressures : [];
     const maxRatedP = ptPressures.length > 0 ? Math.max(...ptPressures) : dpVal;
-    const htBaseP = pms.hydrotest_pressure ? (ht / 1.5) : dpVal;  // back-calculate the base used
+    const htBaseP = pms.hydrotest_pressure ? (ht / ENG.hydrotest_factor) : dpVal;  // back-calculate the base used
 
     // Determine material family for flag specificity
     const isCS = mat.includes('CS') && !mat.includes('DSS') && !mat.includes('SS') && !mat.includes('SDSS');
@@ -984,7 +1011,7 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
     // Summary Stats
     const mawps = results.map(r => r.mawp).filter(m => m > 0);
     const margins = results.map(r => r.margin).filter(m => m > 0);
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
+    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
 
     setKVList('summaryStats', [
         { l: 'Min MAWP', v: `${Math.min(...mawps).toFixed(1)} barg` },
@@ -1014,8 +1041,8 @@ function renderPipeFittingsTab(pms) {
     const fittingsW = pms.fittings_welded;
 
     // Split into small bore (≤ 2") and large bore (> 2")
-    const smallBore = pipes.filter(p => parseFloat(p.size_inch) <= 2);
-    const largeBore = pipes.filter(p => parseFloat(p.size_inch) > 2);
+    const smallBore = pipes.filter(p => parseFloat(p.size_inch) <= ENG.small_bore_cutoff_nps);
+    const largeBore = pipes.filter(p => parseFloat(p.size_inch) > ENG.small_bore_cutoff_nps);
 
     const smallSchedule = smallBore.length > 0 ? smallBore[0].schedule : (pipes.length > 0 ? pipes[0].schedule : 'STD');
     const largeSchedule = largeBore.length > 0 ? largeBore[0].schedule : smallSchedule;
