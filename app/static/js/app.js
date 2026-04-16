@@ -587,26 +587,89 @@ function renderPTTable(pms, designTemp) {
 // ============================================================
 // === TAB 2: Schedule & Wall Thickness
 // ============================================================
+// === ASME B31.3 Table A-1: Allowable Stress S(T) by material family (psi) ===
+// Values at common design temperatures per ASME B31.3-2022
+function getAllowableStress(material, tempC) {
+    const mat = material.toUpperCase();
+    // Allowable stress tables: { tempC: S_psi }
+    // CS — ASTM A106 Gr.B / A333 Gr.6 (LTCS same stress as CS)
+    const CS_STRESS = { 38: 20000, 50: 20000, 100: 20000, 150: 18900, 200: 17700, 250: 16500, 300: 15600, 350: 14800, 400: 12100 };
+    // SS 316L — ASTM A312 TP316L
+    const SS316L_STRESS = { 38: 16700, 50: 16700, 100: 16700, 150: 14500, 200: 13300, 250: 12500, 300: 11800, 350: 11300, 400: 10900 };
+    // SS 304L — ASTM A312 TP304L
+    const SS304L_STRESS = { 38: 16700, 50: 16700, 100: 16700, 150: 13800, 200: 12700, 250: 11800, 300: 11200, 350: 10700, 400: 10300 };
+    // DSS — ASTM A790 S31803 (UNS S31803)
+    const DSS_STRESS = { 38: 25000, 50: 25000, 100: 23300, 150: 22000, 200: 21000, 250: 20400, 300: 20000 };
+    // SDSS — ASTM A790 S32750 (UNS S32750)
+    const SDSS_STRESS = { 38: 36700, 50: 36700, 100: 35000, 150: 33100, 200: 31900, 250: 31000, 300: 30500 };
+    // CuNi 90/10 — ASTM B466 C70600
+    const CUNI_STRESS = { 38: 10000, 50: 10000, 100: 10000, 150: 10000, 200: 9400, 250: 8600 };
+    // GALV is still CS pipe
+    const GALV_STRESS = CS_STRESS;
+
+    let table = CS_STRESS;  // default
+    if (mat.includes('SDSS') || mat.includes('S32750') || mat.includes('SUPER DUPLEX')) {
+        table = SDSS_STRESS;
+    } else if (mat.includes('DSS') || mat.includes('S31803') || mat.includes('DUPLEX')) {
+        table = DSS_STRESS;
+    } else if (mat.includes('316L')) {
+        table = SS316L_STRESS;
+    } else if (mat.includes('304L')) {
+        table = SS304L_STRESS;
+    } else if (mat.includes('SS') || mat.includes('STAINLESS')) {
+        table = SS316L_STRESS;  // default SS
+    } else if (mat.includes('CUNI') || mat.includes('CU-NI') || mat.includes('COPPER') || mat.includes('C70600')) {
+        table = CUNI_STRESS;
+    } else if (mat.includes('GALV')) {
+        table = GALV_STRESS;
+    }
+    // CS, LTCS, NACE variants all use CS table (NACE is just a service condition, same material)
+
+    // Interpolate S(T) at the given temperature
+    const temps = Object.keys(table).map(Number).sort((a, b) => a - b);
+    const T = tempC;
+    if (T <= temps[0]) return { S_psi: table[temps[0]], S_mpa: +(table[temps[0]] * 0.00689476).toFixed(1) };
+    if (T >= temps[temps.length - 1]) return { S_psi: table[temps[temps.length - 1]], S_mpa: +(table[temps[temps.length - 1]] * 0.00689476).toFixed(1) };
+    for (let i = 0; i < temps.length - 1; i++) {
+        if (T >= temps[i] && T <= temps[i + 1]) {
+            const frac = (T - temps[i]) / (temps[i + 1] - temps[i]);
+            const S = table[temps[i]] + frac * (table[temps[i + 1]] - table[temps[i]]);
+            const S_rounded = Math.round(S / 100) * 100;  // round to nearest 100 psi
+            return { S_psi: S_rounded, S_mpa: +(S_rounded * 0.00689476).toFixed(1) };
+        }
+    }
+    return { S_psi: 20000, S_mpa: 137.9 };  // fallback
+}
+
 function renderScheduleTab(pms) {
     const dpVal = parseFloat(document.getElementById('designPressure').value) || 0;
     const dtVal = parseFloat(document.getElementById('designTemperature').value) || 0;
     const E = 1.0;  // Seamless butt weld joint efficiency
     const W = 1.0;
     const Y = 0.4;
-    const S_psi = 20000;  // Reference allowable stress (per ASME B31.3)
-    const S_mpa = 137.9;
+    // Material-specific allowable stress from ASME B31.3 Table A-1
+    const stressData = getAllowableStress(pms.material, dtVal);
+    const S_psi = stressData.S_psi;
+    const S_mpa = stressData.S_mpa;
     const P_psig = parseFloat(barg2psig(dpVal));
     const P_mpa = barg2mpa(dpVal);
     const dtF = parseFloat(c2f(dtVal));
     const isNACE = pms.material.toUpperCase().includes('NACE') || pms.design_code.toUpperCase().includes('NACE');
     const isLTCS = pms.material.toUpperCase().includes('LT');
+    const isDSS = pms.material.toUpperCase().includes('DSS') || pms.material.toUpperCase().includes('DUPLEX');
+    const isSDSS = pms.material.toUpperCase().includes('SDSS') || pms.material.toUpperCase().includes('SUPER DUPLEX') || pms.material.toUpperCase().includes('S32750');
+    const isSS = pms.material.toUpperCase().includes('SS') || pms.material.toUpperCase().includes('STAINLESS');
     const millTol = parseFloat(pms.mill_tolerance) || 12.5;
     const millFrac = millTol / 100;
 
-    // Parse CA in mm
-    const caStr = pms.corrosion_allowance || '3 mm';
-    const caMM = parseFloat(caStr) || 3;
+    // Parse CA in mm — respect NIL / 0 corrosion allowance
+    const caStr = pms.corrosion_allowance || '0';
+    const caMM = caStr.toUpperCase().includes('NIL') ? 0 : (parseFloat(caStr) || 0);
     const caInch = mm2inch(caMM);
+
+    // Determine pipe standard and Y coefficient description based on material
+    const pipeStandard = (isSS || isDSS || isSDSS) ? 'ASME B36.19M' : 'ASME B36.10M';
+    const yMatDesc = (isDSS || isSDSS) ? 'duplex/austenitic-ferritic steel' : (isSS ? 'austenitic stainless steel' : 'ferritic/alloy steel');
 
     // Formula example with NPS 6" if available
     const ref6 = pms.pipe_data.find(p => p.size_inch === '6' || p.size_inch === '6"');
@@ -614,10 +677,10 @@ function renderScheduleTab(pms) {
         const od6 = mm2inch(ref6.od_mm).toFixed(3);
         const t_calc_inch = (P_psig * parseFloat(od6)) / (2 * (S_psi * E * W + P_psig * Y));
         document.getElementById('formulaExample').innerHTML =
-            `<strong>NPS 6" example:</strong>&nbsp; P = ${P_psig} psig | OD = ${od6}" | S(T) = ${S_psi.toLocaleString()} psi | E = ${E} | W = ${W} ` +
-            `<span style="color:var(--text-muted)">(ASME B31.3 Table 302.3.5 @ ${dtF}\u00b0F (W=1.0))</span> | Y = ${Y} ` +
-            `<span style="color:var(--text-muted)">(ASME B31.3 Table 304.1.1 @ ${dtF}\u00b0F (ferritic/alloy steel))</span> | ` +
-            `c = ${caInch.toFixed(4)}" &nbsp;\u2192&nbsp; t<sub>calc</sub> = <strong>${t_calc_inch.toFixed(4)}"</strong>`;
+            `<strong>NPS 6" example:</strong>&nbsp; P = ${P_psig} psig | OD = ${od6}" | S(T) = ${S_psi.toLocaleString()} psi <span style="color:var(--text-muted)">[${pms.material}]</span> | E = ${E} | W = ${W} ` +
+            `<span style="color:var(--text-muted)">(ASME B31.3 Table 302.3.5 @ ${dtF}\u00b0F)</span> | Y = ${Y} ` +
+            `<span style="color:var(--text-muted)">(ASME B31.3 Table 304.1.1 @ ${dtF}\u00b0F (${yMatDesc}))</span> | ` +
+            `c = ${caMM > 0 ? caInch.toFixed(4) + '"' : 'NIL'} &nbsp;\u2192&nbsp; t<sub>calc</sub> = <strong>${t_calc_inch.toFixed(4)}"</strong>`;
     } else {
         document.getElementById('formulaExample').innerHTML = '';
     }
@@ -643,18 +706,18 @@ function renderScheduleTab(pms) {
         { l: 'Design Pressure (P)', v: `${P_psig} psig (${dpVal} barg)` },
         { l: 'Design Temperature', v: `${dtF}\u00b0F (${dtVal}\u00b0C)` },
         { l: 'Material Spec', v: materialSpec },
-        { l: 'Reference Allowable Stress S(T)', v: `${S_psi.toLocaleString()} psi (${S_mpa} MPa) @ Design Temp` },
+        { l: 'Allowable Stress S(T)', v: `<strong>${S_psi.toLocaleString()} psi</strong> (${S_mpa} MPa) <span class="unit">@ ${dtVal}\u00b0C per ASME B31.3 Table A-1 [${pms.material}]</span>` },
     ]);
 
     // Code Factors
     const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
     setKVList('codeFactorsList', [
-        { l: 'Pipe Standard', v: 'ASME B36.10M', bold: true },
+        { l: 'Pipe Standard', v: pipeStandard, bold: true },
         { l: 'Joint Type', v: document.getElementById('jointType').value, bold: true },
         { l: 'Joint Efficiency (E)', v: E.toString() },
-        { l: 'Y Coefficient', v: `${Y} <span class="unit">(ASME B31.3 Table 304.1.1 @ ${dtF}\u00b0F (ferritic/alloy steel))</span>` },
+        { l: 'Y Coefficient', v: `${Y} <span class="unit">(ASME B31.3 Table 304.1.1 @ ${dtF}\u00b0F (${yMatDesc}))</span>` },
         { l: 'W-factor (Weld Str.)', v: `${W} <span class="unit">(ASME B31.3 Table 302.3.5 @ ${dtF}\u00b0F (W=1.0))</span>` },
-        { l: 'Corrosion Allow. (c)', v: `${caMM} mm`, bold: true },
+        { l: 'Corrosion Allow. (c)', v: caMM > 0 ? `${caMM} mm` : '<strong>NIL</strong> (no corrosion allowance)', bold: true },
         { l: 'Mill Undertolerance', v: `${millTol}%` },
     ]);
 
@@ -669,33 +732,78 @@ function renderScheduleTab(pms) {
 function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
     const flags = [];
     const svc = pms.service.toLowerCase();
+    const mat = pms.material.toUpperCase();
     const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * 1.5);
     // Base pressure for hydrotest: max P-T rated pressure if available, otherwise design pressure
     const ptPressures = pms.pressure_temperature && pms.pressure_temperature.pressures ? pms.pressure_temperature.pressures : [];
     const maxRatedP = ptPressures.length > 0 ? Math.max(...ptPressures) : dpVal;
     const htBaseP = pms.hydrotest_pressure ? (ht / 1.5) : dpVal;  // back-calculate the base used
 
+    // Determine material family for flag specificity
+    const isCS = mat.includes('CS') && !mat.includes('DSS') && !mat.includes('SS') && !mat.includes('SDSS');
+    const isDSS = mat.includes('DSS') && !mat.includes('SDSS');
+    const isSDSS = mat.includes('SDSS') || mat.includes('SUPER DUPLEX') || mat.includes('S32750');
+    const isSS = mat.includes('SS') || mat.includes('STAINLESS');
+    const isDuplexFamily = isDSS || isSDSS;
+
     if (isNACE) {
-        flags.push({
-            level: 'critical', badge: 'CRITICAL',
-            title: 'NACE MR0175 / ISO 15156 \u2014 Sour Service Compliance',
-            body: 'All pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156. Max hardness: CS \u2264 22 HRC / 250 HBW (base metal, weld metal, HAZ). HIC testing per NACE TM0284 if H\u2082S partial pressure > 0.0003 MPa (0.05 psia). SSC testing per NACE TM0177 Method A may also be required.'
-        });
-        flags.push({
-            level: 'critical', badge: 'CRITICAL',
-            title: 'Minimum Schedule Enforced \u2014 Sch 160 (\u2264 NPS 1\u00bd") / XS (\u2265 NPS 2")',
-            body: 'NACE MR0175 mandates minimum wall thickness regardless of pressure calculation. NPS \u2264 1\u00bd": Schedule 160. NPS \u2265 2": Extra Strong (XS / Sch 80). Do NOT downgrade based on pressure margin alone.'
-        });
+        // NACE compliance — material-specific hardness requirements
+        if (isDuplexFamily) {
+            flags.push({
+                level: 'critical', badge: 'CRITICAL',
+                title: 'NACE MR0175 / ISO 15156-3 \u2014 Duplex Sour Service Compliance',
+                body: `All ${isSDSS ? 'Super Duplex (S32750)' : 'Duplex (S31803)'} pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156-3 Annex A. Max hardness: ${isSDSS ? '32 HRC (SDSS)' : '28 HRC (DSS)'}. Solution annealing required. Ferrite content: 35\u201365%. PREN \u2265 ${isSDSS ? '40 (SDSS)' : '34 (DSS)'}. No PWHT required for DSS/SDSS (solution-annealed condition).`
+            });
+        } else if (isSS) {
+            flags.push({
+                level: 'critical', badge: 'CRITICAL',
+                title: 'NACE MR0175 / ISO 15156-3 \u2014 Austenitic SS Sour Service Compliance',
+                body: 'All SS316L pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156-3. Max hardness: 22 HRC (solution annealed). Cold work limit applies. No PWHT typically required for austenitic SS.'
+            });
+        } else {
+            flags.push({
+                level: 'critical', badge: 'CRITICAL',
+                title: 'NACE MR0175 / ISO 15156 \u2014 Sour Service Compliance',
+                body: 'All pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156. Max hardness: CS \u2264 22 HRC / 250 HBW (base metal, weld metal, HAZ). HIC testing per NACE TM0284 if H\u2082S partial pressure > 0.0003 MPa (0.05 psia). SSC testing per NACE TM0177 Method A may also be required.'
+            });
+        }
+
+        // Minimum schedule — different for CS NACE vs DSS/SDSS/SS NACE
+        if (isCS) {
+            flags.push({
+                level: 'critical', badge: 'CRITICAL',
+                title: 'Minimum Schedule Enforced \u2014 Sch 160 (\u2264 NPS 1\u00bd") / XS (\u2265 NPS 2")',
+                body: 'NACE MR0175 mandates minimum wall thickness for CS regardless of pressure calculation. NPS \u2264 1\u00bd": Schedule 160. NPS \u2265 2": Extra Strong (XS / Sch 80). Do NOT downgrade based on pressure margin alone.'
+            });
+        } else if (isDuplexFamily || isSS) {
+            flags.push({
+                level: 'note', badge: 'NOTE',
+                title: `Schedule per Design Calculation \u2014 ${isDuplexFamily ? 'Duplex' : 'SS'} NACE`,
+                body: `For ${isDuplexFamily ? 'Duplex/Super Duplex' : 'Stainless Steel'} NACE service, schedule is governed by pressure/mechanical design calculation (no NACE minimum schedule override as for CS). Corrosion allowance is typically NIL for ${isDuplexFamily ? 'DSS/SDSS' : 'SS'} in sour service.`
+            });
+        }
+
+        // Bolting — material-specific
         flags.push({
             level: 'mandatory', badge: 'MANDATORY',
-            title: `NACE Bolting \u2014 ${pms.bolts_nuts_gaskets.stud_bolts || 'A320 L7M Studs'} + ${pms.bolts_nuts_gaskets.hex_nuts || 'A194 7ML Nuts'} (XYLAN Coated)`,
-            body: `Studs: ${pms.bolts_nuts_gaskets.stud_bolts || 'ASTM A320 Gr. L7M'}. Nuts: ${pms.bolts_nuts_gaskets.hex_nuts || 'ASTM A194 Gr. 7ML'}. Coating: XYLAR 2 + XYLAN 1070, minimum combined thickness 50 \u00b5m.`
+            title: `NACE Bolting \u2014 ${pms.bolts_nuts_gaskets.stud_bolts || 'A320 L7M Studs'} + ${pms.bolts_nuts_gaskets.hex_nuts || 'A194 7ML Nuts'}`,
+            body: `Studs: ${pms.bolts_nuts_gaskets.stud_bolts || 'ASTM A320 Gr. L7M'}. Nuts: ${pms.bolts_nuts_gaskets.hex_nuts || 'ASTM A194 Gr. 7ML'}.${isCS ? ' Coating: XYLAR 2 + XYLAN 1070, minimum combined thickness 50 \u00b5m.' : ''}`
         });
-        flags.push({
-            level: 'mandatory', badge: 'MANDATORY',
-            title: 'PWHT \u2014 Post Weld Heat Treatment Required',
-            body: 'PWHT mandatory for all carbon steel welds in NACE/sour service to ensure HAZ hardness \u2264 250 HBW. WPS/PQR must include hardness survey.'
-        });
+
+        // PWHT — only for CS, NOT for DSS/SDSS/SS
+        if (isCS) {
+            flags.push({
+                level: 'mandatory', badge: 'MANDATORY',
+                title: 'PWHT \u2014 Post Weld Heat Treatment Required',
+                body: 'PWHT mandatory for all carbon steel welds in NACE/sour service to ensure HAZ hardness \u2264 250 HBW. WPS/PQR must include hardness survey.'
+            });
+        } else if (isDuplexFamily) {
+            flags.push({
+                level: 'note', badge: 'NOTE',
+                title: 'No PWHT Required \u2014 Duplex / Super Duplex',
+                body: `PWHT is NOT required for ${isSDSS ? 'Super Duplex (S32750)' : 'Duplex (S31803)'}. Material is supplied in solution-annealed condition. Ferrite/austenite balance must be maintained in HAZ (35\u201365% ferrite).`
+            });
+        }
     }
 
     if (svc.includes('steam') || svc.includes('condensate')) {
@@ -798,7 +906,9 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         // Determine schedule tags and governs
         let tags = [];
         let governs = '';
-        if (isNACE) {
+        const matUpper = pms.material.toUpperCase();
+        const isCSNACE = isNACE && matUpper.includes('CS') && !matUpper.includes('DSS') && !matUpper.includes('SS') && !matUpper.includes('SDSS');
+        if (isNACE && isCSNACE) {
             tags.push('NACE');
             if (sizeNum <= 1.5) {
                 governs = `PMS minimum \u2014 Sch 160 (NPS \u2264 1\u00bd")`;
@@ -807,6 +917,9 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
             } else {
                 governs = `PMS minimum \u2014 XS (NPS \u2265 ${sizeNum}")`;
             }
+        } else if (isNACE) {
+            tags.push('NACE');
+            governs = 'Design calculation governs';
         } else if (isLTCS) {
             tags.push('LTCS');
             governs = 'Low-temperature service minimum governs';
