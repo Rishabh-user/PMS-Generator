@@ -352,23 +352,40 @@ Pattern: [TYPE PREFIX][CLASS CODE][FACE SUFFIX]
 
 Standard valve prefixes:
   Ball Reduced Trunnion: BLRT | Ball Full Trunnion: BLFT
-  Ball Reduced Port: BLRP | Ball Full Port: BLFP (used in E/F/G-series 900#+ classes)
-  Ball Full Metal: BLFM | Ball Reduced Metal: BLRM (used in G-series 2500#)
+  Ball Reduced Port (soft-seat):  BLRP | Ball Full Port (soft-seat):  BLFP  (E/F/G-series 900#+)
+  Ball Reduced Port (metal-seat): BLRM | Ball Full Port (metal-seat): BLFM  (ALL G-series 2500# classes)
   Gate Y-body: GAYM
   Globe Y-body: GLYM
   Check Piston: CHPM | Check Swing: CHSM | Check Dual-Plate: CHDM
   Butterfly Wafer: BFWT | Butterfly Triple-Offset: BFTP
-  DBB Reduced Port: DBRP (Double Block & Bleed — available in 900#+ classes like E/F/G-series)
-  DBB (Inst): Same as DBB but with T suffix appended (e.g., DBRPE20NJ → DBRPE20NJT for instrument variant)
+  DBB Reduced Port (soft-seat):  DBRP  (available in 900#+ classes)
+  DBB Reduced Port (metal-seat): DBRM  (ALL G-series 2500# classes — list alongside DBRP)
+  DBB (Inst): DBB code with T suffix appended (e.g., DBRPE20NJ → DBRPE20NJT). Use soft-seat (DBRP) only.
   Tubing valves: DBB=DBFP, Needle=NEIP, Ball=BLFP, Check=CHPM (with JT suffix)
+
+valves.rating field MUST include face-type suffix:
+  150# / 300# / 600#: "150#, RF" / "300#, RF" / "600#, RF"
+  900# / 1500# / 2500#: "900#, RTJ" / "1500#, RTJ" / "2500#, RTJ"
+  CuNi: "150#, FF"
+  Tubing: "10000# (69 Mpa)" or as specified
 
 Special valve rules:
   E-series (900#) Ball: Small sizes → "USE GATE VALVE", larger sizes (typically 6"+) → BLRP/BLFP codes
-  F/G-series (1500#/2500#) Ball: Small sizes → "USE GATE VALVE", larger sizes → BLRP/BLFP codes
-  G1 (2500#) has additional valve types: BLFMG1J, BLRMG1J alongside BLRPG1J, BLFPG1J
-  DBB valves: Available for 900#+ (E/F/G-series) classes. Pattern: DBRP + class code + face suffix
-    Example: E20NJ → DBB = "DBRPE20NJ", DBB (Inst) = "DBRPE20NJT"
-    DBB (Inst) code = DBB code + "T" suffix appended
+  F-series (1500#) Ball: Small sizes → "USE GATE VALVE", larger sizes → BLRP/BLFP codes (soft-seat only)
+  ****** MANDATORY RULE FOR G-SERIES 2500# (G1, G1N, G1LN, G2N, G7LN, G9, G10, G20N, G23, G24, G25, G25N, D25N, etc.) ******
+  For ANY piping class starting with the letter "G" (2500# rating):
+    The "ball" field MUST contain exactly FOUR codes, comma-separated in this order:
+       BLRP + class-code-with-J + ", " + BLFP + class-code-with-J + ", " + BLFM + class-code-with-J + ", " + BLRM + class-code-with-J
+       Example for G25N: "BLRPG25NJ, BLFPG25NJ, BLFMG25NJ, BLRMG25NJ"
+       Example for G1  : "BLRPG1J, BLFPG1J, BLFMG1J, BLRMG1J"
+       Example for G20N: "BLRPG20NJ, BLFPG20NJ, BLFMG20NJ, BLRMG20NJ"
+       (For small sizes, ball_by_size entries should still use "USE GATE VALVE")
+    The "dbb" field MUST contain exactly TWO codes comma-separated:
+       DBRP + class-code-with-J + ", " + DBRM + class-code-with-J
+       Example for G25N: "DBRPG25NJ, DBRMG25NJ"
+       Example for G1  : "DBRPG1J, DBRMG1J"
+    The "dbb_inst" field: soft-seat variant only with T suffix (e.g. "DBRPG25NJT"). Do NOT add metal-seat T.
+  ****** END MANDATORY RULE ******
   CuNi (30): Use F suffix (FF face). Codes: BLRTA30F, BLFTA30F, GAYMA30F, GLYMA30F, CHPMA30F, etc.
   GALV (3/4/5/6,B4,D4): Use R suffix. Codes: BLRTA3R, BLFTA3R, GAYMA3R, GLYMA3R, CHPMA3R, etc.
 

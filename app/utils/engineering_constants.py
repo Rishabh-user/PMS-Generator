@@ -79,36 +79,143 @@ DEFAULT_SERVICE = "General"
 # Key: temperature °C → allowable stress in psi
 # ============================================================
 
-STRESS_CS = {38: 20000, 50: 20000, 100: 20000, 150: 18900, 200: 17700, 250: 16500, 300: 15600, 350: 14800, 400: 12100}
-"""CS (ASTM A106 Gr.B) and LTCS (ASTM A333 Gr.6) — same stress values."""
+STRESS_CS = {
+    38: 20000, 93: 20000, 149: 20000, 204: 20000, 260: 18900,
+    316: 17300, 343: 17000, 371: 16500, 399: 14400, 427: 10800,
+}
+"""CS (ASTM A106 Gr.B) and LTCS (ASTM A333 Gr.6) — per ASME B31.3 Table A-1 (USCS).
+Breakpoints match Fahrenheit values: 100, 200, 300, 400, 500, 600, 650, 700, 750, 800 °F."""
 
-STRESS_SS316L = {38: 16700, 50: 16700, 100: 16700, 150: 14500, 200: 13300, 250: 12500, 300: 11800, 350: 11300, 400: 10900}
-"""SS 316L (ASTM A312 TP316L)."""
+STRESS_API5LX60 = {
+    38: 25000, 93: 25000, 149: 25000, 204: 25000, 260: 25000,
+    316: 25000, 343: 24500, 371: 23600, 399: 22500, 427: 20200,
+}
+"""API 5L Gr. X60 PSL-2 — higher-strength line pipe. Flat at 25,000 psi up to ~316°C.
+Breakpoints at 100, 200, 300, 400, 500, 600, 650, 700, 750, 800 °F."""
 
-STRESS_SS304L = {38: 16700, 50: 16700, 100: 16700, 150: 13800, 200: 12700, 250: 11800, 300: 11200, 350: 10700, 400: 10300}
+STRESS_SS316L = {
+    38: 16700, 93: 16700, 149: 16700, 204: 15700, 260: 14300,
+    316: 13100, 371: 12000, 427: 10900, 482: 10100,
+}
+"""SS 316L (ASTM A312 TP316L) — per ASME B31.3 Table A-1. Flat up to 149°C, drops at 204°C."""
+
+STRESS_SS316 = {
+    38: 20000, 93: 20000, 149: 19500, 204: 19300, 260: 18900,
+    316: 18600, 371: 18400, 427: 18200, 482: 17900,
+}
+"""SS 316 (ASTM A312 TP316) — higher stress than 316L variant."""
+
+STRESS_SS304L = {
+    38: 16700, 93: 16700, 149: 16700, 204: 15700, 260: 14100,
+    316: 12800, 371: 11700, 427: 10500, 482: 9700,
+}
 """SS 304L (ASTM A312 TP304L)."""
 
-STRESS_DSS = {38: 25000, 50: 25000, 100: 23300, 150: 22000, 200: 21000, 250: 20400, 300: 20000}
-"""DSS — Duplex (ASTM A790 UNS S31803)."""
+STRESS_DSS = {
+    38: 31700, 93: 31000, 149: 30300, 204: 29400, 260: 28500,
+    316: 27200,
+}
+"""DSS — Duplex (ASTM A790 UNS S31803 / S32205) — ASME B31.3 Table A-1.
+Rated only up to 316°C (600°F) due to 475°C embrittlement risk."""
 
-STRESS_SDSS = {38: 36700, 50: 36700, 100: 35000, 150: 33100, 200: 31900, 250: 31000, 300: 30500}
-"""SDSS — Super Duplex (ASTM A790 UNS S32750)."""
+STRESS_SDSS = {
+    38: 38700, 93: 38100, 149: 36700, 204: 35100, 260: 33800,
+    316: 32700,
+}
+"""SDSS — Super Duplex (ASTM A790 UNS S32750) — ASME B31.3 Table A-1.
+Rated only up to 316°C (600°F)."""
 
-STRESS_CUNI = {38: 10000, 50: 10000, 100: 10000, 150: 10000, 200: 9400, 250: 8600}
-"""CuNi 90/10 (ASTM B466 C70600)."""
+STRESS_CUNI = {
+    38: 10000, 93: 10000, 149: 9700, 204: 9400, 260: 8900, 316: 8600,
+}
+"""CuNi 90/10 (ASTM B466 C70600) — ASME B31.3."""
+
+STRESS_TITANIUM_B861_GR2 = {
+    16: 16700, 38: 16700, 93: 14200, 149: 12900, 175: 11200, 204: 10100, 260: 8900,
+}
+"""Titanium B861 Gr. 2 — commercial-pure titanium line pipe."""
+
+STRESS_COPPER_C12200_H80 = {
+    38: 15000, 66: 15000, 93: 13600, 121: 12000, 149: 10400, 177: 8700,
+}
+"""Copper DHP (ASTM B42 UNS C12200) H80 temper — hard-drawn condition."""
+
+STRESS_COPPER_C12200_H55 = {
+    38: 12000, 66: 11400, 93: 10900, 121: 10200, 149: 9500, 177: 8700,
+}
+"""Copper DHP (ASTM B42 UNS C12200) H55 temper — half-hard condition."""
 
 # Mapping: material keyword → stress table (used by both Python and JS via API)
 STRESS_TABLES = {
     "CS": STRESS_CS,
     "LTCS": STRESS_CS,
     "GALV": STRESS_CS,
+    "API5LX60": STRESS_API5LX60,
     "SS316L": STRESS_SS316L,
+    "SS316": STRESS_SS316,
     "SS304L": STRESS_SS304L,
     "SS": STRESS_SS316L,       # default SS
     "DSS": STRESS_DSS,
     "SDSS": STRESS_SDSS,
     "CUNI": STRESS_CUNI,
+    "TITANIUM": STRESS_TITANIUM_B861_GR2,
+    "COPPER_H80": STRESS_COPPER_C12200_H80,
+    "COPPER_H55": STRESS_COPPER_C12200_H55,
 }
+
+
+def _detect_stress_table(material: str):
+    """Return the appropriate stress table based on material keywords.
+    Uses careful matching to avoid false positives like 'CLASS' matching 'SS'."""
+    import re
+    mat = material.upper()
+
+    # SDSS — super duplex (check FIRST, most specific)
+    if re.search(r"\bSDSS\b|S32750|SUPER\s*DUPLEX", mat):
+        return STRESS_SDSS
+    # DSS — duplex (S31803, S32205 are both A790 duplex grades)
+    if re.search(r"\bDSS\b|S31803|S32205|\bDUPLEX\b", mat):
+        return STRESS_DSS
+    # API 5L Gr. X60 line pipe — check before CS since it contains "API"
+    if re.search(r"API\s*5L.*X\s*60|X60\s*PSL", mat):
+        return STRESS_API5LX60
+    # Stainless: check which grade is PRIMARY (first "TP 3xx" in the string)
+    # "TP 316/316L" → primary 316 (higher stress); "TP 316L/316L" → 316L
+    tp_match = re.search(r"TP\s*(316L|304L|316|304)", mat)
+    if tp_match:
+        grade = tp_match.group(1)
+        if grade == "316L": return STRESS_SS316L
+        if grade == "304L": return STRESS_SS304L
+        if grade == "316":  return STRESS_SS316
+        if grade == "304":  return STRESS_SS316  # fallback near-match
+    # Fallback: match 316L or 304L elsewhere in string
+    if re.search(r"\b316L\b", mat):
+        return STRESS_SS316L
+    if re.search(r"\b304L\b", mat):
+        return STRESS_SS304L
+    if re.search(r"\b316\b", mat):
+        return STRESS_SS316
+    # Titanium
+    if re.search(r"TITANIUM|\bB\s*861\b|\bTI\s+GR", mat):
+        return STRESS_TITANIUM_B861_GR2
+    # Copper DHP H80 / H55
+    if re.search(r"C\s*12200.*H\s*80|H80\b", mat):
+        return STRESS_COPPER_C12200_H80
+    if re.search(r"C\s*12200.*H\s*55|H55\b", mat):
+        return STRESS_COPPER_C12200_H55
+    if re.search(r"C\s*12200|\bB\s*42\b", mat):
+        return STRESS_COPPER_C12200_H80  # default copper temper
+    # CuNi
+    if re.search(r"CU\s*NI|CU-NI|C70600|C71500|\bB\s*466\b", mat):
+        return STRESS_CUNI
+    # Generic stainless fallback — but only match "STAINLESS" word or "TP 3xx" pattern
+    if re.search(r"STAINLESS|TP\s*3\d\d", mat):
+        return STRESS_SS316L
+    # Galvanised carbon steel — falls back to CS table
+    if re.search(r"GALV", mat):
+        return STRESS_CS
+    # Default: Carbon steel (covers A106, A333, A350, A234, A671, API 5L Gr. B, etc.)
+    return STRESS_CS
 
 
 def get_allowable_stress(material: str, temp_c: float) -> dict:
@@ -116,26 +223,11 @@ def get_allowable_stress(material: str, temp_c: float) -> dict:
     Get allowable stress S(T) for a material at a given temperature.
     Returns {'S_psi': int, 'S_mpa': float}.
 
-    Uses linear interpolation between ASME table breakpoints.
+    Uses linear interpolation between ASME B31.3 Table A-1 breakpoints.
+    Breakpoints in our tables use Celsius values corresponding to ASME's
+    Fahrenheit rows (38, 93, 149, 204, 260, 316°C = 100, 200, 300, 400, 500, 600°F).
     """
-    mat = material.upper()
-
-    # Determine which table to use
-    table = STRESS_CS  # default
-    if "SDSS" in mat or "S32750" in mat or "SUPER DUPLEX" in mat:
-        table = STRESS_SDSS
-    elif "DSS" in mat or "S31803" in mat or "DUPLEX" in mat:
-        table = STRESS_DSS
-    elif "316L" in mat:
-        table = STRESS_SS316L
-    elif "304L" in mat:
-        table = STRESS_SS304L
-    elif "SS" in mat or "STAINLESS" in mat:
-        table = STRESS_SS316L
-    elif "CUNI" in mat or "CU-NI" in mat or "COPPER" in mat or "C70600" in mat:
-        table = STRESS_CUNI
-    elif "GALV" in mat:
-        table = STRESS_CS
+    table = _detect_stress_table(material)
 
     temps = sorted(table.keys())
     T = temp_c

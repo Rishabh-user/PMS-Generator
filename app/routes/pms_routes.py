@@ -20,7 +20,9 @@ from app.utils.engineering_constants import (
     JOINT_EFFICIENCY_E, WELD_STRENGTH_W, Y_COEFFICIENT,
     SMALL_BORE_CUTOFF_NPS, AI_MAX_TOKENS,
     DEFAULT_CORROSION_ALLOWANCE, DEFAULT_SERVICE,
-    STRESS_CS, STRESS_SS316L, STRESS_SS304L, STRESS_DSS, STRESS_SDSS, STRESS_CUNI,
+    STRESS_CS, STRESS_SS316L, STRESS_SS316, STRESS_SS304L,
+    STRESS_DSS, STRESS_SDSS, STRESS_CUNI, STRESS_API5LX60,
+    STRESS_TITANIUM_B861_GR2, STRESS_COPPER_C12200_H80, STRESS_COPPER_C12200_H55,
 )
 
 logger = logging.getLogger(__name__)
@@ -159,11 +161,16 @@ async def api_engineering_constants():
         "default_service": DEFAULT_SERVICE,
         "stress_tables": {
             "CS": STRESS_CS,
+            "API5LX60": STRESS_API5LX60,
             "SS316L": STRESS_SS316L,
+            "SS316": STRESS_SS316,
             "SS304L": STRESS_SS304L,
             "DSS": STRESS_DSS,
             "SDSS": STRESS_SDSS,
             "CUNI": STRESS_CUNI,
+            "TITANIUM_B861_GR2": STRESS_TITANIUM_B861_GR2,
+            "COPPER_C12200_H80": STRESS_COPPER_C12200_H80,
+            "COPPER_C12200_H55": STRESS_COPPER_C12200_H55,
         },
     }
 

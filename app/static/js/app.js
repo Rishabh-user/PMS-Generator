@@ -263,24 +263,45 @@ function resolvePipingClass(rating, material, ca) {
 // === Design Condition Inputs ===
 function initDesignInputs() {
     const dp = document.getElementById('designPressure');
+    const dpPsig = document.getElementById('designPressurePsig');
     const dt = document.getElementById('designTemperature');
     const mdmt = document.getElementById('mdmt');
     const jt = document.getElementById('jointType');
 
+    // Two-way sync flag to prevent infinite loops when one field programmatically updates the other
+    let syncing = false;
+
+    const syncBargToPsig = () => {
+        if (syncing) return;
+        syncing = true;
+        const barg = parseFloat(dp.value) || 0;
+        dpPsig.value = (barg * 14.5038).toFixed(1);
+        syncing = false;
+    };
+
+    const syncPsigToBarg = () => {
+        if (syncing) return;
+        syncing = true;
+        const psig = parseFloat(dpPsig.value) || 0;
+        dp.value = (psig / 14.5038).toFixed(2);
+        syncing = false;
+    };
+
     const update = () => {
-        const dpv = parseFloat(dp.value) || 0;
         const dtv = parseFloat(dt.value) || 0;
         const mv = parseFloat(mdmt.value) || 0;
-        document.getElementById('pressurePsig').textContent = `\u2248 ${barg2psig(dpv)} psig`;
         document.getElementById('tempFahrenheit').textContent = `= ${c2f(dtv)} \u00b0F`;
         document.getElementById('mdmtFahrenheit').textContent = `= ${c2f(mv)} \u00b0F`;
-
         document.getElementById('jointRef').textContent = `ASME B31.3 Table A-1B`;
-
         if (currentPMS) updateCalculations();
     };
 
-    [dp, dt, mdmt, jt].forEach(el => el.addEventListener('input', update));
+    // Sync events: when user edits one field, update the other, then run full update
+    dp.addEventListener('input', () => { syncBargToPsig(); update(); });
+    dpPsig.addEventListener('input', () => { syncPsigToBarg(); update(); });
+    [dt, mdmt, jt].forEach(el => el.addEventListener('input', update));
+
+    syncBargToPsig();  // initial sync
     update();
 }
 
@@ -453,13 +474,15 @@ function renderFullResult(pms) {
     const mdmtInput = document.getElementById('mdmt');
 
     if (n > 0) {
-        let bestIdx = 0;
-        for (let i = 0; i < n; i++) {
-            if (temps[i] >= 100) { bestIdx = i; break; }
-            bestIdx = i;
+        // Default Design Temperature = P-T table MAX temp (worst-case envelope, where P is min).
+        // This aligns with ASME B31.3 design practice — design for worst envelope case.
+        // User can change this; Case 2 calculations will use whatever they enter.
+        let maxIdx = 0;
+        for (let i = 1; i < n; i++) {
+            if (parseFloat(temps[i]) > parseFloat(temps[maxIdx])) maxIdx = i;
         }
-        dp.value = press[bestIdx];
-        dt.value = temps[bestIdx];
+        dt.value = temps[maxIdx];
+        dp.value = press[maxIdx];
         const minTemp = Math.min(...temps.filter(t => !isNaN(t)));
         if (isFinite(minTemp)) mdmtInput.value = minTemp;
     }
@@ -698,16 +721,55 @@ function renderScheduleTab(pms) {
     const pipeStandard = (isSS || isDSS || isSDSS) ? 'ASME B36.19M' : 'ASME B36.10M';
     const yMatDesc = (isDSS || isSDSS) ? 'duplex/austenitic-ferritic steel' : (isSS ? 'austenitic stainless steel' : 'ferritic/alloy steel');
 
-    // Formula example with NPS 6" if available
+    // Formula example with NPS 6" if available — aligned with reference A1 Excel:
+    //   t  = MAX(Case1, Case2) × OD    (pressure thickness only)
+    //   tm = t + CA
+    //   T  = tm / (1 - mill_tol)       ← displayed tREQ
     const ref6 = pms.pipe_data.find(p => p.size_inch === '6' || p.size_inch === '6"');
     if (ref6) {
         const od6 = mm2inch(ref6.od_mm).toFixed(3);
-        const t_calc_inch = (P_psig * parseFloat(od6)) / (2 * (S_psi * E * W + P_psig * Y));
+        const _t = pms.pressure_temperature.temperatures || [];
+        const _p = pms.pressure_temperature.pressures || [];
+        let _lo = 0;
+        for (let i = 1; i < _t.length; i++) {
+            if (parseFloat(_t[i]) < parseFloat(_t[_lo])) _lo = i;
+        }
+        const Tlow = parseFloat(_t[_lo]);
+        const Pmax = parseFloat(_p[_lo]);
+
+        // Case 1: use override if present, else convert P-T max from barg
+        const case1Ov = document.getElementById('case1PressurePsig');
+        const case1OvVal = case1Ov ? parseFloat(case1Ov.value) : NaN;
+        const P1_psig = (!isNaN(case1OvVal) && case1OvVal > 0) ? case1OvVal : parseFloat(barg2psig(Pmax));
+
+        // Case 2: user's design conditions (P from psig field, T from design-temp field)
+        const Tuser = (dtVal > 0) ? dtVal : Math.max(..._t.map(parseFloat));
+        const dpPsigField2 = document.getElementById('designPressurePsig');
+        const P2_psig = dpPsigField2 ? (parseFloat(dpPsigField2.value) || parseFloat(barg2psig(interpolatePressure(_t, _p, Tuser))))
+                                      : parseFloat(barg2psig(interpolatePressure(_t, _p, Tuser)));
+        // Stress overrides (leave blank for auto)
+        const s1F = document.getElementById('case1StressPsi');
+        const s2F = document.getElementById('case2StressPsi');
+        const s1OvVal = s1F ? parseFloat(s1F.value) : NaN;
+        const s2OvVal = s2F ? parseFloat(s2F.value) : NaN;
+        const S1_psi = (!isNaN(s1OvVal) && s1OvVal > 0) ? s1OvVal : getAllowableStress(pms.material, Tlow).S_psi;
+        const S2_psi = (!isNaN(s2OvVal) && s2OvVal > 0) ? s2OvVal : getAllowableStress(pms.material, Tuser).S_psi;
+        // Pressure thickness per case (no CA yet)
+        const t1_p = (P1_psig * parseFloat(od6)) / (2 * (S1_psi * E * W + P1_psig * Y));
+        const t2_p = (P2_psig * parseFloat(od6)) / (2 * (S2_psi * E * W + P2_psig * Y));
+        const t_press = Math.max(t1_p, t2_p);
+        const tm_inch = t_press + caInch;
+        const T_req_inch = tm_inch / (1 - millFrac);
+        const gov = (t2_p >= t1_p) ? 'Case 2 (Design T)' : 'Case 1 (Max P)';
         document.getElementById('formulaExample').innerHTML =
-            `<strong>NPS 6" example:</strong>&nbsp; P = ${P_psig} psig | OD = ${od6}" | S(T) = ${S_psi.toLocaleString()} psi <span style="color:var(--text-muted)">[${pms.material}]</span> | E = ${E} | W = ${W} ` +
-            `<span style="color:var(--text-muted)">(ASME B31.3 Table 302.3.5 @ ${dtF}\u00b0F)</span> | Y = ${Y} ` +
-            `<span style="color:var(--text-muted)">(ASME B31.3 Table 304.1.1 @ ${dtF}\u00b0F (${yMatDesc}))</span> | ` +
-            `c = ${caMM > 0 ? caInch.toFixed(4) + '"' : 'NIL'} &nbsp;\u2192&nbsp; t<sub>calc</sub> = <strong>${t_calc_inch.toFixed(4)}"</strong>`;
+            `<strong>NPS 6" example:</strong> OD = ${od6}" | E = ${E} | W = ${W} | Y = ${Y} ` +
+            `<span style="color:var(--text-muted)">[${yMatDesc}]</span> | c = ${caMM > 0 ? caInch.toFixed(4) + '" (' + caMM + ' mm)' : 'NIL'} | mill tol = ${(millFrac*100).toFixed(1)}%<br>` +
+            `<strong>Case 1 (Max P):</strong> P = ${P1_psig} psig @ ${Tlow}\u00b0C, S = ${S1_psi.toLocaleString()} psi ` +
+            `\u2192 t<sub>press</sub> = <strong>${t1_p.toFixed(4)}"</strong><br>` +
+            `<strong>Case 2 (Design T):</strong> P = ${P2_psig} psig @ ${Tuser}\u00b0C, S = ${S2_psi.toLocaleString()} psi ` +
+            `\u2192 t<sub>press</sub> = <strong>${t2_p.toFixed(4)}"</strong><br>` +
+            `<span style="color:#b91c1c"><strong>Governing: ${gov} \u2192 t = ${t_press.toFixed(4)}" | tm = t+c = ${tm_inch.toFixed(4)}" | ` +
+            `T<sub>req</sub> = tm/(1\u2212${millFrac}) = ${T_req_inch.toFixed(4)}" (${inch2mm(T_req_inch).toFixed(2)} mm)</strong></span>`;
     } else {
         document.getElementById('formulaExample').innerHTML = '';
     }
@@ -726,14 +788,72 @@ function renderScheduleTab(pms) {
         '<span style="margin-right:8px;color:var(--text-muted);font-size:0.85rem">Service:</span>' +
         tags.map(t => `<span class="service-tag" style="background:${t.color}">${t.label}</span>`).join('');
 
-    // Design Parameters
+    // Design Parameters — TWO-CASE envelope analysis:
+    //   Case 1 (Min T / Max P): P-T table's LOWEST temperature (burst/high-stress case)
+    //   Case 2 (Max T / Min P): P-T table's HIGHEST temperature (reduced-stress case)
+    // User can override pressures via Case1/Case2 psig override fields.
     const materialSpec = pms.pipe_data.length ? pms.pipe_data[0].material_spec : '\u2014';
+
+    const ptTemps = pms.pressure_temperature.temperatures || [];
+    const ptPress = pms.pressure_temperature.pressures || [];
+    const ptLabels = pms.pressure_temperature.temp_labels || [];
+
+    // Find min-temp and max-temp indices from P-T table
+    let tMinI = 0, tMaxI = 0;
+    for (let i = 1; i < ptTemps.length; i++) {
+        if (parseFloat(ptTemps[i]) < parseFloat(ptTemps[tMinI])) tMinI = i;
+        if (parseFloat(ptTemps[i]) > parseFloat(ptTemps[tMaxI])) tMaxI = i;
+    }
+
+    // Case 1 — min temp, max pressure (from P-T table)
+    const T_low       = parseFloat(ptTemps[tMinI]);
+    const P_max       = parseFloat(ptPress[tMinI]);
+    const T_low_label = ptLabels[tMinI] || `${T_low}`;
+
+    // Case 2 — max temp, pressure at that temp (from P-T table)
+    // If user provided Design Pressure (psig) override, use it; else auto from P-T table.
+    const T_high       = parseFloat(ptTemps[tMaxI]);
+    const P_at_Tmax    = parseFloat(ptPress[tMaxI]);
+    const T_high_label = ptLabels[tMaxI] || `${T_high}`;
+
+    // Use P-T envelope max as Case 2 by default; user's design pressure psig can override
+    const dpPsigField = document.getElementById('designPressurePsig');
+    const userPsig = dpPsigField ? parseFloat(dpPsigField.value) : NaN;
+    const userBarg = (!isNaN(userPsig) && userPsig > 0) ? userPsig / 14.5038 : NaN;
+    // Only treat as override if user's barg differs significantly from envelope P_at_Tmax
+    const case2Overridden = !isNaN(userBarg) && Math.abs(userBarg - P_at_Tmax) > 0.5;
+    const P_case2_barg = case2Overridden ? userBarg : P_at_Tmax;
+    const P_case2_psig = P_case2_barg * 14.5038;
+    // Case 2 temperature: use P-T max by default; user's Design Temperature can override
+    const T_case2 = (dtVal > 0 && Math.abs(dtVal - T_high) > 0.5) ? dtVal : T_high;
+    const T_case2_label = case2Overridden || (dtVal > 0 && Math.abs(dtVal - T_high) > 0.5)
+                          ? `${T_case2} (user input)`
+                          : T_high_label;
+
+    // Allowable stress at each case temp
+    const S_atTlow  = getAllowableStress(pms.material, T_low);
+    const S_atCase2 = getAllowableStress(pms.material, T_case2);
+
+    // Expose to other render helpers (e.g. enhanced pipe table)
+    pms._designEnvelope = {
+        T_low,              T_high: T_case2,
+        P_max,              P_min:  P_case2_barg,
+        S_low:  S_atTlow,   S_high: S_atCase2
+    };
+
     setKVList('designParamsList', [
         { l: 'PMS Class', v: `<strong>${pms.piping_class}</strong> (${pms.rating})` },
-        { l: 'Design Pressure (P)', v: `${P_psig} psig (${dpVal} barg)` },
-        { l: 'Design Temperature', v: `${dtF}\u00b0F (${dtVal}\u00b0C)` },
+        { l: 'Design Pressure (P)',
+          v: `<strong>Case 1 (Min T / Max P):</strong> ${barg2psig(P_max)} psig (${P_max} barg) <span class="unit">@ ${T_low_label}\u00b0C</span><br>` +
+             `<strong>Case 2 (Max T):</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C${case2Overridden ? '' : ' [P-T max]'}</span>` },
+        { l: 'Design Temperature',
+          v: `<strong>Case 1:</strong> ${T_low_label}\u00b0C (${c2f(T_low)}\u00b0F) <span class="unit">[P-T min]</span><br>` +
+             `<strong>Case 2:</strong> ${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F) <span class="unit">[P-T max]</span>` },
         { l: 'Material Spec', v: materialSpec },
-        { l: 'Allowable Stress S(T)', v: `<strong>${S_psi.toLocaleString()} psi</strong> (${S_mpa} MPa) <span class="unit">@ ${dtVal}\u00b0C per ASME B31.3 Table A-1 [${pms.material}]</span>` },
+        { l: 'Allowable Stress S(T)',
+          v: `<strong>S @ ${T_low}\u00b0C:</strong> ${S_atTlow.S_psi.toLocaleString()} psi (${S_atTlow.S_mpa} MPa)<br>` +
+             `<strong>S @ ${T_case2}\u00b0C:</strong> ${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)<br>` +
+             `<span class="unit">per ASME B31.3 Table A-1 [${pms.material}]</span>` },
     ]);
 
     // Code Factors
@@ -842,11 +962,39 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
     }
 
     if (svc.includes('corrosive') || svc.includes('acid') || svc.includes('chemical')) {
-        flags.push({
-            level: 'warning', badge: 'WARNING',
-            title: 'Corrosive / Acid Service \u2014 Enhanced CA & NDE',
-            body: 'Minimum recommended CA: 3.0 mm. Consider upgrading to SS 316L or Alloy if pH < 4 or T > 60\u00b0C. 100% RT or UT required for all butt welds. Monitor corrosion rate and review CA at major turnarounds.'
-        });
+        // Material-specific corrosive-service guidance
+        if (isSDSS) {
+            flags.push({
+                level: 'note', badge: 'NOTE',
+                title: 'Corrosive / Acid Service \u2014 Super Duplex (PREN \u2265 40)',
+                body: 'SDSS (S32750) has PREN \u2265 40 \u2014 one of the highest corrosion-resistant CRAs. CA typically NIL. Suitable for chloride, sour, and dilute acid exposure. Limits: avoid sustained service above 300\u00b0C (475\u00b0C embrittlement risk). Monitor crevice corrosion at gaskets/flange faces. NDE: 100% RT or UT for butt welds; maintain ferrite 35\u201355% in HAZ.'
+            });
+        } else if (isDSS) {
+            flags.push({
+                level: 'note', badge: 'NOTE',
+                title: 'Corrosive / Acid Service \u2014 Duplex (PREN \u2265 34)',
+                body: 'DSS (S31803) has PREN \u2265 34 \u2014 superior to SS 316L in chloride/sour environments. CA typically NIL. Avoid prolonged service above 300\u00b0C (475\u00b0C embrittlement). For highly aggressive acids (pH < 2) or high-chloride + high-temp combinations, consider SDSS or nickel alloys. NDE: 100% RT or UT for butt welds; maintain ferrite balance 35\u201365% in HAZ.'
+            });
+        } else if (isSS) {
+            flags.push({
+                level: 'warning', badge: 'WARNING',
+                title: 'Corrosive / Acid Service \u2014 SS (Chloride SCC Risk)',
+                body: 'SS 316L is susceptible to chloride stress corrosion cracking (SCC) above ~60\u00b0C or when Cl\u207b > 50 ppm. Consider upgrading to DSS/SDSS if: pH < 4, chloride > 50 ppm, or T > 60\u00b0C. Typical CA: 1\u20131.5 mm. 100% RT or UT for all butt welds. Monitor crevice corrosion at flanges and dead-legs.'
+            });
+        } else if (isCS || isLTCS) {
+            flags.push({
+                level: 'warning', badge: 'WARNING',
+                title: 'Corrosive / Acid Service \u2014 Enhanced CA & NDE',
+                body: 'Minimum recommended CA: 3.0 mm. Consider upgrading to SS 316L, DSS, or nickel alloy if pH < 4 or T > 60\u00b0C. 100% RT or UT required for all butt welds. Monitor corrosion rate and review CA at major turnarounds. For sour + corrosive combined, use NACE MR0175-compliant materials.'
+            });
+        } else {
+            // CuNi, GRE, CPVC, GALV or other non-metallics
+            flags.push({
+                level: 'note', badge: 'NOTE',
+                title: 'Corrosive / Acid Service \u2014 Verify Material Compatibility',
+                body: `Verify that ${pms.material} is compatible with the specific process fluid, concentration, and temperature. Consult material datasheet and corrosion tables. 100% RT or UT for butt welds where applicable.`
+            });
+        }
     }
 
     if (isNACE || svc.includes('sour') || svc.includes('h2s')) {
@@ -907,11 +1055,50 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         const wt_inch = mm2inch(wt_mm);
         const sizeNum = parseFloat(p.size_inch) || 0;
 
-        // t_req in inches (pressure calculation only, no CA)
-        const t_req_inch = (P_psig * od_inch) / (2 * (S_psi * E * W + P_psig * Y));
+        // t_req: matches reference A1 Excel (20171-SPOG-80000-PP-CL-0001):
+        //   t  (pressure)  = MAX(t1, t2) × OD     (t1, t2 are t/D ratios per case)
+        //   tm             = t + CA
+        //   T  (displayed) = tm / (1 - mill_tolerance)   ← this is what column "tREQ (mm)" shows
+        // Adequacy check becomes:  nominal WT ≥ T
+        // Case 1: Max P @ Min T (higher P, higher S)
+        // Case 2: User design-temp P @ Design T (interpolated)
+        const env = pms._designEnvelope;
+        let t_pressure_inch;
+        if (env) {
+            // Case 1 pressure: override from case1PressurePsig if provided, else convert from P-T barg
+            const case1OverrideField = document.getElementById('case1PressurePsig');
+            const case1Override = case1OverrideField ? parseFloat(case1OverrideField.value) : NaN;
+            const P1_psig = (!isNaN(case1Override) && case1Override > 0)
+                           ? case1Override
+                           : parseFloat(barg2psig(env.P_max));
+            // Case 2 pressure: user's designPressurePsig input directly
+            const dpPsigField = document.getElementById('designPressurePsig');
+            const P2_psig = dpPsigField ? (parseFloat(dpPsigField.value) || parseFloat(barg2psig(env.P_min)))
+                                         : parseFloat(barg2psig(env.P_min));
+            // Case 1 & Case 2 Stress: override if user provided, else auto from material tables
+            const s1OvField = document.getElementById('case1StressPsi');
+            const s2OvField = document.getElementById('case2StressPsi');
+            const s1Ov = s1OvField ? parseFloat(s1OvField.value) : NaN;
+            const s2Ov = s2OvField ? parseFloat(s2OvField.value) : NaN;
+            const S1 = (!isNaN(s1Ov) && s1Ov > 0) ? s1Ov : env.S_low.S_psi;
+            const S2 = (!isNaN(s2Ov) && s2Ov > 0) ? s2Ov : env.S_high.S_psi;
+            const t1_p = (P1_psig * od_inch) / (2 * (S1 * E * W + P1_psig * Y));
+            const t2_p = (P2_psig * od_inch) / (2 * (S2 * E * W + P2_psig * Y));
+            t_pressure_inch = Math.max(t1_p, t2_p);
+        } else {
+            t_pressure_inch = (P_psig * od_inch) / (2 * (S_psi * E * W + P_psig * Y));
+        }
+        const t_pressure_mm = inch2mm(t_pressure_inch);        // "t" column — pressure thickness
+        const tm_inch = t_pressure_inch + caInch;              // "tm" column — t + CA
+        const tm_mm = inch2mm(tm_inch);
+        const t_req_inch = tm_inch / (1 - millFrac);           // "T" column — tm / (1 - mill_tol)
         const t_req_mm = inch2mm(t_req_inch);
 
-        // t_min = WT_nom * (1 - mill%) — minimum thickness after mill tolerance
+        // D/6 and t<D/6 applicability check (thin-wall equation validity)
+        const d_over_6_mm = p.od_mm / 6;
+        const t_applicable = (t_pressure_mm < d_over_6_mm) ? 'OK' : 'ALERT';
+
+        // t_min = WT_nom * (1 - mill%) — minimum thickness after mill tolerance (for MAWP)
         const t_min_mm = wt_mm * (1 - millFrac);
         const t_min_inch = mm2inch(t_min_mm);
 
@@ -953,7 +1140,8 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         }
 
         if (!governs) {
-            if (t_req_mm > t_min_mm) {
+            // t_req now includes (1 / (1 - mill_tol)) factor — compare directly to nominal WT
+            if (t_req_mm > wt_mm) {
                 governs = 'Pressure governs';
                 tags.push('Pressure');
             } else {
@@ -966,7 +1154,11 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
             od: p.od_mm,
             schedule: p.schedule,
             wt_nom: wt_mm,
-            t_req: t_req_mm,
+            t_pressure: t_pressure_mm,      // pressure thickness only ("t" in Excel)
+            d_over_6: d_over_6_mm,           // D/6
+            t_applicable: t_applicable,      // OK/ALERT for t<D/6
+            tm: tm_mm,                       // t + CA ("tm" in Excel)
+            t_req: t_req_mm,                 // tm / (1 - mill_tol) ("T" in Excel — displayed tREQ)
             t_min: t_min_mm,
             t_eff: t_eff_mm,
             mawp: mawp_barg,
@@ -977,11 +1169,24 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         });
     });
 
-    // Build table
+    // Build table — column layout matches reference Excel A1 sheet
+    // (20171-SPOG-80000-PP-CL-0001_Rev03.xlsx → A1 sheet)
+    const millPct = (millFrac * 100).toFixed(1);
     let html = `<table><thead><tr>
-        <th>NPS (in)</th><th>OD (mm)</th><th>Schedule / Tags</th><th>WT Nom (mm)</th>
-        <th>t<sub>REQ</sub> (mm)</th><th>t<sub>MIN</sub> (mm)</th><th>t<sub>EFF</sub> (mm)</th>
-        <th>MAWP (barg)</th><th>Margin</th><th>Util.</th><th>Governs</th>
+        <th>NPS</th>
+        <th>D<br>(mm)</th>
+        <th>t<br>(mm)</th>
+        <th>D/6<br>(mm)</th>
+        <th>If<br>t&lt;D/6</th>
+        <th>t<sub>m</sub><br>(mm)</th>
+        <th>Mill<br>Tol.</th>
+        <th>Calc. Thk<br>T (mm)</th>
+        <th>Sel. Thk<br>(mm)</th>
+        <th>SCH</th>
+        <th>Sel. Thk<br>Status</th>
+        <th>MAWP<br>(barg)</th>
+        <th>Margin</th>
+        <th>Governs</th>
     </tr></thead><tbody>`;
 
     results.forEach(r => {
@@ -990,17 +1195,25 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
             return `<span class="pipe-tag ${cls}">${t}</span>`;
         }).join(' ');
 
+        // Status: OK if nominal WT >= tREQ
+        const selOK = r.wt_nom >= r.t_req ? 'OK' : 'NOT OK';
+        const selColor = selOK === 'OK' ? '#16a34a' : '#b91c1c';
+        const applColor = r.t_applicable === 'OK' ? '#16a34a' : '#b91c1c';
+
         html += `<tr>
             <td><strong>${r.size}"</strong></td>
             <td>${r.od}</td>
-            <td><strong>${r.schedule}</strong> ${tagHtml}</td>
+            <td>${r.t_pressure.toFixed(3)}</td>
+            <td>${r.d_over_6.toFixed(2)}</td>
+            <td style="color:${applColor};font-weight:600">${r.t_applicable}</td>
+            <td>${r.tm.toFixed(3)}</td>
+            <td>${millPct}%</td>
+            <td><strong>${r.t_req.toFixed(3)}</strong></td>
             <td>${r.wt_nom}</td>
-            <td>${r.t_req.toFixed(3)}</td>
-            <td>${r.t_min.toFixed(2)}</td>
-            <td>${r.t_eff.toFixed(2)}</td>
-            <td><strong>${r.mawp.toFixed(1)}</strong></td>
+            <td><strong>${r.schedule}</strong> ${tagHtml}</td>
+            <td style="color:${selColor};font-weight:600">${selOK}</td>
+            <td>${r.mawp.toFixed(1)}</td>
             <td>${r.margin.toFixed(1)}%</td>
-            <td>${r.utilization.toFixed(1)}%</td>
             <td class="governs-cell">${r.governs}</td>
         </tr>`;
     });

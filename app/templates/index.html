@@ -126,7 +126,27 @@
                                 <div class="form-group">
                                     <label>Design Pressure (barg) *</label>
                                     <input type="number" id="designPressure" step="0.1" value="17.7">
-                                    <span class="hint" id="pressurePsig"></span>
+                                    <span class="hint">Two-way synced with psig field</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>Design Pressure (psig)</label>
+                                    <input type="number" id="designPressurePsig" step="1" value="257">
+                                    <span class="hint" id="pressurePsig">Used for Case 2 (@ design T)</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>Case 1 Pressure Override (psig)</label>
+                                    <input type="number" id="case1PressurePsig" step="1" placeholder="Auto from P-T table">
+                                    <span class="hint">Optional: type 285 to match ASME customary 150# CS.</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>Case 1 Stress S&#8321; Override (psi)</label>
+                                    <input type="number" id="case1StressPsi" step="100" placeholder="Auto from material">
+                                    <span class="hint">Optional: override S(T&#8321;) for unusual materials.</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>Case 2 Stress S&#8322; Override (psi)</label>
+                                    <input type="number" id="case2StressPsi" step="100" placeholder="Auto from material">
+                                    <span class="hint">Optional: override S(T&#8322;) for unusual materials.</span>
                                 </div>
                                 <div class="form-group">
                                     <label>Design Temperature (&deg;C) *</label>
