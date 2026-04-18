@@ -257,10 +257,13 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             "Please check that ANTHROPIC_API_KEY is configured correctly."
         )
 
-    # Correct wall thickness values using ASME lookup tables
+    # Correct OD and wall thickness values — material-aware
+    # Steel pipes use ASME B36.10M/19M; CuNi uses EEMUA 234; GRE/CPVC/Tubing preserve AI values
     if "pipe_data" in ai_data:
-        correct_pipe_data(ai_data["pipe_data"])
-        logger.info("Corrected pipe wall thickness values from ASME B36.10M/B36.19M tables")
+        material_for_correction = req.material or entry.get("material", "")
+        correct_pipe_data(ai_data["pipe_data"], material=material_for_correction)
+        logger.info("Corrected pipe_data (material='%s') using material-aware OD/WT tables",
+                    material_for_correction)
 
     # Merge P-T from JSON + AI-generated data
     pms = _build_pms_response(entry, ai_data, req)

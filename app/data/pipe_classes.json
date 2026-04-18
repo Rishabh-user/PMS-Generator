@@ -204,7 +204,7 @@
     "piping_class": "A1N",
     "rating": "150#",
     "material": "CS NACE",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "6 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -236,7 +236,7 @@
     "piping_class": "B1N",
     "rating": "300#",
     "material": "CS NACE",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "6 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -268,7 +268,7 @@
     "piping_class": "D1N",
     "rating": "600#",
     "material": "CS NACE",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "6 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -300,7 +300,7 @@
     "piping_class": "E1N",
     "rating": "900#",
     "material": "CS NACE",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "6 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -332,7 +332,7 @@
     "piping_class": "F1N",
     "rating": "1500#",
     "material": "CS NACE",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "6 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -364,7 +364,7 @@
     "piping_class": "G1N",
     "rating": "2500#",
     "material": "CS NACE",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "6 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -798,7 +798,7 @@
     "piping_class": "A10",
     "rating": "150#",
     "material": "SS316L",
-    "corrosion_allowance": "NIL",
+    "corrosion_allowance": "1.5 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -830,7 +830,7 @@
     "piping_class": "B10",
     "rating": "300#",
     "material": "SS316L",
-    "corrosion_allowance": "NIL",
+    "corrosion_allowance": "1.5 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -862,7 +862,7 @@
     "piping_class": "D10",
     "rating": "600#",
     "material": "SS316L",
-    "corrosion_allowance": "NIL",
+    "corrosion_allowance": "1.5 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -894,7 +894,7 @@
     "piping_class": "E10",
     "rating": "900#",
     "material": "SS316L",
-    "corrosion_allowance": "NIL",
+    "corrosion_allowance": "1.5 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -926,7 +926,7 @@
     "piping_class": "F10",
     "rating": "1500#",
     "material": "SS316L",
-    "corrosion_allowance": "NIL",
+    "corrosion_allowance": "1.5 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -958,7 +958,7 @@
     "piping_class": "G10",
     "rating": "2500#",
     "material": "SS316L",
-    "corrosion_allowance": "NIL",
+    "corrosion_allowance": "1.5 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -1959,7 +1959,7 @@
     "piping_class": "A2",
     "rating": "150#",
     "material": "CS",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -1994,7 +1994,7 @@
     "piping_class": "A2N",
     "rating": "150#",
     "material": "CS NACE",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -2026,7 +2026,7 @@
     "piping_class": "B2N",
     "rating": "300#",
     "material": "CS NACE",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -2058,7 +2058,7 @@
     "piping_class": "D2N",
     "rating": "600#",
     "material": "CS NACE",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -2090,7 +2090,7 @@
     "piping_class": "E2N",
     "rating": "900#",
     "material": "CS NACE",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -2122,7 +2122,7 @@
     "piping_class": "F2N",
     "rating": "1500#",
     "material": "CS NACE",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -2154,7 +2154,7 @@
     "piping_class": "G2N",
     "rating": "2500#",
     "material": "CS NACE",
-    "corrosion_allowance": "6 mm",
+    "corrosion_allowance": "3 mm",
     "pressure_temperature": {
       "temperatures": [
         38.0,
@@ -2523,7 +2523,7 @@
     "piping_class": "A6",
     "rating": "150#",
     "material": "CS Epoxy",
-    "corrosion_allowance": "3 mm",
+    "corrosion_allowance": "NIL",
     "pressure_temperature": {
       "temperatures": [
         38.0,

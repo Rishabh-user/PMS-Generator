@@ -268,7 +268,7 @@ function initDesignInputs() {
     const mdmt = document.getElementById('mdmt');
     const jt = document.getElementById('jointType');
 
-    // Two-way sync flag to prevent infinite loops when one field programmatically updates the other
+    // Two-way sync flag to prevent infinite loops
     let syncing = false;
 
     const syncBargToPsig = () => {
@@ -287,6 +287,24 @@ function initDesignInputs() {
         syncing = false;
     };
 
+    // When Design Temperature changes, interpolate the rated pressure from the P-T table
+    // and update both the barg and psig pressure fields.
+    const syncPressureFromTemp = () => {
+        if (syncing) return;
+        if (!currentPMS || !currentPMS.pressure_temperature) return;
+        const temps = currentPMS.pressure_temperature.temperatures || [];
+        const press = currentPMS.pressure_temperature.pressures || [];
+        if (!temps.length || !press.length) return;
+        const targetT = parseFloat(dt.value);
+        if (isNaN(targetT)) return;
+        const interpBarg = interpolatePressure(temps, press, targetT);
+        if (interpBarg <= 0) return;
+        syncing = true;
+        dp.value = interpBarg.toFixed(2);
+        dpPsig.value = (interpBarg * 14.5038).toFixed(1);
+        syncing = false;
+    };
+
     const update = () => {
         const dtv = parseFloat(dt.value) || 0;
         const mv = parseFloat(mdmt.value) || 0;
@@ -296,12 +314,24 @@ function initDesignInputs() {
         if (currentPMS) updateCalculations();
     };
 
-    // Sync events: when user edits one field, update the other, then run full update
+    // Sync events
     dp.addEventListener('input', () => { syncBargToPsig(); update(); });
     dpPsig.addEventListener('input', () => { syncPsigToBarg(); update(); });
-    [dt, mdmt, jt].forEach(el => el.addEventListener('input', update));
+    dt.addEventListener('input', () => {
+        // 1) Interpolate P from P-T table using the new T, update both P fields
+        syncPressureFromTemp();
+        // 2) Run full update (recompute tables/MAWP/etc.)
+        update();
+    });
+    [mdmt, jt].forEach(el => el.addEventListener('input', update));
 
-    syncBargToPsig();  // initial sync
+    // Wire up Case 1 + Stress Override fields to also trigger re-render
+    ['case1PressurePsig', 'case1StressPsi', 'case2StressPsi'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', update);
+    });
+
+    syncBargToPsig();
     update();
 }
 
@@ -754,21 +784,29 @@ function renderScheduleTab(pms) {
         const s2OvVal = s2F ? parseFloat(s2F.value) : NaN;
         const S1_psi = (!isNaN(s1OvVal) && s1OvVal > 0) ? s1OvVal : getAllowableStress(pms.material, Tlow).S_psi;
         const S2_psi = (!isNaN(s2OvVal) && s2OvVal > 0) ? s2OvVal : getAllowableStress(pms.material, Tuser).S_psi;
+        // Check if Case 1 is enabled (only if Case 1 Pressure Override is provided)
+        const case1EnabledFx = (!isNaN(case1OvVal) && case1OvVal > 0);
+
         // Pressure thickness per case (no CA yet)
         const t1_p = (P1_psig * parseFloat(od6)) / (2 * (S1_psi * E * W + P1_psig * Y));
         const t2_p = (P2_psig * parseFloat(od6)) / (2 * (S2_psi * E * W + P2_psig * Y));
-        const t_press = Math.max(t1_p, t2_p);
+        const t_press = case1EnabledFx ? Math.max(t1_p, t2_p) : t2_p;
         const tm_inch = t_press + caInch;
         const T_req_inch = tm_inch / (1 - millFrac);
-        const gov = (t2_p >= t1_p) ? 'Case 2 (Design T)' : 'Case 1 (Max P)';
+        const gov = case1EnabledFx
+            ? ((t2_p >= t1_p) ? 'Case 2 (Design T)' : 'Case 1 (Burst)')
+            : 'Design Point (Case 2 only)';
+        const case1Line = case1EnabledFx
+            ? `<strong>Case 1 (Burst @ ${Tlow}\u00b0C):</strong> P = ${P1_psig} psig, S = ${S1_psi.toLocaleString()} psi ` +
+              `\u2192 t<sub>press</sub> = <strong>${t1_p.toFixed(4)}"</strong><br>`
+            : `<span style="color:var(--text-muted)">Case 1 burst check: DISABLED (enable via Case 1 Pressure Override)</span><br>`;
         document.getElementById('formulaExample').innerHTML =
             `<strong>NPS 6" example:</strong> OD = ${od6}" | E = ${E} | W = ${W} | Y = ${Y} ` +
             `<span style="color:var(--text-muted)">[${yMatDesc}]</span> | c = ${caMM > 0 ? caInch.toFixed(4) + '" (' + caMM + ' mm)' : 'NIL'} | mill tol = ${(millFrac*100).toFixed(1)}%<br>` +
-            `<strong>Case 1 (Max P):</strong> P = ${P1_psig} psig @ ${Tlow}\u00b0C, S = ${S1_psi.toLocaleString()} psi ` +
-            `\u2192 t<sub>press</sub> = <strong>${t1_p.toFixed(4)}"</strong><br>` +
-            `<strong>Case 2 (Design T):</strong> P = ${P2_psig} psig @ ${Tuser}\u00b0C, S = ${S2_psi.toLocaleString()} psi ` +
+            case1Line +
+            `<strong>Design Point (P @ Design T):</strong> P = ${P2_psig} psig @ ${Tuser}\u00b0C, S = ${S2_psi.toLocaleString()} psi ` +
             `\u2192 t<sub>press</sub> = <strong>${t2_p.toFixed(4)}"</strong><br>` +
-            `<span style="color:#b91c1c"><strong>Governing: ${gov} \u2192 t = ${t_press.toFixed(4)}" | tm = t+c = ${tm_inch.toFixed(4)}" | ` +
+            `<span style="color:#b91c1c"><strong>Using: ${gov} \u2192 t = ${t_press.toFixed(4)}" | tm = t+c = ${tm_inch.toFixed(4)}" | ` +
             `T<sub>req</sub> = tm/(1\u2212${millFrac}) = ${T_req_inch.toFixed(4)}" (${inch2mm(T_req_inch).toFixed(2)} mm)</strong></span>`;
     } else {
         document.getElementById('formulaExample').innerHTML = '';
@@ -841,19 +879,34 @@ function renderScheduleTab(pms) {
         S_low:  S_atTlow,   S_high: S_atCase2
     };
 
+    // Check if Case 1 is enabled (user provided Case 1 Pressure Override)
+    const case1OvInput = document.getElementById('case1PressurePsig');
+    const case1OvVal = case1OvInput ? parseFloat(case1OvInput.value) : NaN;
+    const case1Enabled = !isNaN(case1OvVal) && case1OvVal > 0;
+
+    const designPressureDisplay = case1Enabled
+        ? `<strong>Case 1 (Burst @ Min T):</strong> ${case1OvVal.toFixed(1)} psig (${(case1OvVal/14.5038).toFixed(2)} barg) <span class="unit">@ ${T_low_label}\u00b0C [override]</span><br>` +
+          `<strong>Case 2 (Design Point):</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C</span>`
+        : `<strong>Design Pressure:</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C</span><br>` +
+          `<span class="unit" style="color:var(--text-muted);font-size:0.85em">(Case 1 burst check disabled — set Case 1 Pressure Override to enable)</span>`;
+
+    const designTempDisplay = case1Enabled
+        ? `<strong>Case 1:</strong> ${T_low_label}\u00b0C (${c2f(T_low)}\u00b0F) <span class="unit">[P-T min]</span><br>` +
+          `<strong>Case 2:</strong> ${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F) <span class="unit">[design]</span>`
+        : `<strong>${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F)</strong> <span class="unit">[design]</span>`;
+
+    const stressDisplay = case1Enabled
+        ? `<strong>S @ ${T_low}\u00b0C:</strong> ${S_atTlow.S_psi.toLocaleString()} psi (${S_atTlow.S_mpa} MPa)<br>` +
+          `<strong>S @ ${T_case2}\u00b0C:</strong> ${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)<br>` +
+          `<span class="unit">per ASME B31.3 Table A-1 [${pms.material}]</span>`
+        : `<strong>${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)</strong> <span class="unit">@ ${T_case2}\u00b0C per ASME B31.3 Table A-1 [${pms.material}]</span>`;
+
     setKVList('designParamsList', [
         { l: 'PMS Class', v: `<strong>${pms.piping_class}</strong> (${pms.rating})` },
-        { l: 'Design Pressure (P)',
-          v: `<strong>Case 1 (Min T / Max P):</strong> ${barg2psig(P_max)} psig (${P_max} barg) <span class="unit">@ ${T_low_label}\u00b0C</span><br>` +
-             `<strong>Case 2 (Max T):</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C${case2Overridden ? '' : ' [P-T max]'}</span>` },
-        { l: 'Design Temperature',
-          v: `<strong>Case 1:</strong> ${T_low_label}\u00b0C (${c2f(T_low)}\u00b0F) <span class="unit">[P-T min]</span><br>` +
-             `<strong>Case 2:</strong> ${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F) <span class="unit">[P-T max]</span>` },
+        { l: 'Design Pressure (P)', v: designPressureDisplay },
+        { l: 'Design Temperature', v: designTempDisplay },
         { l: 'Material Spec', v: materialSpec },
-        { l: 'Allowable Stress S(T)',
-          v: `<strong>S @ ${T_low}\u00b0C:</strong> ${S_atTlow.S_psi.toLocaleString()} psi (${S_atTlow.S_mpa} MPa)<br>` +
-             `<strong>S @ ${T_case2}\u00b0C:</strong> ${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)<br>` +
-             `<span class="unit">per ASME B31.3 Table A-1 [${pms.material}]</span>` },
+        { l: 'Allowable Stress S(T)', v: stressDisplay },
     ]);
 
     // Code Factors
@@ -1065,26 +1118,32 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         const env = pms._designEnvelope;
         let t_pressure_inch;
         if (env) {
-            // Case 1 pressure: override from case1PressurePsig if provided, else convert from P-T barg
-            const case1OverrideField = document.getElementById('case1PressurePsig');
-            const case1Override = case1OverrideField ? parseFloat(case1OverrideField.value) : NaN;
-            const P1_psig = (!isNaN(case1Override) && case1Override > 0)
-                           ? case1Override
-                           : parseFloat(barg2psig(env.P_max));
-            // Case 2 pressure: user's designPressurePsig input directly
+            // Case 2 (PRIMARY): User's Design Temperature + Design Pressure
+            //   This is the DEFAULT case — what the engineer specified as the design point.
             const dpPsigField = document.getElementById('designPressurePsig');
             const P2_psig = dpPsigField ? (parseFloat(dpPsigField.value) || parseFloat(barg2psig(env.P_min)))
                                          : parseFloat(barg2psig(env.P_min));
-            // Case 1 & Case 2 Stress: override if user provided, else auto from material tables
-            const s1OvField = document.getElementById('case1StressPsi');
             const s2OvField = document.getElementById('case2StressPsi');
-            const s1Ov = s1OvField ? parseFloat(s1OvField.value) : NaN;
             const s2Ov = s2OvField ? parseFloat(s2OvField.value) : NaN;
-            const S1 = (!isNaN(s1Ov) && s1Ov > 0) ? s1Ov : env.S_low.S_psi;
             const S2 = (!isNaN(s2Ov) && s2Ov > 0) ? s2Ov : env.S_high.S_psi;
-            const t1_p = (P1_psig * od_inch) / (2 * (S1 * E * W + P1_psig * Y));
             const t2_p = (P2_psig * od_inch) / (2 * (S2 * E * W + P2_psig * Y));
-            t_pressure_inch = Math.max(t1_p, t2_p);
+
+            // Case 1 (OPTIONAL — only included if user provides Case 1 Pressure Override):
+            //   This is the ambient / burst-case check. Leave blank to use ONLY Case 2.
+            const case1OverrideField = document.getElementById('case1PressurePsig');
+            const case1Override = case1OverrideField ? parseFloat(case1OverrideField.value) : NaN;
+            const useCase1 = (!isNaN(case1Override) && case1Override > 0);
+            if (useCase1) {
+                const P1_psig = case1Override;
+                const s1OvField = document.getElementById('case1StressPsi');
+                const s1Ov = s1OvField ? parseFloat(s1OvField.value) : NaN;
+                const S1 = (!isNaN(s1Ov) && s1Ov > 0) ? s1Ov : env.S_low.S_psi;
+                const t1_p = (P1_psig * od_inch) / (2 * (S1 * E * W + P1_psig * Y));
+                t_pressure_inch = Math.max(t1_p, t2_p);
+            } else {
+                // No Case 1 override → use ONLY user's Design P/T (Case 2)
+                t_pressure_inch = t2_p;
+            }
         } else {
             t_pressure_inch = (P_psig * od_inch) / (2 * (S_psi * E * W + P_psig * Y));
         }

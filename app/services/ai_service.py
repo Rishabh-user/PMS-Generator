@@ -177,19 +177,42 @@ GALV classes (A3/A4/B4/D4/A5/A6):
   A5 (150# GALV 6mm): same as A3
   A6 (150# Epoxy): 0.5"→80S | 0.75-1.5"→80 | 2-6"→80 | 8-24"→STD
 
-CuNi 30-series (EEMUA 234):
+CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs (from Pipe Class Sheet A30):
   A30: No standard schedule — uses EEMUA 234 wall thickness tables
-  Sizes (mm OD): 0.5"=16, 0.75"=19, 1"=25, 1.5"=38, 2"=57, 3"=76, 4"=108, 6"=159, 8"=219, 10"=267, 12"=324, 14"=356, 16"=406, 18"=457, 20"=508, 24"=610, 28"=711, 32"=813, 36"=914
-  WT: 2, 2, 2, 2, 2.5, 3, 3, 3.5, 4, 4.5, 5, 5, 6, 6, 6.5, 8, 8, 10, 12
-  Schedule: "-" for all (EEMUA has its own thickness system)
+  NPS → OD (mm):
+    0.5"=16, 0.75"=25, 1"=30, 1.5"=44.5, 2"=57, 2.5"=73, 3"=88.9, 4"=108,
+    6"=159, 8"=219.1, 10"=267, 12"=323.9, 14"=368, 16"=419, 18"=457.2,
+    20"=508, 22"=559, 24"=610, 28"=711, 30"=762
+  NPS → WT (mm):
+    0.5"=2.0, 0.75"=2.0, 1"=2.5, 1.5"=2.5, 2"=2.5, 2.5"=2.5, 3"=2.5, 4"=3.0,
+    6"=3.5, 8"=4.5, 10"=5.5, 12"=7.0, 14"=8.0, 16"=9.0, 18"=9.5, 20"=10.0,
+    24"=11.0, 28"=12.5
+  Schedule: "-" for all (EEMUA has its own thickness system; no ASME schedule applies)
+  IMPORTANT: Use the exact OD values above; do NOT substitute ASME B36.10M/B36.19M ODs.
 
-GRE (A50/A51/A52):
-  All sizes use manufacturer standard wall thickness per GRE system. Schedule = "-"
+GRE (A50/A51/A52) — Manufacturer's Standard (NOT ASME):
+  A50/A52 ODs (mm): 1"=34.1, 1.5"=49.1, 2"=57.8, 3"=86.4, 4"=110.6, 6"=166.6,
+                    8"=218.4, 10"=274.5, 12"=327.3, 14"=359.2, 16"=410.5,
+                    18"=452.2, 20"=502.3, 24"=602.8, 28"=728.6, 30"=780.6,
+                    32"=832.6, 34"=884.6, 36"=936.4, 40"=1040.6
+  A51 ODs (mm):     1"=31.5, 1.5"=46.5, 2"=57.4, 3"=86.2, 4"=111.6, 6"=165.4
+  Schedule = "-" (no ASME schedule). WT per manufacturer standard.
 
-Tubing (T80/T90):
-  T80A/T90A: 0.5" OD, wall thickness 1.245mm (125 Barg)
-  T80B/T90B: 0.5" OD, wall thickness 1.651mm (200 Barg)
-  T80C/T90C: 0.5" OD, wall thickness 2.108mm (325 Barg)
+CPVC (A60) — ASTM F441 (uses Iron Pipe Size ODs — SAME as ASME B36.10M):
+  Sizes: 0.5"-8" (typical)
+  Schedule: SCH 80 for all sizes (per ASTM F441)
+  OD per ASME B36.10M (IPS): 0.5"=21.3, 0.75"=26.7, 1"=33.4, 1.5"=48.3, 2"=60.3,
+                              2.5"=73.0, 3"=88.9, 4"=114.3, 6"=168.3, 8"=219.1
+
+Tubing (T80/T90) — OD EQUALS NOMINAL SIZE × 25.4:
+  0.5" tube: OD = 12.7 mm
+  0.75" tube: OD = 19.05 mm
+  1" tube: OD = 25.4 mm
+  1.5" tube: OD = 38.1 mm
+  T80A/T90A: 0.5"-1.5" OD, wall thickness varies by size (125 Barg rating)
+  T80B/T90B: 0.5"-1.5" OD, heavier WT (200 Barg rating)
+  T80C/T90C: 0.5"-1.5" OD, heaviest WT (325 Barg rating)
+  Schedule: "-" for all (tubing uses thickness classes, not schedules)
 
 === PIPE TYPE TRANSITION (Seamless → Welded) ===
 All mainstream classes have TWO pipe types with a size-based transition:

@@ -103,7 +103,16 @@
       "Bash(git rm:*)",
       "Bash(curl -s https://pms-generator.onrender.com/health)",
       "Bash(ping -n 60 127.0.0.1)",
-      "Bash(.venv/Scripts/python -c \"from app.models.pms_models import ValveData, PMSResponse; print\\(''Models OK''\\); from app.services.pms_service import _build_pms_response; print\\(''Service OK''\\)\")"
+      "Bash(.venv/Scripts/python -c \"from app.models.pms_models import ValveData, PMSResponse; print\\(''Models OK''\\); from app.services.pms_service import _build_pms_response; print\\(''Service OK''\\)\")",
+      "Bash(taskkill //F //IM python3.10.exe)",
+      "Bash(curl -s -o nul -w \"HTTP %{http_code}\\\\n\" http://localhost:8003/api/engineering-constants)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8003)",
+      "Bash(findstr LISTENING)",
+      "Bash(curl -s -o nul -w \"app.js: HTTP %{http_code}, %{size_download}B\\\\n\" http://localhost:8003/static/js/app.js)",
+      "Bash(curl -s \"http://localhost:8003/api/pipe-classes\")",
+      "Bash(ping -n 6 127.0.0.1 echo \"=== Verify CA updates loaded ===\" curl -s \"http://localhost:8003/api/pipe-classes\")",
+      "Bash(curl -s http://localhost:8003/static/js/app.js)"
     ]
   }
 }

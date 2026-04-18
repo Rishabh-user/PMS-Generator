@@ -11,7 +11,7 @@ Usage:
     wt = get_wall_thickness(60.3, "80")  # -> 5.54
 """
 
-# === NPS (inch string) -> OD (mm) ===
+# === NPS (inch string) -> OD (mm) per ASME B36.10M / B36.19M (steel pipe) ===
 NPS_TO_OD: dict[str, float] = {
     "0.5":  21.3,
     "0.75": 26.7,
@@ -40,6 +40,69 @@ NPS_TO_OD: dict[str, float] = {
 
 # Reverse lookup: OD -> NPS
 OD_TO_NPS: dict[float, str] = {v: k for k, v in NPS_TO_OD.items()}
+
+
+# === EEMUA 234 OD table for CuNi 90/10 ===
+# Small-bore sizes have different OD from ASME. Large sizes converge or diverge.
+EEMUA_234_OD: dict[str, float] = {
+    "0.5":  16.0,
+    "0.75": 25.0,
+    "1":    30.0,
+    "1.5":  44.5,
+    "2":    57.0,
+    "2.5":  73.0,    # ASME equivalent
+    "3":    88.9,    # ASME equivalent
+    "4":    108.0,
+    "6":    159.0,
+    "8":    219.1,   # ASME equivalent
+    "10":   267.0,
+    "12":   323.9,   # ASME equivalent
+    "14":   368.0,
+    "16":   419.0,
+    "18":   457.2,
+    "20":   508.0,
+    "22":   559.0,
+    "24":   610.0,
+    "28":   711.0,
+    "30":   762.0,
+}
+
+# === Tubing OD — nominal size IS the OD in inches ===
+def _tubing_od(nps: str) -> float | None:
+    """Tubing OD in mm: nominal NPS inches × 25.4."""
+    try:
+        return round(float(nps) * 25.4, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_od_for_material(nps: str, material: str | None) -> float | None:
+    """Material-aware OD lookup.
+
+    Returns OD in mm for the given NPS, selecting the appropriate OD table
+    based on the material standard:
+      - CuNi 90/10 → EEMUA 234
+      - GRE / CPVC / Plastic → returns None (use AI-generated value as-is)
+      - Tubing → nominal NPS × 25.4
+      - All steel (CS/LTCS/SS/DSS/SDSS/GALV) → ASME B36.10M/B36.19M
+    """
+    nps_str = str(nps).strip().strip('"')
+    mat = (material or "").upper()
+
+    # Tubing: OD = nominal NPS in inches converted to mm
+    if "TUBING" in mat or nps_str.startswith("T80") or nps_str.startswith("T90"):
+        return _tubing_od(nps_str)
+
+    # CuNi 90/10 uses EEMUA 234 ODs
+    if "CUNI" in mat or "CU-NI" in mat or "CU NI" in mat or "C70600" in mat or "EEMUA" in mat:
+        return EEMUA_234_OD.get(nps_str)
+
+    # GRE / CPVC / plastic — ODs are manufacturer-specific, preserve AI value
+    if "GRE" in mat or "CPVC" in mat or "PVC" in mat or "PLASTIC" in mat or "FRP" in mat or "EPOXY" in mat:
+        return None
+
+    # Default: ASME steel pipe
+    return NPS_TO_OD.get(nps_str)
 
 
 # === ASME B36.10M Wall Thickness Table (CS/LTCS/GALV) ===
@@ -434,26 +497,37 @@ def get_wall_thickness_by_nps(nps: str, schedule: str) -> float | None:
     return get_wall_thickness(od, schedule)
 
 
-def correct_pipe_data(pipe_data: list[dict]) -> list[dict]:
-    """Post-process AI-generated pipe_data to fix wall thickness values.
+def correct_pipe_data(pipe_data: list[dict], material: str | None = None) -> list[dict]:
+    """Post-process AI-generated pipe_data to fix OD and wall thickness values.
 
-    For each pipe entry:
-    - If schedule is a standard ASME schedule, replace WT with the exact lookup value
-    - If schedule is '-' (calculated), keep the AI value as-is
-    - Also correct OD if it doesn't match the standard NPS->OD mapping
+    Material-aware behavior:
+      - Steel (CS/LTCS/SS/DSS/SDSS/GALV): enforce ASME B36.10M/B36.19M ODs and WT
+      - CuNi 90/10: enforce EEMUA 234 ODs; keep AI-generated WT (EEMUA has no schedule)
+      - GRE / CPVC / plastic: keep AI-generated OD and WT (manufacturer-specific)
+      - Tubing: enforce OD = nominal NPS × 25.4; keep AI-generated WT
+      - '-' schedule: keep AI-generated WT as-is
 
     Returns the corrected pipe_data list (mutated in place).
     """
+    mat = (material or "").upper()
+    # Steel pipe materials follow ASME B36.10M/B36.19M strictly
+    is_steel = any(k in mat for k in ("CS", "LTCS", "SS", "DSS", "SDSS", "GALV", "STEEL", "A106", "A333", "A312", "A790", "A671"))
+    is_non_asme = any(k in mat for k in ("CUNI", "CU-NI", "CU NI", "C70600", "EEMUA", "GRE", "CPVC", "PVC", "PLASTIC", "FRP", "EPOXY", "TUBING"))
+
     for p in pipe_data:
         nps = str(p.get("size_inch", "")).strip()
         schedule = str(p.get("schedule", "")).strip()
 
-        # Correct OD
-        standard_od = get_od_mm(nps)
-        if standard_od is not None:
-            p["od_mm"] = standard_od
+        # Correct OD using material-aware lookup
+        od_to_use = get_od_for_material(nps, material) if mat else get_od_mm(nps)
+        if od_to_use is not None:
+            p["od_mm"] = od_to_use
+        # else: preserve AI-generated OD (e.g., GRE manufacturer-specific)
 
-        # Correct WT from lookup table
+        # Correct WT ONLY for steel pipe with standard ASME schedule
+        # For CuNi, GRE, CPVC, Tubing — preserve AI-generated WT
+        if is_non_asme:
+            continue
         od = p.get("od_mm", 0)
         if od and schedule and schedule not in ("-", "–", "—", ""):
             wt = get_wall_thickness(od, schedule)
