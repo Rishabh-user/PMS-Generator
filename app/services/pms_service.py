@@ -261,11 +261,25 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
 
     # Correct OD and wall thickness values — material-aware
     # Steel pipes use ASME B36.10M/19M; CuNi uses EEMUA 234; GRE/CPVC/Tubing preserve AI values
+    # For '-' schedule sizes, compute WT per ASME B31.3 Eq. 3a using the class's P-T envelope.
     if "pipe_data" in ai_data:
         material_for_correction = req.material or entry.get("material", "")
-        correct_pipe_data(ai_data["pipe_data"], material=material_for_correction)
-        logger.info("Corrected pipe_data (material='%s') using material-aware OD/WT tables",
-                    material_for_correction)
+        pt_data = entry.get("pressure_temperature", {}) or {}
+        pressures = pt_data.get("pressures") or []
+        temperatures = pt_data.get("temperatures") or []
+        design_pressure = max(pressures) if pressures else None
+        design_temp = max(temperatures) if temperatures else None
+        correct_pipe_data(
+            ai_data["pipe_data"],
+            material=material_for_correction,
+            design_pressure_barg=design_pressure,
+            design_temp_c=design_temp,
+            corrosion_allowance=req.corrosion_allowance,
+        )
+        logger.info(
+            "Corrected pipe_data (material='%s', P=%s barg, T=%s°C) using OD/WT tables + B31.3 calc for '-' schedules",
+            material_for_correction, design_pressure, design_temp,
+        )
 
     # Merge P-T from JSON + AI-generated data
     pms = _build_pms_response(entry, ai_data, req)

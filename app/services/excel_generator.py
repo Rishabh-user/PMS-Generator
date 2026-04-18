@@ -7,12 +7,72 @@ import logging
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.models.pms_models import PMSResponse
 
 logger = logging.getLogger(__name__)
+
+LOGO_PATH = Path(__file__).resolve().parent.parent / "static" / "images" / "logo.png"
+LOGO_DISPLAY_HEIGHT_PX = 80
+LOGO_ROW_HEIGHT_POINTS = 70  # row height in Excel points (≈ px * 0.75)
+
+# Prepared logo cached on disk so every workbook uses the same resized file.
+_PREPARED_LOGO_PATH: Path | None = None
+
+
+def _prepare_logo() -> Path | None:
+    """Resize the source logo to display dimensions once and return a path to the prepared PNG.
+
+    Writes to a stable temp file so openpyxl can reference a real path (more reliable
+    than BytesIO across openpyxl versions). Returns None if anything fails.
+    """
+    global _PREPARED_LOGO_PATH
+    if _PREPARED_LOGO_PATH and _PREPARED_LOGO_PATH.exists():
+        return _PREPARED_LOGO_PATH
+    if not LOGO_PATH.exists():
+        logger.warning("Logo not found at %s", LOGO_PATH)
+        return None
+    try:
+        import tempfile
+        from PIL import Image as PILImage
+
+        src = PILImage.open(LOGO_PATH)
+        aspect = src.width / src.height
+        target_h = LOGO_DISPLAY_HEIGHT_PX
+        target_w = max(1, int(round(target_h * aspect)))
+        resized = src.resize((target_w, target_h), PILImage.LANCZOS)
+        if resized.mode in ("RGBA", "LA", "P"):
+            bg = PILImage.new("RGB", resized.size, (255, 255, 255))
+            src_rgba = resized.convert("RGBA")
+            bg.paste(src_rgba, mask=src_rgba.split()[3])
+            resized = bg
+        tmp = Path(tempfile.gettempdir()) / "pms_logo_prepared.png"
+        resized.save(tmp, format="PNG")
+        _PREPARED_LOGO_PATH = tmp
+        logger.info("Prepared logo at %s (%dx%d)", tmp, target_w, target_h)
+        return tmp
+    except Exception as exc:
+        logger.warning("Failed to prepare logo: %s", exc)
+        return None
+
+
+def _insert_logo(ws, anchor_cell: str = "A1") -> None:
+    """Insert the prepared logo at the given cell and raise the anchor row's height.
+    Uses a cached resized PNG on disk for reliable embedding. No-op on any failure."""
+    prepared = _prepare_logo()
+    if not prepared:
+        return
+    try:
+        img = XLImage(str(prepared))
+        ws.add_image(img, anchor_cell)
+        anchor_row = int("".join(ch for ch in anchor_cell if ch.isdigit()))
+        ws.row_dimensions[anchor_row].height = LOGO_ROW_HEIGHT_POINTS
+        logger.info("Logo inserted at %s in sheet '%s'", anchor_cell, ws.title)
+    except Exception as exc:
+        logger.warning("Failed to insert logo: %s", exc)
 
 # Style constants
 HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
@@ -50,35 +110,30 @@ def _apply_style(ws, row, col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER,
 
 
 def _write_section_header(ws, row: int, text: str, col_start: int = 1, col_end: int = 20):
-    """Write a section header row with styling."""
+    """Write a section header row (merged and centered across the full width)."""
     for c in range(col_start, col_end + 1):
-        cell = _apply_style(ws, row, c, font=SECTION_FONT, fill=SECTION_FILL, alignment=LEFT)
+        _apply_style(ws, row, c, font=SECTION_FONT, fill=SECTION_FILL, alignment=CENTER)
     ws.cell(row=row, column=col_start).value = text
     ws.merge_cells(start_row=row, start_column=col_start, end_row=row, end_column=col_end)
 
 
-def _write_merged_data_row(ws, row: int, label: str, values: list, col_start: int = 3,
+def _write_merged_data_row(ws, row: int, label: str, values: list, col_start: int = 2,
                            total_cols: int = 20, font=DATA_FONT, fill=DATA_FILL):
     """Write a data row that auto-merges consecutive cells with identical values.
 
-    E.g. if values = ["Seamless"]*14 + ["LSAW, 100% RT"]*8, it will merge
-    the first 14 cells into one "Seamless" and the next 8 into one "LSAW, 100% RT".
+    Layout: col 1 = label, col_start..total_cols = data columns.
     """
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
-    # Style all data columns first
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
     for i in range(len(values)):
         col = col_start + i
         if col <= total_cols:
             _apply_style(ws, row, col, font=font, fill=fill, alignment=CENTER)
-    # Fill remaining columns
     for c in range(col_start + len(values), total_cols + 1):
         _apply_style(ws, row, c, fill=fill)
 
     if not values:
         return
 
-    # Find runs of identical values and merge them
     run_start = 0
     for i in range(1, len(values) + 1):
         if i == len(values) or str(values[i]) != str(values[run_start]):
@@ -93,10 +148,9 @@ def _write_merged_data_row(ws, row: int, label: str, values: list, col_start: in
                 run_start = i
 
 
-def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 3, total_cols: int = 20):
-    """Write a size header row showing pipe sizes across columns."""
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
+def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 2, total_cols: int = 20):
+    """Write a size header row: col 1 = 'Size (in)', col_start..total_cols = size values."""
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
     for i, size in enumerate(sizes):
         col = col_start + i
         if col <= total_cols:
@@ -106,14 +160,12 @@ def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 3, total_
 
 
 def _write_label_offset_value_row(ws, row: int, label: str, value: str, value_start_col: int, col_end: int, fill=DATA_FILL):
-    """Label in col 2; empty cells from col 3 up to value_start_col-1; merged value from value_start_col to col_end.
+    """Col 1 = label; cols 2..value_start_col-1 = blank fill; value_start_col..col_end = merged value.
 
-    Used for Compact Flange / Hub Connector rows where the value only applies to larger sizes
-    (e.g., starts at the 3" size column per reference F1/G1 layout).
+    Used for Compact Flange / Hub Connector rows where the value only applies to larger sizes.
     """
-    _apply_style(ws, row, 1, fill=fill)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
-    for c in range(3, value_start_col):
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+    for c in range(2, value_start_col):
         _apply_style(ws, row, c, fill=fill)
     _apply_style(ws, row, value_start_col, font=DATA_FONT, fill=fill, alignment=LEFT).value = value
     if col_end > value_start_col:
@@ -122,7 +174,28 @@ def _write_label_offset_value_row(ws, row: int, label: str, value: str, value_st
         _apply_style(ws, row, c, fill=fill)
 
 
-def _size_column_index(pipe_sizes: list, target_size: str, pipe_col_start: int = 3, default_offset: int = 5) -> int:
+def _write_range_value_row(ws, row: int, label: str, value: str,
+                           start_col: int, end_col: int, total_cols: int, fill=DATA_FILL):
+    """Label in col 1; all data columns blank-filled; value merged across [start_col..end_col].
+
+    Used when a row's value applies to a specific pipe-size range only
+    (e.g. Plug fittings from 0.5" to 1.5").
+    """
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+    for c in range(2, total_cols + 1):
+        _apply_style(ws, row, c, fill=fill)
+    if not value:
+        return
+    start_col = max(start_col, 2)
+    end_col = min(end_col, total_cols)
+    if end_col < start_col:
+        return
+    _apply_style(ws, row, start_col, font=DATA_FONT, fill=fill, alignment=CENTER).value = value
+    if end_col > start_col:
+        ws.merge_cells(start_row=row, start_column=start_col, end_row=row, end_column=end_col)
+
+
+def _size_column_index(pipe_sizes: list, target_size: str, pipe_col_start: int = 2, default_offset: int = 5) -> int:
     """Return the Excel column index for the given pipe size (e.g. '3'). Falls back to default_offset if not found."""
     for i, s in enumerate(pipe_sizes):
         if str(s).strip().rstrip('"') == target_size:
@@ -130,19 +203,14 @@ def _size_column_index(pipe_sizes: list, target_size: str, pipe_col_start: int =
     return pipe_col_start + default_offset
 
 
-def _write_label_value_row(ws, row: int, label: str, value: str, col_start: int = 1, val_col: int = 3, col_end: int = 20):
+def _write_label_value_row(ws, row: int, label: str, value: str, col_start: int = 1, val_col: int = 2, col_end: int = 20):
     """Write a label-value pair row.
 
-    Layout (consistent with _write_merged_data_row and _write_size_header_row):
-      Col 1 (A) = spacer / marker (empty)
-      Col 2 (B) = label
-      Cols 3..col_end (C onward, merged) = value
+    Layout:
+      Col 1 (A) = label
+      Cols val_col..col_end (B onward, merged) = value
     """
-    # Col 1 (A): empty spacer
-    _apply_style(ws, row, 1, fill=DATA_FILL)
-    # Col 2 (B): label
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = label
-    # Col 3..col_end (C onward, merged): value
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = label
     _apply_style(ws, row, val_col, font=DATA_FONT, fill=DATA_FILL, alignment=LEFT).value = value
     if col_end > val_col:
         ws.merge_cells(start_row=row, start_column=val_col, end_row=row, end_column=col_end)
@@ -158,21 +226,19 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     # Determine column count based on pipe sizes
     num_pipe_cols = max(len(pms.pipe_data), 1)
-    total_cols = max(num_pipe_cols + 3, 20)  # At least 20 columns
-    pipe_col_start = 3
+    total_cols = max(num_pipe_cols + 2, 19)  # Col 1 = label, col 2..N = data
+    pipe_col_start = 2
     pipe_col_end = pipe_col_start + num_pipe_cols - 1
 
-    # Column widths — standard PMS spec layout
-    #   A (spacer)  width=4
-    #   B (label)   width=22  — accommodates "Corrosion Allowance", "Mill Tolerance", etc.
-    #   C..N (data) width=12  — accommodates size/OD/schedule/MOC strings
-    ws.column_dimensions["A"].width = 4
-    ws.column_dimensions["B"].width = 22
-    ws.column_dimensions["C"].width = 13
-    for i in range(4, total_cols + 1):
+    # Column widths — col A = label, col B onwards = data columns
+    ws.column_dimensions["A"].width = 22  # label
+    ws.column_dimensions["B"].width = 13
+    for i in range(3, total_cols + 1):
         ws.column_dimensions[get_column_letter(i)].width = 12
 
-    row = 1
+    # === LOGO (row 1) ===
+    _insert_logo(ws, anchor_cell="A1")
+    row = 2
 
     # === TITLE ===
     for c in range(1, total_cols + 1):
@@ -208,8 +274,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     # Temp labels row (e.g. "-29 TO 38")
     if pt.temp_labels:
-        _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT)
-        _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. Range (°C)"
+        _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. Range (°C)"
         for i, lbl in enumerate(pt.temp_labels):
             col = pipe_col_start + i
             if col <= total_cols:
@@ -217,8 +282,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         row += 1
 
     # Temperature row
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. (°C)"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. (°C)"
     for i, temp in enumerate(pt.temperatures):
         col = pipe_col_start + i
         if col <= total_cols:
@@ -231,8 +295,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     row += 1
 
     # Pressure row
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press. (barg)"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press. (barg)"
     for i, press in enumerate(pt.pressures):
         col = pipe_col_start + i
         if col <= total_cols:
@@ -271,13 +334,11 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
             _write_merged_data_row(ws, row, label, values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         else:
-            _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT)
-            _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+            _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
             for i, val in enumerate(values):
                 col = pipe_col_start + i
                 if col <= total_cols:
                     _apply_style(ws, row, col, font=DATA_FONT, fill=fill).value = val
-            # Fill remaining cols
             for c in range(pipe_col_start + len(values), total_cols + 1):
                 _apply_style(ws, row, c, fill=fill)
         row += 1
@@ -289,19 +350,18 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     row += 1
 
     # Size columns header
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
     for i, fitting in enumerate(pms.fittings_by_size):
-        col = 3 + i
+        col = pipe_col_start + i
         if col <= total_cols:
             _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = fitting.size_inch
-    for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+    for c in range(pipe_col_start + len(pms.fittings_by_size), total_cols + 1):
         _apply_style(ws, row, c, fill=ALT_FILL)
     row += 1
 
     # Type row — full descriptive text from AI (e.g. "Butt Weld (SCH to match pipe), Seamless")
     type_values = [f.fitting_type or "" for f in pms.fittings_by_size]
-    _write_merged_data_row(ws, row, "Type", type_values, col_start=3,
+    _write_merged_data_row(ws, row, "Type", type_values, col_start=pipe_col_start,
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
 
@@ -316,11 +376,20 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         ("Weldolet", lambda f: f.weldolet_spec),
     ]
 
+    fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
+    plug_start_col = pipe_col_start  # 0.5" column
+    plug_end_col = _size_column_index(fitting_sizes, "1.5", pipe_col_start=pipe_col_start)
     for prop_idx, (label, getter) in enumerate(fitting_props):
         fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
         prop_values = [getter(f) or "" for f in pms.fittings_by_size]
-        _write_merged_data_row(ws, row, label, prop_values, col_start=3,
-                               total_cols=total_cols, fill=fill)
+        if label == "Plug":
+            plug_value = next((v for v in prop_values if v), "")
+            _write_range_value_row(ws, row, label, plug_value,
+                                   start_col=plug_start_col, end_col=plug_end_col,
+                                   total_cols=total_cols, fill=fill)
+        else:
+            _write_merged_data_row(ws, row, label, prop_values, col_start=pipe_col_start,
+                                   total_cols=total_cols, fill=fill)
         row += 1
 
     row += 1
@@ -394,18 +463,16 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     row += 1
     _write_label_value_row(ws, row, "MOC", pms.spectacle_blind.material_spec, col_end=total_cols)
     row += 1
-    # Spectacle row — split across pipe size columns (like original spec)
+    # Spectacle row — col 1 = label, pipe size columns split for small vs large ranges
     for c in range(1, total_cols + 1):
         _apply_style(ws, row, c, font=DATA_FONT, fill=ALT_FILL, alignment=CENTER)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
     if pms.spectacle_blind.standard_large and len(pms.pipe_data) > 0:
         mid = len(pms.pipe_data) // 2
         left_end = pipe_col_start + mid - 1
         right_start = pipe_col_start + mid
-        # Left half: standard
         ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=left_end)
         ws.cell(row=row, column=pipe_col_start).value = pms.spectacle_blind.standard
-        # Right half: standard_large
         ws.merge_cells(start_row=row, start_column=right_start, end_row=row, end_column=total_cols)
         ws.cell(row=row, column=right_start).value = pms.spectacle_blind.standard_large
     else:
@@ -476,11 +543,12 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         _write_section_header(ws, row, "Notes", col_end=total_cols)
         row += 1
         for idx, note in enumerate(pms.notes, start=1):
+            # Col 1 = note position number; col 2..end = note text (merged)
             _apply_style(ws, row, 1, font=LABEL_FONT, fill=NOTES_FILL, alignment=CENTER).value = idx
-            _apply_style(ws, row, 2, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT).value = note
-            if total_cols > 2:
-                ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=total_cols)
-            for c in range(3, total_cols + 1):
+            _apply_style(ws, row, pipe_col_start, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT).value = note
+            if total_cols > pipe_col_start:
+                ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=total_cols)
+            for c in range(pipe_col_start + 1, total_cols + 1):
                 ws.cell(row=row, column=c).fill = NOTES_FILL
                 ws.cell(row=row, column=c).border = THIN_BORDER
             row += 1
@@ -508,18 +576,19 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
 
     # Re-use the same generation logic but save to buffer
     num_pipe_cols = max(len(pms.pipe_data), 1)
-    total_cols = max(num_pipe_cols + 3, 20)
-    pipe_col_start = 3
+    total_cols = max(num_pipe_cols + 2, 19)
+    pipe_col_start = 2
 
     from openpyxl.utils import get_column_letter as gcl
-    # Column widths — standard PMS spec layout (consistent with generate_pms_excel)
-    ws.column_dimensions["A"].width = 4
-    ws.column_dimensions["B"].width = 22
-    ws.column_dimensions["C"].width = 13
-    for i in range(4, total_cols + 1):
+    # Column widths — col A = label, col B onwards = data columns
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 13
+    for i in range(3, total_cols + 1):
         ws.column_dimensions[gcl(i)].width = 12
 
-    row = 1
+    # Logo in row 1, title in row 2
+    _insert_logo(ws, anchor_cell="A1")
+    row = 2
 
     # Title
     for c in range(1, total_cols + 1):
@@ -548,7 +617,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     # Temp labels row (e.g. "-29 TO 38")
     pt = pms.pressure_temperature
     if pt.temp_labels:
-        _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. Range (°C)"
+        _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. Range (°C)"
         for i, lbl in enumerate(pt.temp_labels):
             col = pipe_col_start + i
             if col <= total_cols:
@@ -556,7 +625,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         row += 1
 
     # Temperature values row
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. (°C)"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. (°C)"
     for i, temp in enumerate(pt.temperatures):
         col = pipe_col_start + i
         if col <= total_cols:
@@ -569,7 +638,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     row += 1
 
     # Pressure values row
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press. (barg)"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press. (barg)"
     for i, press in enumerate(pt.pressures):
         col = pipe_col_start + i
         if col <= total_cols:
@@ -606,7 +675,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
             _write_merged_data_row(ws, row, label, values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         else:
-            _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+            _apply_style(ws, row, 1, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
             for i, val in enumerate(values):
                 col = pipe_col_start + i
                 if col <= total_cols:
@@ -619,18 +688,18 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     row += 1
 
     # Size columns header
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
     for i, fitting in enumerate(pms.fittings_by_size):
-        col = 3 + i
+        col = pipe_col_start + i
         if col <= total_cols:
             _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = fitting.size_inch
-    for c in range(3 + len(pms.fittings_by_size), total_cols + 1):
+    for c in range(pipe_col_start + len(pms.fittings_by_size), total_cols + 1):
         _apply_style(ws, row, c, fill=ALT_FILL)
     row += 1
 
     # Type row — full descriptive text from AI (e.g. "Butt Weld (SCH to match pipe), Seamless")
     type_values = [f.fitting_type or "" for f in pms.fittings_by_size]
-    _write_merged_data_row(ws, row, "Type", type_values, col_start=3,
+    _write_merged_data_row(ws, row, "Type", type_values, col_start=pipe_col_start,
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
 
@@ -645,11 +714,20 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         ("Weldolet", lambda f: f.weldolet_spec),
     ]
 
+    fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
+    plug_start_col = pipe_col_start  # 0.5" column
+    plug_end_col = _size_column_index(fitting_sizes, "1.5", pipe_col_start=pipe_col_start)
     for prop_idx, (label, getter) in enumerate(fitting_props):
         fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
         prop_values = [getter(f) or "" for f in pms.fittings_by_size]
-        _write_merged_data_row(ws, row, label, prop_values, col_start=3,
-                               total_cols=total_cols, fill=fill)
+        if label == "Plug":
+            plug_value = next((v for v in prop_values if v), "")
+            _write_range_value_row(ws, row, label, plug_value,
+                                   start_col=plug_start_col, end_col=plug_end_col,
+                                   total_cols=total_cols, fill=fill)
+        else:
+            _write_merged_data_row(ws, row, label, prop_values, col_start=pipe_col_start,
+                                   total_cols=total_cols, fill=fill)
         row += 1
     row += 1
 
@@ -717,18 +795,16 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     row += 1
     _write_label_value_row(ws, row, "MOC", pms.spectacle_blind.material_spec, col_end=total_cols)
     row += 1
-    # Spectacle row — split across pipe size columns (like original spec)
+    # Spectacle row — col 1 = label, pipe size columns split for small vs large ranges
     for c in range(1, total_cols + 1):
         _apply_style(ws, row, c, font=DATA_FONT, fill=ALT_FILL, alignment=CENTER)
-    _apply_style(ws, row, 2, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
     if pms.spectacle_blind.standard_large and len(pms.pipe_data) > 0:
         mid = len(pms.pipe_data) // 2
         left_end = pipe_col_start + mid - 1
         right_start = pipe_col_start + mid
-        # Left half: standard
         ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=left_end)
         ws.cell(row=row, column=pipe_col_start).value = pms.spectacle_blind.standard
-        # Right half: standard_large
         ws.merge_cells(start_row=row, start_column=right_start, end_row=row, end_column=total_cols)
         ws.cell(row=row, column=right_start).value = pms.spectacle_blind.standard_large
     else:
@@ -783,17 +859,17 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
                 ws.cell(row=row, column=c).fill = fill
         row += 1
 
-    # Notes — numbered (col A = position, col B..end = text) so flange "Note 8,9" references resolve
+    # Notes — numbered: col 1 = position number, col 2..end = merged text
     if pms.notes:
         row += 1
         _write_section_header(ws, row, "Notes", col_end=total_cols)
         row += 1
         for idx, note in enumerate(pms.notes, start=1):
             _apply_style(ws, row, 1, font=LABEL_FONT, fill=NOTES_FILL, alignment=CENTER).value = idx
-            _apply_style(ws, row, 2, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT).value = note
-            if total_cols > 2:
-                ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=total_cols)
-            for c in range(3, total_cols + 1):
+            _apply_style(ws, row, pipe_col_start, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT).value = note
+            if total_cols > pipe_col_start:
+                ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=total_cols)
+            for c in range(pipe_col_start + 1, total_cols + 1):
                 ws.cell(row=row, column=c).fill = NOTES_FILL
                 ws.cell(row=row, column=c).border = THIN_BORDER
             row += 1

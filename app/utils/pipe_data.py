@@ -497,7 +497,56 @@ def get_wall_thickness_by_nps(nps: str, schedule: str) -> float | None:
     return get_wall_thickness(od, schedule)
 
 
-def correct_pipe_data(pipe_data: list[dict], material: str | None = None) -> list[dict]:
+def _parse_corrosion_allowance_mm(ca: str | float | int | None) -> float:
+    """Parse a corrosion allowance string like '3 mm' to a float in mm."""
+    if ca is None:
+        return 0.0
+    if isinstance(ca, (int, float)):
+        return float(ca)
+    import re
+    m = re.search(r"([\d.]+)", str(ca))
+    return float(m.group(1)) if m else 0.0
+
+
+def _calculated_wt_for_pipe(
+    od_mm: float,
+    design_pressure_barg: float,
+    design_temp_c: float,
+    material_spec: str,
+    corrosion_allowance_mm: float,
+) -> float | None:
+    """Compute minimum wall thickness per ASME B31.3 Eq. 3a for '-' schedule sizes.
+
+    Returns the mill-tolerance-adjusted minimum thickness in mm, rounded to 2 decimals.
+    Returns None if required inputs are missing.
+    """
+    if not od_mm or not design_pressure_barg:
+        return None
+    try:
+        # Imports here to avoid a circular import with utils.engineering
+        from app.utils.engineering import calculate_wall_thickness
+        from app.utils.engineering_constants import get_allowable_stress
+
+        stress = get_allowable_stress(material_spec or "", design_temp_c)
+        result = calculate_wall_thickness(
+            od_mm=od_mm,
+            design_pressure_barg=design_pressure_barg,
+            allowable_stress_mpa=stress["S_mpa"],
+            joint_factor=1.0,
+            corrosion_allowance_mm=corrosion_allowance_mm,
+        )
+        return round(result["t_minimum_mm"], 2)
+    except Exception:
+        return None
+
+
+def correct_pipe_data(
+    pipe_data: list[dict],
+    material: str | None = None,
+    design_pressure_barg: float | None = None,
+    design_temp_c: float | None = None,
+    corrosion_allowance: str | float | None = None,
+) -> list[dict]:
     """Post-process AI-generated pipe_data to fix OD and wall thickness values.
 
     Material-aware behavior:
@@ -505,14 +554,16 @@ def correct_pipe_data(pipe_data: list[dict], material: str | None = None) -> lis
       - CuNi 90/10: enforce EEMUA 234 ODs; keep AI-generated WT (EEMUA has no schedule)
       - GRE / CPVC / plastic: keep AI-generated OD and WT (manufacturer-specific)
       - Tubing: enforce OD = nominal NPS × 25.4; keep AI-generated WT
-      - '-' schedule: keep AI-generated WT as-is
+      - '-' schedule (calculated WT): if design_pressure_barg is provided, compute WT
+        per ASME B31.3 Eq. 3a using the size's OD, material allowable stress at
+        design_temp_c, corrosion allowance, and mill tolerance; otherwise preserve
+        AI-generated WT.
 
     Returns the corrected pipe_data list (mutated in place).
     """
     mat = (material or "").upper()
-    # Steel pipe materials follow ASME B36.10M/B36.19M strictly
-    is_steel = any(k in mat for k in ("CS", "LTCS", "SS", "DSS", "SDSS", "GALV", "STEEL", "A106", "A333", "A312", "A790", "A671"))
     is_non_asme = any(k in mat for k in ("CUNI", "CU-NI", "CU NI", "C70600", "EEMUA", "GRE", "CPVC", "PVC", "PLASTIC", "FRP", "EPOXY", "TUBING"))
+    ca_mm = _parse_corrosion_allowance_mm(corrosion_allowance)
 
     for p in pipe_data:
         nps = str(p.get("size_inch", "")).strip()
@@ -524,14 +575,31 @@ def correct_pipe_data(pipe_data: list[dict], material: str | None = None) -> lis
             p["od_mm"] = od_to_use
         # else: preserve AI-generated OD (e.g., GRE manufacturer-specific)
 
-        # Correct WT ONLY for steel pipe with standard ASME schedule
-        # For CuNi, GRE, CPVC, Tubing — preserve AI-generated WT
+        # Non-ASME materials: preserve AI-generated WT entirely
         if is_non_asme:
             continue
+
         od = p.get("od_mm", 0)
-        if od and schedule and schedule not in ("-", "–", "—", ""):
-            wt = get_wall_thickness(od, schedule)
-            if wt is not None:
-                p["wall_thickness_mm"] = wt
+        is_dash_schedule = schedule in ("-", "–", "—", "")
+
+        if not is_dash_schedule:
+            # Standard ASME schedule → look up WT from B36.10M/B36.19M table
+            if od and schedule:
+                wt = get_wall_thickness(od, schedule)
+                if wt is not None:
+                    p["wall_thickness_mm"] = wt
+        else:
+            # Calculated schedule → compute via ASME B31.3 Eq. 3a
+            if design_pressure_barg and design_temp_c is not None and od:
+                pipe_material_spec = p.get("material_spec") or material or ""
+                wt_calc = _calculated_wt_for_pipe(
+                    od_mm=od,
+                    design_pressure_barg=design_pressure_barg,
+                    design_temp_c=design_temp_c,
+                    material_spec=pipe_material_spec,
+                    corrosion_allowance_mm=ca_mm,
+                )
+                if wt_calc is not None:
+                    p["wall_thickness_mm"] = wt_calc
 
     return pipe_data
