@@ -66,8 +66,10 @@ class ExtraFittings(BaseModel):
 class FlangeData(BaseModel):
     material_spec: str = Field(default="", description="ASTM material specification")
     face_type: str = Field(default="", description="Flange face type")
-    flange_type: str = Field(default="", description="Flange type and standard")
+    flange_type: str = Field(default="", description="Flange type and standard (WN Flange)")
     standard: str = Field(default="", description="Flange standard")
+    compact_flange: str = Field(default="", description="Compact Flange description (F/G-series 1500#/2500#)")
+    hub_connector: str = Field(default="", description="Hub Connector description (F/G-series 1500#/2500#)")
 
 
 class SpectacleBlind(BaseModel):

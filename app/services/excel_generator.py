@@ -105,6 +105,31 @@ def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 3, total_
         _apply_style(ws, row, c, fill=ALT_FILL)
 
 
+def _write_label_offset_value_row(ws, row: int, label: str, value: str, value_start_col: int, col_end: int, fill=DATA_FILL):
+    """Label in col 2; empty cells from col 3 up to value_start_col-1; merged value from value_start_col to col_end.
+
+    Used for Compact Flange / Hub Connector rows where the value only applies to larger sizes
+    (e.g., starts at the 3" size column per reference F1/G1 layout).
+    """
+    _apply_style(ws, row, 1, fill=fill)
+    _apply_style(ws, row, 2, font=LABEL_FONT, fill=fill, alignment=LEFT).value = label
+    for c in range(3, value_start_col):
+        _apply_style(ws, row, c, fill=fill)
+    _apply_style(ws, row, value_start_col, font=DATA_FONT, fill=fill, alignment=LEFT).value = value
+    if col_end > value_start_col:
+        ws.merge_cells(start_row=row, start_column=value_start_col, end_row=row, end_column=col_end)
+    for c in range(value_start_col + 1, col_end + 1):
+        _apply_style(ws, row, c, fill=fill)
+
+
+def _size_column_index(pipe_sizes: list, target_size: str, pipe_col_start: int = 3, default_offset: int = 5) -> int:
+    """Return the Excel column index for the given pipe size (e.g. '3'). Falls back to default_offset if not found."""
+    for i, s in enumerate(pipe_sizes):
+        if str(s).strip().rstrip('"') == target_size:
+            return pipe_col_start + i
+    return pipe_col_start + default_offset
+
+
 def _write_label_value_row(ws, row: int, label: str, value: str, col_start: int = 1, val_col: int = 3, col_end: int = 20):
     """Write a label-value pair row.
 
@@ -274,8 +299,8 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         _apply_style(ws, row, c, fill=ALT_FILL)
     row += 1
 
-    # Type row (Seamless/Welded) — with auto-merge
-    type_values = ["Seam." if f.type == "Seamless" else "Weld." for f in pms.fittings_by_size]
+    # Type row — full descriptive text from AI (e.g. "Butt Weld (SCH to match pipe), Seamless")
+    type_values = [f.fitting_type or "" for f in pms.fittings_by_size]
     _write_merged_data_row(ws, row, "Type", type_values, col_start=3,
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
@@ -332,17 +357,32 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     _write_size_header_row(ws, row, pipe_sizes, col_start=pipe_col_start, total_cols=total_cols)
     row += 1
 
+    # If compact_flange / hub_connector populated, show WN Flange as label for the Type row
+    # and add Compact Flange and Hub Connector rows (reference F1/G1 layout).
+    has_extra_flange = bool(pms.flange.compact_flange) or bool(pms.flange.hub_connector)
+    type_label = "WN Flange" if has_extra_flange else "Type"
     flange_rows = [
-        ("MOC", pms.flange.material_spec),
-        ("Face", pms.flange.face_type),
-        ("Type", pms.flange.flange_type),
-        ("Standard", pms.flange.standard),
+        ("MOC", pms.flange.material_spec, False),
+        ("Face", pms.flange.face_type, False),
+        (type_label, pms.flange.flange_type, False),
+        ("Standard", pms.flange.standard, False),
     ]
-    for i, (label, value) in enumerate(flange_rows):
+    if has_extra_flange:
+        flange_rows.append(("Compact Flange", pms.flange.compact_flange, True))
+        flange_rows.append(("Hub Connector", pms.flange.hub_connector, True))
+
+    # Compact Flange / Hub Connector values only apply from the 3" size column onward.
+    offset_col = _size_column_index(pipe_sizes, "3", pipe_col_start=pipe_col_start)
+    for i, (label, value, offset) in enumerate(flange_rows):
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-        _write_label_value_row(ws, row, label, value, col_end=total_cols)
-        for c in range(1, total_cols + 1):
-            ws.cell(row=row, column=c).fill = fill
+        if offset and value:
+            _write_label_offset_value_row(ws, row, label, value,
+                                          value_start_col=offset_col,
+                                          col_end=total_cols, fill=fill)
+        else:
+            _write_label_value_row(ws, row, label, value, col_end=total_cols)
+            for c in range(1, total_cols + 1):
+                ws.cell(row=row, column=c).fill = fill
         row += 1
 
     row += 1
@@ -429,14 +469,18 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     row += 1
 
     # === NOTES ===
+    # Rendered as a numbered table: col A = position number, col B..end = note text (merged).
+    # The flange_type / spectacle_blind strings may reference notes by position ("Note 8,9"),
+    # so position numbers must be visible in the sheet.
     if pms.notes:
         _write_section_header(ws, row, "Notes", col_end=total_cols)
         row += 1
-        for note in pms.notes:
-            _apply_style(ws, row, 1, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT)
-            ws.cell(row=row, column=1).value = note
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-            for c in range(1, total_cols + 1):
+        for idx, note in enumerate(pms.notes, start=1):
+            _apply_style(ws, row, 1, font=LABEL_FONT, fill=NOTES_FILL, alignment=CENTER).value = idx
+            _apply_style(ws, row, 2, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT).value = note
+            if total_cols > 2:
+                ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=total_cols)
+            for c in range(3, total_cols + 1):
                 ws.cell(row=row, column=c).fill = NOTES_FILL
                 ws.cell(row=row, column=c).border = THIN_BORDER
             row += 1
@@ -584,8 +628,8 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         _apply_style(ws, row, c, fill=ALT_FILL)
     row += 1
 
-    # Type row (Seamless/Welded) — with auto-merge
-    type_values = ["Seam." if f.type == "Seamless" else "Weld." for f in pms.fittings_by_size]
+    # Type row — full descriptive text from AI (e.g. "Butt Weld (SCH to match pipe), Seamless")
+    type_values = [f.fitting_type or "" for f in pms.fittings_by_size]
     _write_merged_data_row(ws, row, "Type", type_values, col_start=3,
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
@@ -640,14 +684,29 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     row += 1
     _write_size_header_row(ws, row, pipe_sizes, col_start=pipe_col_start, total_cols=total_cols)
     row += 1
+    has_extra_flange = bool(pms.flange.compact_flange) or bool(pms.flange.hub_connector)
+    type_label = "WN Flange" if has_extra_flange else "Type"
     flange_items = [
-        ("MOC", pms.flange.material_spec), ("Face", pms.flange.face_type),
-        ("Type", pms.flange.flange_type), ("Standard", pms.flange.standard),
+        ("MOC", pms.flange.material_spec, False),
+        ("Face", pms.flange.face_type, False),
+        (type_label, pms.flange.flange_type, False),
+        ("Standard", pms.flange.standard, False),
     ]
-    for i, (lbl, val) in enumerate(flange_items):
-        _write_label_value_row(ws, row, lbl, val, col_end=total_cols)
-        for c in range(1, total_cols + 1):
-            ws.cell(row=row, column=c).fill = ALT_FILL if i % 2 == 0 else DATA_FILL
+    if has_extra_flange:
+        flange_items.append(("Compact Flange", pms.flange.compact_flange, True))
+        flange_items.append(("Hub Connector", pms.flange.hub_connector, True))
+
+    offset_col = _size_column_index(pipe_sizes, "3", pipe_col_start=pipe_col_start)
+    for i, (lbl, val, offset) in enumerate(flange_items):
+        fill = ALT_FILL if i % 2 == 0 else DATA_FILL
+        if offset and val:
+            _write_label_offset_value_row(ws, row, lbl, val,
+                                          value_start_col=offset_col,
+                                          col_end=total_cols, fill=fill)
+        else:
+            _write_label_value_row(ws, row, lbl, val, col_end=total_cols)
+            for c in range(1, total_cols + 1):
+                ws.cell(row=row, column=c).fill = fill
         row += 1
     row += 1
 
@@ -724,16 +783,17 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
                 ws.cell(row=row, column=c).fill = fill
         row += 1
 
-    # Notes
+    # Notes — numbered (col A = position, col B..end = text) so flange "Note 8,9" references resolve
     if pms.notes:
         row += 1
         _write_section_header(ws, row, "Notes", col_end=total_cols)
         row += 1
-        for note in pms.notes:
-            ws.cell(row=row, column=1).value = note
-            ws.cell(row=row, column=1).font = NOTE_FONT
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-            for c in range(1, total_cols + 1):
+        for idx, note in enumerate(pms.notes, start=1):
+            _apply_style(ws, row, 1, font=LABEL_FONT, fill=NOTES_FILL, alignment=CENTER).value = idx
+            _apply_style(ws, row, 2, font=NOTE_FONT, fill=NOTES_FILL, alignment=LEFT).value = note
+            if total_cols > 2:
+                ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=total_cols)
+            for c in range(3, total_cols + 1):
                 ws.cell(row=row, column=c).fill = NOTES_FILL
                 ws.cell(row=row, column=c).border = THIN_BORDER
             row += 1

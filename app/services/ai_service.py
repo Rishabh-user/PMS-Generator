@@ -218,7 +218,10 @@ Tubing (T80/T90) — OD EQUALS NOMINAL SIZE × 25.4:
 All mainstream classes have TWO pipe types with a size-based transition:
   CS 1-series (A1/A1N): Seamless → LSAW, 100% RT (transition at ~20")
   CS 1-series (B1/D1/E1 and N): Seamless → EFW, 100% RT (transition at ~14-18")
-  CS F1/G1 series: ALL sizes use API 5L Gr. X60 PSL-2 (single type for both)
+  CS F1/G1 series (1500#/2500#): Seamless → LSAW, 100% RT (transition at 18"). MOC is API 5L Gr, X60 PSL-2 for ALL sizes (single unified MOC, but TWO pipe_types).
+    - Sizes 0.5"-16": pipe_type = "Seamless"
+    - Sizes 18" and larger: pipe_type = "LSAW, 100% RT"
+    - material_spec (MOC) = "API 5L Gr, X60 PSL-2" for every size
   LTCS 1L-series: Seamless → EFW, 100% RT (transition at ~14")
   SS316L 10-series: Seamless → EFW, 100% RT (transition at ~10")
   DSS 20-series: Seamless → Welded (Longitudinally) with 100% RT (transition at ~10")
@@ -324,20 +327,28 @@ FACE by rating:
   CuNi EEMUA: "EEMUA 20 bar, FF" (Flat Face)
   GALV: "150# RF, Serrated Finish" (same as 150#)
 
-TYPE:
-  Standard (sizes ≤24"): "Weld Neck, ASME B 16.5, Butt Welding ends as per ASME B 16.25"
-  Large (sizes >24"): "Weld Neck, ASME B 16.5/ 16.47A, Butt Welding ends as per ASME B 16.25"
-  E-series (900#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, Note 8,9"
-  F-series (1500#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, RTJ, Note 6,7"
-  G-series (2500#): "Weld Neck, ASME B16.5, Butt welding ends as per ASME 16.25, RTJ, Note 8,9"
-  GALV screwed: Small = "Screwed (SCRD)", Large = "WN"
-  CuNi: Small = "SW Flange", Large = "WN Flange" per EEMUA 234
+TYPE — compose the flange_type string from these components; do not copy a fixed template:
+  Connection: Weld Neck flange type per ASME B16.5
+  End prep: butt-welding ends per ASME B16.25
+  Size-dependent: for sizes >24", also cite ASME B16.47A (Series A large-diameter flanges)
+  Face suffix: include "RTJ" for 900#/1500#/2500# ratings (E/F/G-series); omit for RF/FF
+  Note references: if the class has a numbered notes list that describes flange-specific requirements, cite those note positions at the end (e.g. ", Note 8,9").
+    — 900#/1500#/2500# (RTJ) classes: cite the jackscrew/WNRTJ note and the gasket roughness note.
+    — 150#/300#/600# classes: do not cite flange notes unless class-specific.
+
+  GALV screwed (A3/A4): small sizes use screwed-end flanges (SCRD), larger sizes use WN butt-welded
+  CuNi (A30): small sizes use socket-weld (SW) flange, larger sizes use WN flange per EEMUA 234
+
+F/G-series (1500#/2500#) additional flange rows (populate compact_flange and hub_connector):
+  compact_flange — describe the Norsok L-005 WN Compact Flange used for layout-constrained installations. Include the Norsok L-005 reference and a short note that it is for layout constraint.
+  hub_connector — describe the hub-connector assembly: seal ring material (ASTM A 182 F 316L), hub and blind-hub material (ASTM A 694 F60), clamp material (AISI 4140), and indicate bolt material per the bolts/nuts section. Add a note that it is used where ANSI or Compact Flange are unsuitable.
 
 === SPECTACLE BLIND ===
 MOC: Same as flange MOC
 Standard: "ASME B 16.48" (standard sizes)
 Standard (large): "Spacer and blind as per ASME B 16.48 (Note 5)" (sizes not covered by B16.48)
-F/G series (1500#/2500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48"
+F/G series (1500#/2500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48",
+  Standard_large = "Spacer and blind as per ASME B 16.48" (ALWAYS populate this for F/G classes — the reference splits the row with B16.48 on the small-size side and "Spacer and blind as per ASME B 16.48" on the large-size side)
 GALV classes: MOC = "ASTM A 105N Galvanized"
 
 === BOLTS / NUTS / GASKETS ===
@@ -461,6 +472,38 @@ Branch Chart:
   GRE: Ref. APPENDIX-1, Chart 4
 Ends: "BE" (bevel end for standard piping), "PE" (plain end for CuNi/tubing), special for GRE/CPVC
 
+=== NOTES (STANDARD NUMBERED LIST) ===
+The "notes" array must be a numbered list in position order (the Excel writer renders items as 1, 2, 3, ...). flange_type and spectacle_blind strings reference notes by position, so the notes list MUST contain items at every referenced position, and the content at that position MUST match the citation.
+
+Compose each note in your own wording from the REQUIREMENT at each position. Do not invent requirements; do not drop required positions. The positions below describe what each numbered note must cover.
+
+Positions 1-7 — apply to ALL standard piping classes (A/B/D/E/F/G series, 1/1N/2/2N/1L/1LN/2LN variants):
+  Position 1: Reference to the Project Piping Design Basis and Valve Material Specification as companion documents to this PMS.
+  Position 2: Weld joint factor for welded pipe follows ASME B31.3.
+  Position 3: Welded fittings require 100% radiographic examination.
+  Position 4: Spectacle blind and spacer sizes / ratings outside ASME B16.48 scope follow manufacturer standard, with design submitted to Company for review and approval.
+  Position 5: Soft-seat ball valves have a maximum service temperature of 250°C.
+  Position 6: Wafer check valves are avoided unless space constraints prevent use of a standard check valve.
+  Position 7: Wafer-type butterfly valves are limited to water service and excluded from hydrocarbon service.
+
+RF classes (150#/300#/600# — A1/B1/D1 and variants) — add positions 8-9:
+  Position 8: Two jackscrews (180° apart) required in one flange of every orifice flange assembly and every specified spectacle-blind assembly.
+  Position 9: Triple Offset Butterfly Valve (BFTT type) is permitted for Hydrocarbon (HM) service.
+
+RTJ classes (900#/1500#/2500# — E/F/G series and variants) — add positions 8-10:
+  Position 8: Two jackscrews (180° apart) required in one flange of every orifice flange assembly, every WNRTJ flange of size 3" and larger, and every specified spectacle-blind assembly.
+  Position 9: Gasket contact surface must have maximum roughness of 63 AARH.
+  Position 10: RTJ groove hardness must be minimum 120 BHN.
+
+NACE classes (class name contains N or LN): append a final note position citing NACE MR-01-75 / ISO-15156 compliance for sour-service components.
+
+CuNi / GRE / CPVC / Tubing classes: keep positions 1-4 where applicable; add material-specific positions covering EEMUA 234 (CuNi) or manufacturer-standard requirements as relevant.
+
+IMPORTANT:
+- The flange_type string references notes BY POSITION (e.g. a trailing ", Note 8,9" citation). If flange_type cites any note number, that position MUST exist in the notes array and the content MUST match what the citation implies.
+- Spectacle_blind.standard_large may also cite note positions (e.g. "(Note 5)"). Ensure every cited position exists in the notes list.
+- Return the notes as PLAIN STRINGS in order (position 1 first, then position 2, etc.). Do NOT prefix them with numbers — the renderer adds numbering.
+
 === OUTPUT JSON SCHEMA ===
 {{
     "design_code": "...",
@@ -485,7 +528,8 @@ Ends: "BE" (bevel end for standard piping), "PE" (plain end for CuNi/tubing), sp
           "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "..."}}
     ],
     "extra_fittings": {{"coupling": "...", "hex_plug": "...", "union": "...", "union_large": "", "olet": "...", "olet_large": "", "swage": ""}},
-    "flange": {{"material_spec": "...", "face_type": "...", "flange_type": "...", "standard": "..."}},
+    "flange": {{"material_spec": "...", "face_type": "...", "flange_type": "...", "standard": "...",
+                 "compact_flange": "", "hub_connector": ""}},
     "spectacle_blind": {{"material_spec": "...", "standard": "...", "standard_large": "..."}},
     "bolts_nuts_gaskets": {{"stud_bolts": "...", "hex_nuts": "...", "gasket": "..."}},
     "valves": {{
@@ -500,7 +544,7 @@ Ends: "BE" (bevel end for standard piping), "PE" (plain end for CuNi/tubing), sp
         "dbb_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJ"}}, ...],
         "dbb_inst_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJT"}}, ...]
     }},
-    "notes": ["PMS to be read in conjunction with Project Piping Design Basis, and Valve Material Specification.", ...]
+    "notes": ["<position 1 text>", "<position 2 text>", "<position 3 text>", ...]
 }}
 
 CRITICAL:

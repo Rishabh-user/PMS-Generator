@@ -144,6 +144,8 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         face_type=fl.get("face_type", ""),
         flange_type=fl.get("flange_type", ""),
         standard=fl.get("standard", ""),
+        compact_flange=fl.get("compact_flange", ""),
+        hub_connector=fl.get("hub_connector", ""),
     )
 
     sb = ai_data.get("spectacle_blind", {})
