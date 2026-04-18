@@ -112,7 +112,15 @@
       "Bash(curl -s -o nul -w \"app.js: HTTP %{http_code}, %{size_download}B\\\\n\" http://localhost:8003/static/js/app.js)",
       "Bash(curl -s \"http://localhost:8003/api/pipe-classes\")",
       "Bash(ping -n 6 127.0.0.1 echo \"=== Verify CA updates loaded ===\" curl -s \"http://localhost:8003/api/pipe-classes\")",
-      "Bash(curl -s http://localhost:8003/static/js/app.js)"
+      "Bash(curl -s http://localhost:8003/static/js/app.js)",
+      "Bash(curl -s http://localhost:8003/api/pipe-classes)",
+      "Bash(curl -s http://localhost:8003/)",
+      "Bash(curl -s -X POST http://localhost:8003/api/download-excel -H 'Content-Type: application/json' -d '{\"piping_class\":\"B25\",\"material\":\"SDSS\",\"corrosion_allowance\":\"NIL\",\"service\":\"General\"}' -o /tmp/B25_test.xlsx)",
+      "Bash(curl -s -X POST http://localhost:8003/api/download-excel -H 'Content-Type: application/json' -d '{\"piping_class\":\"B25\",\"material\":\"SDSS\",\"corrosion_allowance\":\"NIL\",\"service\":\"General\"}' -o D:/targeticon/B25_test.xlsx)",
+      "Read(//d/targeticon/**)",
+      "Bash(ping -n 6 127.0.0.1)",
+      "Bash(curl -s -o nul -w \"Server: %{http_code}\\\\n\" http://localhost:8003/api/engineering-constants)",
+      "Bash(curl -s -X POST http://localhost:8003/api/download-excel -H 'Content-Type: application/json' -d '{\"piping_class\":\"B25\",\"material\":\"SDSS\",\"corrosion_allowance\":\"NIL\",\"service\":\"General\"}' -o D:/targeticon/B25_v2.xlsx)"
     ]
   }
 }

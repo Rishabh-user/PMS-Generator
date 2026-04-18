@@ -970,34 +970,41 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
             });
         }
 
-        // Minimum schedule — different for CS NACE vs DSS/SDSS/SS NACE
+        // Minimum schedule — this is a PROJECT / COMPANY spec, NOT a NACE requirement
         if (isCS) {
             flags.push({
-                level: 'critical', badge: 'CRITICAL',
-                title: 'Minimum Schedule Enforced \u2014 Sch 160 (\u2264 NPS 1\u00bd") / XS (\u2265 NPS 2")',
-                body: 'NACE MR0175 mandates minimum wall thickness for CS regardless of pressure calculation. NPS \u2264 1\u00bd": Schedule 160. NPS \u2265 2": Extra Strong (XS / Sch 80). Do NOT downgrade based on pressure margin alone.'
+                level: 'warning', badge: 'PROJECT SPEC',
+                title: 'Minimum Schedule Recommended \u2014 Sch 160 (\u2264 NPS 1\u00bd") / XS (\u2265 NPS 2")',
+                body: 'Common oil & gas project specs (Shell DEP 31.38.01, Aramco SAES-L, Total GS EP PVV) require minimum Sch 160 (NPS \u2264 1\u00bd") / Extra Strong (NPS \u2265 2") for CS sour service \u2014 for mechanical robustness and lifecycle margin. NOTE: NACE MR0175 itself does NOT mandate any minimum schedule; this is a project / company standard. Verify against your project\u2019s Piping Design Basis (PDS).'
             });
         } else if (isDuplexFamily || isSS) {
             flags.push({
                 level: 'note', badge: 'NOTE',
                 title: `Schedule per Design Calculation \u2014 ${isDuplexFamily ? 'Duplex' : 'SS'} NACE`,
-                body: `For ${isDuplexFamily ? 'Duplex/Super Duplex' : 'Stainless Steel'} NACE service, schedule is governed by pressure/mechanical design calculation (no NACE minimum schedule override as for CS). Corrosion allowance is typically NIL for ${isDuplexFamily ? 'DSS/SDSS' : 'SS'} in sour service.`
+                body: `For ${isDuplexFamily ? 'Duplex/Super Duplex' : 'Stainless Steel'} NACE service, schedule is governed by pressure/mechanical design calculation \u2014 no project-standard minimum schedule override (unlike CS sour). Corrosion allowance is typically NIL for ${isDuplexFamily ? 'DSS/SDSS' : 'SS'} in sour service.`
             });
         }
 
-        // Bolting — material-specific
+        // Bolting — split into NACE requirements (grades) and project spec (coating)
         flags.push({
-            level: 'mandatory', badge: 'MANDATORY',
-            title: `NACE Bolting \u2014 ${pms.bolts_nuts_gaskets.stud_bolts || 'A320 L7M Studs'} + ${pms.bolts_nuts_gaskets.hex_nuts || 'A194 7ML Nuts'}`,
-            body: `Studs: ${pms.bolts_nuts_gaskets.stud_bolts || 'ASTM A320 Gr. L7M'}. Nuts: ${pms.bolts_nuts_gaskets.hex_nuts || 'ASTM A194 Gr. 7ML'}.${isCS ? ' Coating: XYLAR 2 + XYLAN 1070, minimum combined thickness 50 \u00b5m.' : ''}`
+            level: 'mandatory', badge: 'NACE REQ',
+            title: `NACE Bolting Grades \u2014 ${pms.bolts_nuts_gaskets.stud_bolts || 'A320 L7M Studs'} + ${pms.bolts_nuts_gaskets.hex_nuts || 'A194 7ML Nuts'}`,
+            body: `Per NACE MR0175 Table 7: max hardness 22 HRC (studs) / 22 HRC (nuts) for sour service exposure. Studs: ${pms.bolts_nuts_gaskets.stud_bolts || 'ASTM A320 Gr. L7M'}. Nuts: ${pms.bolts_nuts_gaskets.hex_nuts || 'ASTM A194 Gr. 7ML'}. Alternative grades (B7M + 2HM) also NACE-compliant.`
         });
-
-        // PWHT — only for CS, NOT for DSS/SDSS/SS
         if (isCS) {
             flags.push({
-                level: 'mandatory', badge: 'MANDATORY',
-                title: 'PWHT \u2014 Post Weld Heat Treatment Required',
-                body: 'PWHT mandatory for all carbon steel welds in NACE/sour service to ensure HAZ hardness \u2264 250 HBW. WPS/PQR must include hardness survey.'
+                level: 'warning', badge: 'PROJECT SPEC',
+                title: 'Bolting Coating \u2014 XYLAR 2 + XYLAN 1070 (Project Optional)',
+                body: 'XYLAR 2 + XYLAN 1070 coating (min 50 \u00b5m combined) is a common offshore / splash-zone project spec for corrosion and galling protection. NOTE: NACE MR0175 does NOT mandate coatings. Uncoated B7M / 2HM bolts are fully NACE-compliant for onshore applications. Verify against your project\u2019s bolting spec.'
+            });
+        }
+
+        // PWHT — CONDITIONAL per ASME B31.3 + NACE MR0175 (not unconditional)
+        if (isCS) {
+            flags.push({
+                level: 'warning', badge: 'CONDITIONAL',
+                title: 'PWHT \u2014 Required Based on Thickness / Hardness',
+                body: 'Per ASME B31.3 Table 331.1.1 (P-Number 1 / CS): PWHT required when nominal wall thickness > 19 mm (\u00be"). For thinner sections, PWHT may be waived if HAZ hardness \u2264 250 HBW is demonstrated in PQR. Per NACE MR0175 \u00a77.2.1.3, PWHT is NOT mandatory if hardness limits are met via: low-hydrogen electrodes + proper preheat + PQR hardness testing. WPS/PQR must include hardness survey regardless.'
             });
         } else if (isDuplexFamily) {
             flags.push({
@@ -1037,11 +1044,21 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
                 body: 'SS 316L is susceptible to chloride stress corrosion cracking (SCC) above ~60\u00b0C or when Cl\u207b > 50 ppm. Consider upgrading to DSS/SDSS if: pH < 4, chloride > 50 ppm, or T > 60\u00b0C. Typical CA: 1\u20131.5 mm. 100% RT or UT for all butt welds. Monitor crevice corrosion at flanges and dead-legs.'
             });
         } else if (isCS || isLTCS) {
-            flags.push({
-                level: 'warning', badge: 'WARNING',
-                title: 'Corrosive / Acid Service \u2014 Enhanced CA & NDE',
-                body: 'Minimum recommended CA: 3.0 mm. Consider upgrading to SS 316L, DSS, or nickel alloy if pH < 4 or T > 60\u00b0C. 100% RT or UT required for all butt welds. Monitor corrosion rate and review CA at major turnarounds. For sour + corrosive combined, use NACE MR0175-compliant materials.'
-            });
+            if (isNACE) {
+                // Already NACE-qualified CS — don't suggest "upgrade"; just verify chemistry bounds
+                flags.push({
+                    level: 'note', badge: 'NOTE',
+                    title: 'Corrosive Service \u2014 Verify CS NACE Application Limits',
+                    body: `CS NACE class (${pms.piping_class}) is already qualified for sour service. Verify process chemistry is within CS operating envelope: H\u2082S partial pressure, pH (typically > 4 for CS), chloride, temperature. For very aggressive sour (pH < 4, high H\u2082S, high Cl\u207b, T > 60\u00b0C), consider switching to a CRA class (DSS/SDSS) at material selection stage. Monitor corrosion rate at turnarounds.`
+                });
+            } else {
+                // Non-NACE CS in corrosive service — legitimate upgrade suggestion
+                flags.push({
+                    level: 'warning', badge: 'WARNING',
+                    title: 'Corrosive / Acid Service \u2014 CS May Be Insufficient',
+                    body: 'For aggressive corrosive service, consider upgrading to SS 316L, DSS, or nickel alloy (especially if pH < 4, T > 60\u00b0C, or chloride-bearing). Minimum CA: 3.0 mm if CS is retained. 100% RT or UT typically specified by project. Monitor corrosion rate; review CA at major turnarounds. For sour + corrosive combined, NACE MR0175-compliant class required.'
+                });
+            }
         } else {
             // CuNi, GRE, CPVC, GALV or other non-metallics
             flags.push({
@@ -1054,9 +1071,9 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
 
     if (isNACE || svc.includes('sour') || svc.includes('h2s')) {
         flags.push({
-            level: 'mandatory', badge: 'MANDATORY',
-            title: 'NDE: 100% RT or UT \u2014 NACE / Sour Service (B31.3 \u00a7341.4.2)',
-            body: 'Weld examination: 100% RT or UT \u2014 NACE / Sour Service (B31.3 \u00a7341.4.2). PWHT: Required \u2014 NACE MR0175 hardness control (HAZ \u2264 250 HBW). Pressure test: hydrostatic at ' + ht.toFixed(1) + ' barg (1.5 \u00d7 ' + htBaseP.toFixed(1) + ' barg) per B31.3 \u00a7345.4.2.'
+            level: 'warning', badge: 'PROJECT SPEC',
+            title: 'NDE: 100% RT or UT \u2014 Commonly Specified for Sour Service',
+            body: '100% Radiographic (RT) or Ultrasonic (UT) examination of butt welds is typically required by client specifications for sour service (e.g., ExxonMobil GP 03-02-01, Shell DEP 31.38.01, Aramco SAES-L). NOTE: ASME B31.3 does NOT mandate 100% RT for sour service \u2014 default per \u00a7341.4.1 is 5% random RT for Normal Fluid Service. 100% RT is codified only for: Category M (high-toxicity fluids, \u00a7M341.4), Severe Cyclic (\u00a7341.4.3), or when specified by the owner. Verify against your project\u2019s inspection test plan (ITP).'
         });
     }
 
@@ -1068,11 +1085,11 @@ function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
         });
     }
 
-    // Always add hydrotest flag
+    // Hydrotest — formula is simplified; strict ASME B31.3 §345.4.2 includes stress correction
     flags.push({
         level: 'mandatory', badge: 'MANDATORY',
-        title: `Hydrostatic Test Pressure: ${ht.toFixed(1)} barg (= 1.5 \u00d7 ${htBaseP.toFixed(1)} barg max rated pressure)`,
-        body: `Shop test: ${ht.toFixed(1)} barg per ASME B31.3 \u00a7345.4.2. Base: max P-T rated pressure = ${htBaseP.toFixed(1)} barg (at ambient). Medium: potable water (deionised for SS). Duration: minimum 10 minutes. Verify all flanges rated \u2265 ${ht.toFixed(1)} barg at test temperature.`
+        title: `Hydrostatic Test Pressure: ${ht.toFixed(1)} barg (\u2248 1.5 \u00d7 ${htBaseP.toFixed(1)} barg max rated pressure)`,
+        body: `Shop test: ${ht.toFixed(1)} barg per ASME B31.3 \u00a7345.4.2. Base: max P-T rated pressure = ${htBaseP.toFixed(1)} barg (at ambient). Medium: potable water (deionised for SS; chloride \u2264 50 ppm). Duration: minimum 10 minutes. Verify all flanges rated \u2265 ${ht.toFixed(1)} barg at test temperature. NOTE: Strict \u00a7345.4.2(b) formula is P<sub>test</sub> = 1.5 \u00d7 P<sub>design</sub> \u00d7 (S<sub>T_ambient</sub> / S<sub>T_design</sub>) \u2014 may yield higher pressure when design temperature significantly reduces allowable stress. This display uses the simplified 1.5 \u00d7 rated pressure form as a conservative default.`
     });
 
     const container = document.getElementById('engineeringFlags');

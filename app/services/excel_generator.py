@@ -106,12 +106,21 @@ def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 3, total_
 
 
 def _write_label_value_row(ws, row: int, label: str, value: str, col_start: int = 1, val_col: int = 3, col_end: int = 20):
-    """Write a label-value pair row."""
-    _apply_style(ws, row, col_start, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = label
-    for c in range(col_start + 1, val_col):
-        _apply_style(ws, row, c, fill=DATA_FILL)
+    """Write a label-value pair row.
+
+    Layout (consistent with _write_merged_data_row and _write_size_header_row):
+      Col 1 (A) = spacer / marker (empty)
+      Col 2 (B) = label
+      Cols 3..col_end (C onward, merged) = value
+    """
+    # Col 1 (A): empty spacer
+    _apply_style(ws, row, 1, fill=DATA_FILL)
+    # Col 2 (B): label
+    _apply_style(ws, row, 2, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = label
+    # Col 3..col_end (C onward, merged): value
     _apply_style(ws, row, val_col, font=DATA_FONT, fill=DATA_FILL, alignment=LEFT).value = value
-    ws.merge_cells(start_row=row, start_column=val_col, end_row=row, end_column=col_end)
+    if col_end > val_col:
+        ws.merge_cells(start_row=row, start_column=val_col, end_row=row, end_column=col_end)
     for c in range(val_col + 1, col_end + 1):
         _apply_style(ws, row, c, fill=DATA_FILL)
 
@@ -128,12 +137,15 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     pipe_col_start = 3
     pipe_col_end = pipe_col_start + num_pipe_cols - 1
 
-    # Set column widths - improved for better alignment (matching screenshot layout)
-    ws.column_dimensions["A"].width = 2
-    ws.column_dimensions["B"].width = 18
-    ws.column_dimensions["C"].width = 11
+    # Column widths — standard PMS spec layout
+    #   A (spacer)  width=4
+    #   B (label)   width=22  — accommodates "Corrosion Allowance", "Mill Tolerance", etc.
+    #   C..N (data) width=12  — accommodates size/OD/schedule/MOC strings
+    ws.column_dimensions["A"].width = 4
+    ws.column_dimensions["B"].width = 22
+    ws.column_dimensions["C"].width = 13
     for i in range(4, total_cols + 1):
-        ws.column_dimensions[get_column_letter(i)].width = 10
+        ws.column_dimensions[get_column_letter(i)].width = 12
 
     row = 1
 
@@ -456,11 +468,12 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     pipe_col_start = 3
 
     from openpyxl.utils import get_column_letter as gcl
-    ws.column_dimensions["A"].width = 2
-    ws.column_dimensions["B"].width = 18
-    ws.column_dimensions["C"].width = 11
+    # Column widths — standard PMS spec layout (consistent with generate_pms_excel)
+    ws.column_dimensions["A"].width = 4
+    ws.column_dimensions["B"].width = 22
+    ws.column_dimensions["C"].width = 13
     for i in range(4, total_cols + 1):
-        ws.column_dimensions[gcl(i)].width = 10
+        ws.column_dimensions[gcl(i)].width = 12
 
     row = 1
 
