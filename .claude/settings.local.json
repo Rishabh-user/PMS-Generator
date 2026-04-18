@@ -120,7 +120,11 @@
       "Read(//d/targeticon/**)",
       "Bash(ping -n 6 127.0.0.1)",
       "Bash(curl -s -o nul -w \"Server: %{http_code}\\\\n\" http://localhost:8003/api/engineering-constants)",
-      "Bash(curl -s -X POST http://localhost:8003/api/download-excel -H 'Content-Type: application/json' -d '{\"piping_class\":\"B25\",\"material\":\"SDSS\",\"corrosion_allowance\":\"NIL\",\"service\":\"General\"}' -o D:/targeticon/B25_v2.xlsx)"
+      "Bash(curl -s -X POST http://localhost:8003/api/download-excel -H 'Content-Type: application/json' -d '{\"piping_class\":\"B25\",\"material\":\"SDSS\",\"corrosion_allowance\":\"NIL\",\"service\":\"General\"}' -o D:/targeticon/B25_v2.xlsx)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\")",
+      "Bash(taskkill //F //PID 20844)",
+      "Bash(rm -rf ./app/__pycache__ ./app/models/__pycache__ ./app/routes/__pycache__ ./app/services/__pycache__ ./app/utils/__pycache__)",
+      "Bash(find ./app -name __pycache__ -type d)"
     ]
   }
 }

@@ -15,31 +15,34 @@ from app.models.pms_models import PMSResponse
 
 logger = logging.getLogger(__name__)
 
-LOGO_PATH = Path(__file__).resolve().parent.parent / "static" / "images" / "logo.png"
+LOGO_URL = "https://www.shapoorjipallonjienergy.com/img/logo.png"
 LOGO_DISPLAY_HEIGHT_PX = 80
 LOGO_ROW_HEIGHT_POINTS = 70  # row height in Excel points (≈ px * 0.75)
+LOGO_FETCH_TIMEOUT = 10       # seconds
 
 # Prepared logo cached on disk so every workbook uses the same resized file.
 _PREPARED_LOGO_PATH: Path | None = None
 
 
 def _prepare_logo() -> Path | None:
-    """Resize the source logo to display dimensions once and return a path to the prepared PNG.
+    """Fetch the logo from LOGO_URL, resize to display dimensions, cache on disk.
 
-    Writes to a stable temp file so openpyxl can reference a real path (more reliable
-    than BytesIO across openpyxl versions). Returns None if anything fails.
+    Re-uses the cached file across subsequent Excel downloads so the remote
+    fetch happens at most once per process. Returns a Path to the prepared PNG,
+    or None if the URL is unreachable or the image can't be decoded.
     """
     global _PREPARED_LOGO_PATH
     if _PREPARED_LOGO_PATH and _PREPARED_LOGO_PATH.exists():
         return _PREPARED_LOGO_PATH
-    if not LOGO_PATH.exists():
-        logger.warning("Logo not found at %s", LOGO_PATH)
-        return None
     try:
         import tempfile
+        import requests
         from PIL import Image as PILImage
 
-        src = PILImage.open(LOGO_PATH)
+        resp = requests.get(LOGO_URL, timeout=LOGO_FETCH_TIMEOUT)
+        resp.raise_for_status()
+        src = PILImage.open(io.BytesIO(resp.content))
+
         aspect = src.width / src.height
         target_h = LOGO_DISPLAY_HEIGHT_PX
         target_w = max(1, int(round(target_h * aspect)))
@@ -52,10 +55,10 @@ def _prepare_logo() -> Path | None:
         tmp = Path(tempfile.gettempdir()) / "pms_logo_prepared.png"
         resized.save(tmp, format="PNG")
         _PREPARED_LOGO_PATH = tmp
-        logger.info("Prepared logo at %s (%dx%d)", tmp, target_w, target_h)
+        logger.info("Prepared logo from %s -> %s (%dx%d)", LOGO_URL, tmp, target_w, target_h)
         return tmp
     except Exception as exc:
-        logger.warning("Failed to prepare logo: %s", exc)
+        logger.warning("Failed to fetch/prepare logo from %s: %s", LOGO_URL, exc)
         return None
 
 
