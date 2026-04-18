@@ -784,30 +784,22 @@ function renderScheduleTab(pms) {
         const s2OvVal = s2F ? parseFloat(s2F.value) : NaN;
         const S1_psi = (!isNaN(s1OvVal) && s1OvVal > 0) ? s1OvVal : getAllowableStress(pms.material, Tlow).S_psi;
         const S2_psi = (!isNaN(s2OvVal) && s2OvVal > 0) ? s2OvVal : getAllowableStress(pms.material, Tuser).S_psi;
-        // Check if Case 1 is enabled (only if Case 1 Pressure Override is provided)
-        const case1EnabledFx = (!isNaN(case1OvVal) && case1OvVal > 0);
-
         // Pressure thickness per case (no CA yet)
         const t1_p = (P1_psig * parseFloat(od6)) / (2 * (S1_psi * E * W + P1_psig * Y));
         const t2_p = (P2_psig * parseFloat(od6)) / (2 * (S2_psi * E * W + P2_psig * Y));
-        const t_press = case1EnabledFx ? Math.max(t1_p, t2_p) : t2_p;
+        const t_press = Math.max(t1_p, t2_p);
         const tm_inch = t_press + caInch;
         const T_req_inch = tm_inch / (1 - millFrac);
-        const gov = case1EnabledFx
-            ? ((t2_p >= t1_p) ? 'Case 2 (Design T)' : 'Case 1 (Burst)')
-            : 'Design Point (Case 2 only)';
-        const case1Line = case1EnabledFx
-            ? `<strong>Case 1 (Burst @ ${Tlow}\u00b0C):</strong> P = ${P1_psig} psig, S = ${S1_psi.toLocaleString()} psi ` +
-              `\u2192 t<sub>press</sub> = <strong>${t1_p.toFixed(4)}"</strong><br>`
-            : `<span style="color:var(--text-muted)">Case 1 burst check: DISABLED (enable via Case 1 Pressure Override)</span><br>`;
+        const gov = (t1_p >= t2_p) ? 'Case 1 (Min T / Max P)' : 'Case 2 (Design Point)';
         document.getElementById('formulaExample').innerHTML =
             `<strong>NPS 6" example:</strong> OD = ${od6}" | E = ${E} | W = ${W} | Y = ${Y} ` +
             `<span style="color:var(--text-muted)">[${yMatDesc}]</span> | c = ${caMM > 0 ? caInch.toFixed(4) + '" (' + caMM + ' mm)' : 'NIL'} | mill tol = ${(millFrac*100).toFixed(1)}%<br>` +
-            case1Line +
-            `<strong>Design Point (P @ Design T):</strong> P = ${P2_psig} psig @ ${Tuser}\u00b0C, S = ${S2_psi.toLocaleString()} psi ` +
-            `\u2192 t<sub>press</sub> = <strong>${t2_p.toFixed(4)}"</strong><br>` +
-            `<span style="color:#b91c1c"><strong>Using: ${gov} \u2192 t = ${t_press.toFixed(4)}" | tm = t+c = ${tm_inch.toFixed(4)}" | ` +
-            `T<sub>req</sub> = tm/(1\u2212${millFrac}) = ${T_req_inch.toFixed(4)}" (${inch2mm(T_req_inch).toFixed(2)} mm)</strong></span>`;
+            `<strong>Case 1 (Min T / Max P @ ${Tlow}\u00b0C):</strong> P = ${P1_psig.toFixed(1)} psig, S = ${S1_psi.toLocaleString()} psi ` +
+            `\u2192 t<sub>press</sub> = <strong>${t1_p.toFixed(4)}"</strong>${t1_p >= t2_p ? ' \u2190 GOVERNS' : ''}<br>` +
+            `<strong>Case 2 (Design Point @ ${Tuser}\u00b0C):</strong> P = ${P2_psig.toFixed(1)} psig, S = ${S2_psi.toLocaleString()} psi ` +
+            `\u2192 t<sub>press</sub> = <strong>${t2_p.toFixed(4)}"</strong>${t2_p > t1_p ? ' \u2190 GOVERNS' : ''}<br>` +
+            `<span style="color:#b91c1c"><strong>Using ${gov}: t = ${t_press.toFixed(4)}" \u2192 tm = t+c = ${tm_inch.toFixed(4)}" \u2192 ` +
+            `T<sub>REQ</sub> = tm/(1\u2212${millFrac}) = ${T_req_inch.toFixed(4)}" (${inch2mm(T_req_inch).toFixed(2)} mm)</strong></span>`;
     } else {
         document.getElementById('formulaExample').innerHTML = '';
     }
@@ -879,27 +871,37 @@ function renderScheduleTab(pms) {
         S_low:  S_atTlow,   S_high: S_atCase2
     };
 
-    // Check if Case 1 is enabled (user provided Case 1 Pressure Override)
+    // Determine the governing case for a sample NPS (e.g., 6") so we can label it in the display
     const case1OvInput = document.getElementById('case1PressurePsig');
     const case1OvVal = case1OvInput ? parseFloat(case1OvInput.value) : NaN;
-    const case1Enabled = !isNaN(case1OvVal) && case1OvVal > 0;
+    const case1OvValid = !isNaN(case1OvVal) && case1OvVal > 0;
+    const case1_psig = case1OvValid ? case1OvVal : parseFloat(barg2psig(P_max));
+    const case1_barg = case1_psig / 14.5038;
 
-    const designPressureDisplay = case1Enabled
-        ? `<strong>Case 1 (Burst @ Min T):</strong> ${case1OvVal.toFixed(1)} psig (${(case1OvVal/14.5038).toFixed(2)} barg) <span class="unit">@ ${T_low_label}\u00b0C [override]</span><br>` +
-          `<strong>Case 2 (Design Point):</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C</span>`
-        : `<strong>Design Pressure:</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C</span><br>` +
-          `<span class="unit" style="color:var(--text-muted);font-size:0.85em">(Case 1 burst check disabled — set Case 1 Pressure Override to enable)</span>`;
+    // Quick governing-case probe using NPS 6" (representative)
+    const probeOdIn = 168.3 / 25.4;
+    const t1_probe = (case1_psig * probeOdIn) / (2 * (S_atTlow.S_psi * E * W + case1_psig * Y));
+    const t2_probe = (P_case2_psig * probeOdIn) / (2 * (S_atCase2.S_psi * E * W + P_case2_psig * Y));
+    const case1Gov = t1_probe >= t2_probe;
 
-    const designTempDisplay = case1Enabled
-        ? `<strong>Case 1:</strong> ${T_low_label}\u00b0C (${c2f(T_low)}\u00b0F) <span class="unit">[P-T min]</span><br>` +
-          `<strong>Case 2:</strong> ${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F) <span class="unit">[design]</span>`
-        : `<strong>${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F)</strong> <span class="unit">[design]</span>`;
+    const gov1 = case1Gov ? ' <span style="color:#16a34a;font-weight:700">[GOVERNS]</span>'
+                          : ' <span style="color:var(--text-muted)">[active]</span>';
+    const gov2 = case1Gov ? ' <span style="color:var(--text-muted)">[active]</span>'
+                          : ' <span style="color:#16a34a;font-weight:700">[GOVERNS]</span>';
 
-    const stressDisplay = case1Enabled
-        ? `<strong>S @ ${T_low}\u00b0C:</strong> ${S_atTlow.S_psi.toLocaleString()} psi (${S_atTlow.S_mpa} MPa)<br>` +
-          `<strong>S @ ${T_case2}\u00b0C:</strong> ${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)<br>` +
-          `<span class="unit">per ASME B31.3 Table A-1 [${pms.material}]</span>`
-        : `<strong>${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)</strong> <span class="unit">@ ${T_case2}\u00b0C per ASME B31.3 Table A-1 [${pms.material}]</span>`;
+    const designPressureDisplay =
+        `<strong>Min T / Max P:</strong> ${case1_psig.toFixed(1)} psig (${case1_barg.toFixed(2)} barg) <span class="unit">@ ${T_low_label}\u00b0C</span>${gov1}<br>` +
+        `<strong>Design Point:</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C</span>${gov2}<br>` +
+        `<span class="unit" style="font-size:0.85em;color:var(--text-muted)">t<sub>REQ</sub> uses MAX(Case 1, Case 2) per size</span>`;
+
+    const designTempDisplay =
+        `<strong>Min:</strong> ${T_low_label}\u00b0C (${c2f(T_low)}\u00b0F) <span class="unit">[P-T min]</span>${gov1}<br>` +
+        `<strong>Max (Design):</strong> ${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F) <span class="unit">[design]</span>${gov2}`;
+
+    const stressDisplay =
+        `<strong>S @ ${T_low}\u00b0C:</strong> ${S_atTlow.S_psi.toLocaleString()} psi (${S_atTlow.S_mpa} MPa)${gov1}<br>` +
+        `<strong>S @ ${T_case2}\u00b0C:</strong> ${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)${gov2}<br>` +
+        `<span class="unit">per ASME B31.3 Table A-1 [${pms.material}]</span>`;
 
     setKVList('designParamsList', [
         { l: 'PMS Class', v: `<strong>${pms.piping_class}</strong> (${pms.rating})` },
@@ -1118,8 +1120,26 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         const env = pms._designEnvelope;
         let t_pressure_inch;
         if (env) {
-            // Case 2 (PRIMARY): User's Design Temperature + Design Pressure
-            //   This is the DEFAULT case — what the engineer specified as the design point.
+            // BOTH CASES always calculated; tREQ uses the GOVERNING (larger) one.
+            //
+            // Case 1 (Min T / Max P):
+            //   Pressure = Case 1 Override if user provided it, else P-T envelope max pressure
+            //   Stress   = Case 1 Stress Override if provided, else S(T_low) from material table
+            //   Temperature = P-T envelope min temp
+            const case1OverrideField = document.getElementById('case1PressurePsig');
+            const case1Override = case1OverrideField ? parseFloat(case1OverrideField.value) : NaN;
+            const P1_psig = (!isNaN(case1Override) && case1Override > 0)
+                           ? case1Override
+                           : parseFloat(barg2psig(env.P_max));
+            const s1OvField = document.getElementById('case1StressPsi');
+            const s1Ov = s1OvField ? parseFloat(s1OvField.value) : NaN;
+            const S1 = (!isNaN(s1Ov) && s1Ov > 0) ? s1Ov : env.S_low.S_psi;
+            const t1_p = (P1_psig * od_inch) / (2 * (S1 * E * W + P1_psig * Y));
+
+            // Case 2 (Max T / Design T):
+            //   Pressure = user's Design Pressure (psig input, auto-interpolated from P-T at Design T)
+            //   Stress   = Case 2 Stress Override if provided, else S(T_case2) from material table
+            //   Temperature = user's Design Temperature
             const dpPsigField = document.getElementById('designPressurePsig');
             const P2_psig = dpPsigField ? (parseFloat(dpPsigField.value) || parseFloat(barg2psig(env.P_min)))
                                          : parseFloat(barg2psig(env.P_min));
@@ -1128,22 +1148,8 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
             const S2 = (!isNaN(s2Ov) && s2Ov > 0) ? s2Ov : env.S_high.S_psi;
             const t2_p = (P2_psig * od_inch) / (2 * (S2 * E * W + P2_psig * Y));
 
-            // Case 1 (OPTIONAL — only included if user provides Case 1 Pressure Override):
-            //   This is the ambient / burst-case check. Leave blank to use ONLY Case 2.
-            const case1OverrideField = document.getElementById('case1PressurePsig');
-            const case1Override = case1OverrideField ? parseFloat(case1OverrideField.value) : NaN;
-            const useCase1 = (!isNaN(case1Override) && case1Override > 0);
-            if (useCase1) {
-                const P1_psig = case1Override;
-                const s1OvField = document.getElementById('case1StressPsi');
-                const s1Ov = s1OvField ? parseFloat(s1OvField.value) : NaN;
-                const S1 = (!isNaN(s1Ov) && s1Ov > 0) ? s1Ov : env.S_low.S_psi;
-                const t1_p = (P1_psig * od_inch) / (2 * (S1 * E * W + P1_psig * Y));
-                t_pressure_inch = Math.max(t1_p, t2_p);
-            } else {
-                // No Case 1 override → use ONLY user's Design P/T (Case 2)
-                t_pressure_inch = t2_p;
-            }
+            // tREQ uses whichever case produces THICKER required wall
+            t_pressure_inch = Math.max(t1_p, t2_p);
         } else {
             t_pressure_inch = (P_psig * od_inch) / (2 * (S_psi * E * W + P_psig * Y));
         }
