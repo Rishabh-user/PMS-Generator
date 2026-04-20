@@ -48,6 +48,35 @@ def operating_temp_estimate(design_temp: float, factor: float = OPERATING_TEMP_F
     return round(design_temp * factor, 1)
 
 
+def interpolate_pressure_at_temp(
+    temperatures: list[float],
+    pressures: list[float],
+    target_temp_c: float,
+) -> float:
+    """Return the allowable pressure (barg) at a given temperature, linearly
+    interpolated between P-T breakpoints. Floors to 1 decimal conservatively.
+    Used to populate a sensible default for the "Design Point" pressure when
+    the frontend first loads a class (so a 300°C design temp on class A1
+    defaults to 10.2 barg, not the overall Max P of 19.6 barg)."""
+    if not temperatures or not pressures:
+        return 0.0
+    pairs = sorted(zip(temperatures, pressures), key=lambda x: x[0])
+    temp_list = [t[0] for t in pairs]
+    press_list = [t[1] for t in pairs]
+    if target_temp_c <= temp_list[0]:
+        return round(press_list[0], 1)
+    if target_temp_c >= temp_list[-1]:
+        return round(press_list[-1], 1)
+    for i in range(len(temp_list) - 1):
+        if temp_list[i] <= target_temp_c <= temp_list[i + 1]:
+            t1, t2 = temp_list[i], temp_list[i + 1]
+            p1, p2 = press_list[i], press_list[i + 1]
+            fraction = (target_temp_c - t1) / (t2 - t1)
+            allowable = p1 + fraction * (p2 - p1)
+            return math.floor(allowable * 10) / 10
+    return round(press_list[-1], 1)
+
+
 def check_pt_adequacy(
     design_pressure: float,
     design_temperature: float,

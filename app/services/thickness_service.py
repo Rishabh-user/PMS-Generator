@@ -116,7 +116,6 @@ def _build_engineering_flags(
     pms,
     req: ComputeThicknessRequest,
     per_size: list[PerSizeResult],
-    p_max_barg: float,
 ) -> list[EngineeringFlag]:
     flags: list[EngineeringFlag] = []
 
@@ -131,23 +130,9 @@ def _build_engineering_flags(
     is_galv = "galv" in material_l or "galv" in service_l
     design_temp_c = req.design_temp_c
 
-    # MANDATORY: Hydrostatic Test
-    hydrotest = round(p_max_barg * HYDROTEST_FACTOR, 2) if p_max_barg else 0.0
-    if hydrotest > 0:
-        flags.append(
-            EngineeringFlag(
-                kind="mandatory",
-                label="MANDATORY",
-                title=f"Hydrostatic Test Pressure: {hydrotest} barg (≈ 1.5 × {p_max_barg} barg max rated pressure)",
-                body=(
-                    "Shop test per ASME B31.3 §345.4.2. Medium: potable water (deionised for SS, "
-                    "chloride ≤ 50 ppm). Duration: minimum 10 minutes. Verify all flanges are rated ≥ "
-                    "test pressure at test temperature. NOTE: strict §345.4.2(b) formula "
-                    "P_test = 1.5 × P_design × (S_ambient / S_design) may yield a higher value — this "
-                    "display uses the simplified 1.5 × rated pressure form as a conservative default."
-                ),
-            )
-        )
+    # NOTE: hydrostatic test pressure is intentionally not emitted as a flag here
+    # because it is already shown in the top-of-result badges and the Summary
+    # Statistics card — keeping it here would be redundant noise.
 
     # Sour / NACE requirements
     if is_sour:
@@ -412,7 +397,7 @@ async def compute_thickness(req: ComputeThicknessRequest) -> ComputeThicknessRes
     )
 
     # --- Engineering flags ---
-    flags = _build_engineering_flags(pms, req, per_size, _max_pt_pressure(pt))
+    flags = _build_engineering_flags(pms, req, per_size)
 
     return ComputeThicknessResponse(
         piping_class=pms.piping_class,

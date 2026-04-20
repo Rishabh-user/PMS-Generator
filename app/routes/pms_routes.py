@@ -3,6 +3,7 @@ FastAPI routes for PMS generation, engineering calculations, and downloads.
 """
 import io
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,7 @@ from app.services.branch_chart_service import get_all_charts, get_branch_chart
 from app.services import data_service
 from app.utils.engineering import (
     check_pt_adequacy,
+    interpolate_pressure_at_temp,
 )
 from app.utils.engineering_constants import (
     HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
@@ -49,7 +51,13 @@ async def api_index_data():
 
 @router.post("/preview-pms")
 async def api_preview_pms(req: PMSRequest):
-    """Step 1: Return class metadata + P-T data from JSON only (no AI call)."""
+    """Step 1: Return class metadata + P-T data from JSON only (no AI call).
+
+    Also returns recommended defaults for the "Actual Process Design Conditions"
+    form: the highest rated temperature as the default design T, and the P-T
+    table value interpolated at that temperature as the default design P. This
+    lets the frontend pre-fill the form without duplicating interpolation logic.
+    """
     entry = data_service.find_entry(req.piping_class)
     if not entry:
         raise HTTPException(
@@ -58,7 +66,28 @@ async def api_preview_pms(req: PMSRequest):
         )
     pt = entry.get("pressure_temperature", {})
     pressures = pt.get("pressures", [])
+    temperatures = pt.get("temperatures", [])
     hydrotest = str(round(max(pressures) * HYDROTEST_FACTOR, 2)) if pressures else ""
+
+    # Recommended defaults for the Design Conditions form
+    default_design_temp_c = temperatures[-1] if temperatures else None
+    default_design_pressure_barg = (
+        interpolate_pressure_at_temp(temperatures, pressures, default_design_temp_c)
+        if default_design_temp_c is not None
+        else None
+    )
+    # MDMT: parse the first signed integer from the first temp label
+    # (labels like "-29 to 38" → -29), falling back to the first numeric
+    # breakpoint if no label is available.
+    temp_labels = pt.get("temp_labels", [])
+    default_mdmt_c: float | None = None
+    if temp_labels:
+        match = re.search(r"-?\d+", temp_labels[0])
+        if match:
+            default_mdmt_c = float(match.group())
+    if default_mdmt_c is None and temperatures:
+        default_mdmt_c = temperatures[0]
+
     return {
         "piping_class": req.piping_class,
         "rating": entry.get("rating", ""),
@@ -67,6 +96,9 @@ async def api_preview_pms(req: PMSRequest):
         "service": req.service,
         "hydrotest_pressure": hydrotest,
         "pressure_temperature": pt,
+        "default_design_pressure_barg": default_design_pressure_barg,
+        "default_design_temp_c": default_design_temp_c,
+        "default_mdmt_c": default_mdmt_c,
     }
 
 
