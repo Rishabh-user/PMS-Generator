@@ -20,7 +20,7 @@ from app.models.pms_models import (
     PipeSize, FittingsData, FittingBySize, ExtraFittings, FlangeData,
     SpectacleBlind, BoltsNutsGaskets, ValveData, ValveSizeEntry,
 )
-from app.services.ai_service import generate_pms_with_ai
+from app.services.ai_service import generate_pms_with_ai, AIGenerationError
 from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
@@ -243,20 +243,28 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     ][:2]
     reference_entries.extend(other_entries)
 
-    # Call AI to generate everything except P-T
-    ai_data = await generate_pms_with_ai(
-        piping_class=req.piping_class,
-        material=req.material,
-        corrosion_allowance=req.corrosion_allowance,
-        service=req.service,
-        rating=rating,
-        reference_entries=reference_entries,
-    )
+    # Call AI to generate everything except P-T.
+    # generate_pms_with_ai raises AIGenerationError with a specific reason on
+    # failure — we re-raise as RuntimeError so the route handler turns it
+    # into a 422 with the exact cause (credit balance, rate limit, etc.).
+    try:
+        ai_data = await generate_pms_with_ai(
+            piping_class=req.piping_class,
+            material=req.material,
+            corrosion_allowance=req.corrosion_allowance,
+            service=req.service,
+            rating=rating,
+            reference_entries=reference_entries,
+        )
+    except AIGenerationError as e:
+        raise RuntimeError(
+            f"Unable to generate PMS for class '{req.piping_class}': {e}"
+        ) from e
 
     if not ai_data:
         raise RuntimeError(
-            f"AI generation failed for class '{req.piping_class}'. "
-            "Please check that ANTHROPIC_API_KEY is configured correctly."
+            f"AI returned no data for class '{req.piping_class}'. "
+            "Try regenerating, or contact support if the issue persists."
         )
 
     # Correct OD and wall thickness values — material-aware

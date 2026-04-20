@@ -16,6 +16,13 @@ from app.utils.engineering_constants import AI_MAX_TOKENS, MILL_TOLERANCE_PERCEN
 
 logger = logging.getLogger(__name__)
 
+
+class AIGenerationError(RuntimeError):
+    """Raised when the Anthropic call fails. The message is user-safe and
+    describes the actual failure mode (credits, rate limit, auth, etc.) so
+    the frontend can show something useful instead of a generic 'check your
+    API key'."""
+
 SYSTEM_PROMPT = """You are a senior piping materials engineer with deep expertise in:
 - ASME B31.3 (Process Piping), B36.10M (Welded/Seamless Wrought Steel Pipe), B36.19M (Stainless Steel Pipe)
 - ASME B16.5 (Flanges), B16.9 (BW Fittings), B16.11 (Forged Fittings), B16.20 (Gaskets), B16.47 (Large Flanges), B16.48 (Line Blanks)
@@ -569,13 +576,16 @@ async def generate_pms_with_ai(
     service: str,
     rating: str,
     reference_entries: list[dict],
-) -> dict | None:
+) -> dict:
     """Call Claude API to generate PMS data (everything except P-T).
-    Returns a dict of generated fields, or None on failure."""
+    Returns a dict of generated fields. Raises AIGenerationError on failure
+    with a message describing the actual cause (credit balance, rate limit,
+    auth error, model-not-found, etc.)."""
 
     if not settings.anthropic_api_key:
-        logger.warning("No Anthropic API key configured, cannot generate PMS data")
-        return None
+        raise AIGenerationError(
+            "ANTHROPIC_API_KEY is not configured on the server."
+        )
 
     prompt = _build_generation_prompt(
         piping_class, material, corrosion_allowance, service,
@@ -583,8 +593,8 @@ async def generate_pms_with_ai(
     )
 
     logger.info("Calling Anthropic API for class %s with model %s", piping_class, settings.anthropic_model)
-    logger.info("API key present: %s (length: %d)", bool(settings.anthropic_api_key), len(settings.anthropic_api_key))
 
+    response_text = ""
     try:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
@@ -608,17 +618,47 @@ async def generate_pms_with_ai(
         return data
 
     except json.JSONDecodeError as e:
-        logger.error("AI returned invalid JSON for %s: %s\nRaw response: %s", piping_class, e, response_text[:500])
-        return None
+        logger.error(
+            "AI returned invalid JSON for %s: %s\nRaw response: %s",
+            piping_class, e, response_text[:500],
+        )
+        raise AIGenerationError(
+            "AI returned a malformed response. Try again, or regenerate."
+        ) from e
     except anthropic.AuthenticationError as e:
-        logger.error("Anthropic AUTH ERROR for %s: %s — Check your ANTHROPIC_API_KEY", piping_class, e)
-        return None
+        logger.error("Anthropic auth error for %s: %s", piping_class, e)
+        raise AIGenerationError(
+            "Anthropic API key was rejected. Please check that ANTHROPIC_API_KEY "
+            "is set correctly on the server."
+        ) from e
     except anthropic.NotFoundError as e:
-        logger.error("Anthropic MODEL NOT FOUND for %s: model='%s' — %s", piping_class, settings.anthropic_model, e)
-        return None
+        logger.error(
+            "Anthropic model not found for %s: model='%s' — %s",
+            piping_class, settings.anthropic_model, e,
+        )
+        raise AIGenerationError(
+            f"Anthropic model '{settings.anthropic_model}' was not found. "
+            "Update anthropic_model in config.py to a currently available model."
+        ) from e
+    except anthropic.RateLimitError as e:
+        logger.error("Anthropic rate limit hit for %s: %s", piping_class, e)
+        raise AIGenerationError(
+            "Anthropic API rate limit reached. Please wait a minute and retry."
+        ) from e
     except anthropic.APIError as e:
-        logger.error("Anthropic API error for %s: %s", piping_class, e)
-        return None
+        msg = str(e)
+        logger.error("Anthropic API error for %s: %s", piping_class, msg)
+        low = msg.lower()
+        if "credit balance" in low or "billing" in low:
+            raise AIGenerationError(
+                "Anthropic API credit balance is exhausted. Add credits at "
+                "https://console.anthropic.com/settings/billing and try again."
+            ) from e
+        if "overloaded" in low:
+            raise AIGenerationError(
+                "Anthropic service is temporarily overloaded. Please retry."
+            ) from e
+        raise AIGenerationError(f"Anthropic API error: {msg}") from e
     except Exception as e:
         logger.error("Unexpected error in AI generation for %s: %s", piping_class, e, exc_info=True)
-        return None
+        raise AIGenerationError(f"Unexpected error during AI generation: {e}") from e
