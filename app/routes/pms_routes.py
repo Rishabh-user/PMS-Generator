@@ -10,8 +10,10 @@ from fastapi.responses import StreamingResponse
 
 from app.models.pms_models import PMSRequest, PMSResponse
 from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
+from app.models.pms_agent_models import PMSAgentRequest, PMSAgentResponse
 from app.services.pms_service import generate_excel, generate_pms, regenerate_pms, clear_cache
 from app.services.thickness_service import compute_thickness
+from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
 from app.services import data_service
 from app.utils.engineering import (
@@ -214,6 +216,23 @@ async def api_clear_cache():
     """Clear the PMS generation cache to force fresh AI re-generation."""
     await clear_cache()
     return {"status": "ok", "message": "Cache cleared. Next generation will use fresh AI data."}
+
+
+@router.post("/pms-agent/chat", response_model=PMSAgentResponse)
+async def api_pms_agent_chat(req: PMSAgentRequest):
+    """
+    Natural-language PMS search. Parses a free-text prompt (e.g.
+    "generate A1 CS sour service" or "show 600# SS316L") into structured
+    filters, matches against the pipe-class catalogue, and returns both a
+    human-readable reply and a suggested action the frontend can execute.
+
+    Deterministic parsing — no LLM call, works regardless of AI credit status.
+    """
+    try:
+        return await pms_agent_chat(req)
+    except Exception as e:
+        logger.exception("PMS agent chat error")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 @router.post("/compute-thickness", response_model=ComputeThicknessResponse)
