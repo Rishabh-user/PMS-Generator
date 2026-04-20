@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.pms_models import PMSRequest, PMSResponse
+from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
 from app.services.pms_service import generate_excel, generate_pms, regenerate_pms, clear_cache
+from app.services.thickness_service import compute_thickness
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
 from app.services import data_service
 from app.utils.engineering import (
@@ -180,3 +182,22 @@ async def api_clear_cache():
     """Clear the PMS generation cache to force fresh AI re-generation."""
     await clear_cache()
     return {"status": "ok", "message": "Cache cleared. Next generation will use fresh AI data."}
+
+
+@router.post("/compute-thickness", response_model=ComputeThicknessResponse)
+async def api_compute_thickness(req: ComputeThicknessRequest):
+    """
+    Compute per-size wall thickness, MAWP, margins, stress and engineering flags
+    for a given piping class + user design inputs (design P, design T, MDMT, joint,
+    optional Case 1 / stress overrides).
+
+    Reuses the PMS cache for the underlying pipe schedule data and the shared
+    ASME B31.3 engineering utilities — the frontend simply renders the response.
+    """
+    try:
+        return await compute_thickness(req)
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.exception("Error computing thickness")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
