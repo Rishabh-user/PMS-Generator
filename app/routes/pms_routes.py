@@ -11,9 +11,11 @@ from fastapi.responses import StreamingResponse
 from app.models.pms_models import PMSRequest, PMSResponse
 from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
 from app.models.pms_agent_models import PMSAgentRequest, PMSAgentResponse
+from app.models.validation_models import ValidationReport
 from app.services.pms_service import generate_excel, generate_pms, regenerate_pms, clear_cache
 from app.services.thickness_service import compute_thickness
 from app.services.pms_agent_service import chat as pms_agent_chat
+from app.services.validation_service import validate as validate_pms
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
 from app.services import data_service
 from app.utils.engineering import (
@@ -216,6 +218,33 @@ async def api_clear_cache():
     """Clear the PMS generation cache to force fresh AI re-generation."""
     await clear_cache()
     return {"status": "ok", "message": "Cache cleared. Next generation will use fresh AI data."}
+
+
+@router.post("/validate-pms", response_model=ValidationReport)
+async def api_validate_pms(req: PMSRequest):
+    """
+    Audit an AI-generated PMS against engineering standards.
+
+    Checks (all deterministic, no external data source):
+      - Class-code vs rating naming convention
+      - NACE suffix vs material consistency
+      - Mill tolerance vs ASME B36.10M standard 12.5%
+      - Flange standard recognised (ASME B16.5 / B16.47)
+      - Wall thickness lookup vs ASME B36.10M / B36.19M for each (OD, schedule)
+      - Wall thickness adequacy per ASME B31.3 Eq. 3a at the class's P-T max
+      - Valve code prefix matches class code
+
+    Each finding is categorised ok / warning / error with a detailed
+    explanation so the engineer can verify the AI output.
+    """
+    try:
+        pms = await generate_pms(req)
+        return validate_pms(pms)
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.exception("Validation error")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 @router.post("/pms-agent/chat", response_model=PMSAgentResponse)

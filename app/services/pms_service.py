@@ -340,13 +340,9 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
 
 
 async def regenerate_pms(req: PMSRequest) -> PMSResponse:
-    """
-    Force fresh AI generation, bypassing all caches.
-    Overwrites the existing cached result in both L1 and L2.
-    """
+    """Force fresh AI generation, bypassing all caches. Overwrites cache."""
     key = _cache_key(req)
     logger.info("Regenerating PMS for %s via AI (forced, bypassing cache)", req.piping_class)
-
     pms = await _generate_from_ai(req)
     await _store_in_caches(key, req, pms)
     return pms
