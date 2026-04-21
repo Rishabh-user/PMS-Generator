@@ -27,6 +27,9 @@ class PipeSize(BaseModel):
     pipe_type: str = Field(..., description="Seamless or welded")
     material_spec: str = Field(..., description="ASTM material specification")
     ends: str = Field(..., description="End type")
+    # Optional — only emitted for classes whose spec sheet includes an I.D.
+    # row (e.g. GRE A50/A51/A52). Default 0 → renderer auto-hides the row.
+    id_mm: float = Field(default=0.0, description="Inside diameter in mm (GRE)")
 
 
 class FittingsData(BaseModel):
@@ -38,6 +41,9 @@ class FittingsData(BaseModel):
     cap_standard: str = Field(default="", description="Cap standard code")
     plug_standard: str = Field(default="", description="Plug standard code")
     weldolet_spec: str = Field(default="", description="Weldolet specification")
+    # Optional fittings-section "Rating" row used by GRE classes (e.g.
+    # "20 bar, 93degC" for A50/A52). Default empty → renderer auto-hides.
+    rating: str = Field(default="", description="Fittings-section rating (GRE)")
 
 
 class FittingBySize(BaseModel):
@@ -60,6 +66,10 @@ class FittingBySize(BaseModel):
     sockolet_standard: str = Field(default="", description="Sockolet standard code")
     nipple_standard: str = Field(default="", description="Nipple specification")
     swage_standard: str = Field(default="", description="Swage specification")
+    # GRE-specific fitting rows (A50/A51/A52). Default empty → row hidden.
+    mold_tee_standard: str = Field(default="", description="Molded Tee (GRE)")
+    red_saddle_standard: str = Field(default="", description="Reducing Saddle (GRE)")
+    adaptor_standard: str = Field(default="", description="Adaptor / Adapter (GRE)")
 
 
 class ExtraFittings(BaseModel):
@@ -91,6 +101,11 @@ class BoltsNutsGaskets(BaseModel):
     stud_bolts: str = Field(default="", description="Stud bolt specification")
     hex_nuts: str = Field(default="", description="Hex nut specification")
     gasket: str = Field(default="", description="Gasket specification")
+    # Optional — only populated for classes whose spec sheet carries these
+    # rows (GRE A50/A51/A52 → Washers; A50/A52 → second Gasket variant).
+    # Default empty → renderer auto-hides.
+    washers: str = Field(default="", description="Washers specification (GRE)")
+    gasket_2: str = Field(default="", description="Second gasket row (GRE A50/A52 Flat Ring)")
 
 
 class ValveSizeEntry(BaseModel):

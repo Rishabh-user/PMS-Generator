@@ -105,7 +105,9 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
   CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30" — do NOT emit those sizes)
   Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
   Titanium (A70): 0.5" to 6" ONLY (8 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6) — do NOT emit 8"+
-  GRE (A50/A51/A52): A50/A52 start at 1" (19 sizes 1"-40"); A51 = 1"-6" only (6 sizes)
+  GRE (A50/A51/A52):
+    A50/A52: 20 sizes 1"-40" (1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 30, 32, 34, 36, 40)
+    A51: 6 sizes 1"-6" only (1, 1.5, 2, 3, 4, 6) — BONSTRAND Series 50000C range
   CPVC (A60): 0.5" to 8" (10 sizes: 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 6, 8)
   Tubing (T80/T90): Short size range per rating — T*A = 0.5"-1.5", T*B/C similar
 
@@ -224,13 +226,82 @@ CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs AND WTs (Pipe Class Sheet A30
     in the EEMUA 234 range used by this project. The 17 sizes above are the
     complete list.
 
-GRE (A50/A51/A52) — Manufacturer's Standard (NOT ASME):
-  A50/A52 ODs (mm): 1"=34.1, 1.5"=49.1, 2"=57.8, 3"=86.4, 4"=110.6, 6"=166.6,
-                    8"=218.4, 10"=274.5, 12"=327.3, 14"=359.2, 16"=410.5,
-                    18"=452.2, 20"=502.3, 24"=602.8, 28"=728.6, 30"=780.6,
-                    32"=832.6, 34"=884.6, 36"=936.4, 40"=1040.6
-  A51 ODs (mm):     1"=31.5, 1.5"=46.5, 2"=57.4, 3"=86.2, 4"=111.6, 6"=165.4
-  Schedule = "-" (no ASME schedule). WT per manufacturer standard.
+GRE (A50/A51/A52) — Manufacturer's Standard (NOT ASME). NON-ASME pipe_code,
+so post-processor does NOT correct OD or WT — the AI's values are final.
+Use these exact values:
+
+  A50 / A52 (20 sizes 1"-40", pipe_code = "Manufacturer's Std."):
+    NPS → OD (mm): 1"=34.1, 1.5"=49.1, 2"=57.8, 3"=86.4, 4"=110.6, 6"=166.6,
+                   8"=218.4, 10"=274.5, 12"=327.3, 14"=359.2, 16"=410.5,
+                   18"=452.2, 20"=502.3, 24"=602.8, 28"=728.6, 30"=780.6,
+                   32"=832.6, 34"=884.6, 36"=936.4, 40"=1040.6
+    NPS → ID (mm) — emit in pipe_data[i].id_mm:
+                   1"=27.1, 1.5"=42.1, 2"=53.2, 3"=81.8, 4"=105.2, 6"=159.0,
+                   8"=208.8, 10"=262.9, 12"=313.7, 14"=344.4, 16"=393.7,
+                   18"=433.8, 20"=482.1, 24"=578.6, 28"=700.0, 30"=750.0,
+                   32"=800.0, 34"=850.0, 36"=900.0, 40"=1000.0
+    NPS → WT (mm): 1"=3.5, 1.5"=3.5, 2"=2.3, 3"=2.3, 4"=2.7, 6"=3.8, 8"=4.8,
+                   10"=5.8, 12"=6.8, 14"=7.4, 16"=8.4, 18"=9.2, 20"=10.1,
+                   24"=12.1, 28"=14.3, 30"=15.3, 32"=16.3, 34"=17.3,
+                   36"=18.2, 40"=20.3
+    Schedule = "-" for all sizes.
+
+    Pipe-data fields:
+      pipe_type     = "Manufacturer standard (TBA)"
+      material_spec = "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
+      ends          = "Taper / Taper Socket x Spigot, Adhesive bonded"
+
+    Fittings-data fields (emit on pms.fittings AND the same values on EVERY
+    fittings_by_size entry — merged rows will collapse identical values):
+      fitting_type      = "Taper / Taper Socket x Spigot, Adhesive bonded"
+      rating            = "20 bar, 93degC"    (fittings-section Rating row — GRE-specific)
+      material_spec     = "Filament wound Glassfiber Reinforced Epoxy (GRE) fitting, Conductive, ASTM D5685: RTRF, 11F1, or equivalent"
+      elbow_standard    = "22.5°, 45°, 90° elbow"
+      tee_standard      = "Tee or Reducing Tee"
+      mold_tee_standard = "Molded Tee"
+      reducer_standard  = "Conc and Ecc Reducer"
+      red_saddle_standard = "Reducing Saddle - Flat Face (FF)"
+      cap_standard      = ""       (A50/A52 Excel has no Cap row — leave empty)
+      plug_standard     = ""       (not applicable — leave empty)
+      weldolet_spec     = ""       (not applicable — leave empty)
+      coupling_standard = "Coupler"
+      adaptor_standard  = "Adapter"
+
+    Bolts/Nuts/Gaskets fields:
+      stud_bolts = "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm"
+      hex_nuts   = "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm"
+      washers    = "ASTM A 307 Gr. B HDG"
+      gasket     = "EPDM Rubber Full Face Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS)"
+      gasket_2   = "EPDM Rubber Flat Ring Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS)"
+
+  A51 (6 sizes 1"-6", pipe_code = "Manufacturer's Std (BONSTRAND Series 50000C)"):
+    NPS → OD (mm): 1"=31.5, 1.5"=46.5, 2"=57.4, 3"=86.2, 4"=111.6, 6"=165.4
+    NPS → ID (mm) — emit in pipe_data[i].id_mm:
+                   1"=27.1, 1.5"=42.1, 2"=53.2, 3"=81.8, 4"=105.2, 6"=159.0
+    NPS → WT (mm): 1"=2.2, 1.5"=2.2, 2"=2.1, 3"=2.2, 4"=3.2, 6"=3.2
+    Schedule = "-" for all sizes.
+
+    A51 is intentionally generic — BONSTRAND is a proprietary GRE system, so the
+    spec defers nearly every field to the manufacturer. Use this literal string
+    for most fields:
+      _M = "Manufacturer standard (BONSTRAND Series 50000C)"
+
+    Pipe-data fields:
+      pipe_type = _M ; material_spec = _M ; ends = _M
+
+    Fittings-data fields (same on pms.fittings and every fittings_by_size entry):
+      fitting_type = _M ; rating = _M ; material_spec = _M
+      elbow_standard = _M ; tee_standard = _M ; mold_tee_standard = _M
+      reducer_standard = _M ; red_saddle_standard = _M
+      cap_standard = "" ; plug_standard = "" ; weldolet_spec = ""
+      coupling_standard = _M ; adaptor_standard = _M
+
+    Bolts/Nuts/Gaskets fields:
+      stud_bolts = "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm"
+      hex_nuts   = "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm"
+      washers    = "ASTM A 307 Gr. B HDG"
+      gasket     = "ASME B16.21, Flat Ring, 3mm, CNAF, Oil Resistant, Glass Fibre Composite with NBR Binder"
+      gasket_2   = ""   (A51 has only a single gasket row — leave gasket_2 empty)
 
 CPVC (A60) — ASTM F441 (uses Iron Pipe Size ODs — SAME as ASME B36.10M):
   Sizes: 0.5"-8" (typical)
@@ -388,7 +459,14 @@ MOC by material family:
   Copper (A40): "ASTM B61 UNS C92200" (bronze cast flange per ASME B 16.24);
                 Blind Flange MOC = "ASTM A 105N RF With 3mm Copper over lay"
   CPVC  (A60): manufacturer CPVC flange; face FF
-  GRE   (A50/51/52): manufacturer (Bondstrand / equivalent) flange; face FF
+  GRE (A50/A52) — face FF (Flat Face):
+      material_spec = "Filament Wound Fibre reinforced epoxy flange, conductive, Heavy duty, ASTM D4024"
+      flange_type   = "Taper / Taper Socket x Spigot, Adhesive bonded"
+      standard      = "Drilled to ASME B 16.5/ 16.47A, 150#"
+  GRE (A51) — face FF, BONSTRAND system:
+      material_spec = "Manufacturer standard (BONSTRAND Series 50000C)"
+      flange_type   = "Manufacturer standard (BONSTRAND Series 50000C)"
+      standard      = "Drilled to ASME B 16.5, 150#"   (A51 is 1"-6" only, so B 16.47A does NOT apply)
 
 FACE by rating / material:
   150#: "150# RF, Serrated Finish"
@@ -469,6 +547,11 @@ GASKETS:
     Copper (A40): ASME B 16.21, Full face gasket, 2mm, CNAF
       (CNAF = Compressed Non-Asbestos Fiber. Use this exact gasket string for A40;
        do NOT use the CuNi neoprene rule — A40 has its own spec per Excel.)
+    GRE (A50/A52): "EPDM Rubber Full Face Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS)"
+      (The A50/A52 Excel sheet lists TWO gaskets — the second is a "Flat Ring" variant of the same spec.
+       The current model carries a single gasket field, so emit the Full Face one. A follow-up model
+       extension is needed to render both rows.)
+    GRE (A51): "ASME B16.21, Flat Ring, 3mm, CNAF, Oil Resistant, Glass Fibre Composite with NBR Binder"
   RTJ classes (900#+):
     CS/LTCS: ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG
     SS: OCT Ring, SS316L, Max 160 BHN Hardness, ASME B16.20
@@ -587,7 +670,8 @@ Multiple valve types in one field → comma-separated: "BLRT{{piping_class}}R, B
 Design Code:
   Standard: "ASME B 31.3"
   + NACE suffix: ", NACE-MR-01-75/ISO-15156-1/2/3" if N or LN in class name
-  CuNi: "ASME B 31.3 / EEMUA 234"
+  CuNi (A30): "ASME B 31.3 / EEMUA 234"
+  GRE (A50/A51/A52): "ASME B 31.3 / ISO 14692"
 
 Pipe Code (exact string per spec sheet row "Code"):
   CS / LTCS / GALV / Epoxy (A1…G1 series, A1N…G1N, LTCS 1L/1LN, 2-series, 3/4/5/6): "ASME B 36.10M"
@@ -656,12 +740,18 @@ IMPORTANT:
     "hydrotest_pressure": "",
     "pipe_data": [
         {{"size_inch": "0.5", "od_mm": 21.3, "schedule": "SCH 160", "wall_thickness_mm": 7.47,
-          "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B", "ends": "BE"}},
+          "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B", "ends": "BE",
+          "id_mm": 0}},
         ...for ALL sizes in the class...
     ],
+    // id_mm is optional and defaults to 0 (row hidden). Populate it only for GRE
+    // classes (A50/A51/A52) where the spec sheet carries an Inside Diameter row.
     "fittings": {{"fitting_type": "...", "material_spec": "...",
                   "elbow_standard": "...", "tee_standard": "...", "reducer_standard": "...",
-                  "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "..."}},
+                  "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "...",
+                  "rating": ""}},
+    // fittings.rating is optional (only GRE A50/A52 use it — e.g. "20 bar, 93degC").
+    // Most classes should emit rating as empty string.
     "fittings_welded": {{"fitting_type": "...", "material_spec": "...",
                   "elbow_standard": "...", "tee_standard": "...", "reducer_standard": "...",
                   "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "..."}},
@@ -670,17 +760,24 @@ IMPORTANT:
           "elbow_standard": "...", "tee_standard": "...", "reducer_standard": "...",
           "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "...",
           "coupling_standard": "", "union_standard": "", "sockolet_standard": "",
-          "nipple_standard": "", "swage_standard": ""}}
+          "nipple_standard": "", "swage_standard": "",
+          "mold_tee_standard": "", "red_saddle_standard": "", "adaptor_standard": ""}}
     ],
-    // For most classes, leave coupling_standard / union_standard / sockolet_standard /
-    // nipple_standard / swage_standard as empty strings — the Excel renderer
-    // auto-hides rows where ALL sizes are empty. Only populate these for classes
-    // whose spec sheet (per its "Pipe Class Sheet") shows values on these rows —
-    // notably Copper A40 (MOC-split values) and CuNi A30 (EEMUA 234).
+    // Optional fittings fields (auto-hidden row when ALL sizes empty):
+    //   Copper A40  → populate coupling_standard / union_standard / sockolet_standard /
+    //                 nipple_standard / swage_standard with MOC split values.
+    //   CuNi A30    → similar pattern (EEMUA 234 values).
+    //   GRE A50/A52 → populate mold_tee_standard / red_saddle_standard / adaptor_standard.
+    //   GRE A51     → populate the same GRE fields but with the generic
+    //                 "Manufacturer standard (BONSTRAND Series 50000C)" string.
+    //   All other classes → leave these empty.
     "flange": {{"material_spec": "...", "face_type": "...", "flange_type": "...", "standard": "...",
                  "compact_flange": "", "hub_connector": ""}},
     "spectacle_blind": {{"material_spec": "...", "standard": "...", "standard_large": "..."}},
-    "bolts_nuts_gaskets": {{"stud_bolts": "...", "hex_nuts": "...", "gasket": "..."}},
+    "bolts_nuts_gaskets": {{"stud_bolts": "...", "hex_nuts": "...", "gasket": "...",
+                            "washers": "", "gasket_2": ""}},
+    // washers and gasket_2 are optional (only GRE A50/A51/A52 populate them).
+    // Most classes: leave both as empty strings → rows hidden.
     "valves": {{
         "rating": "...",
         "ball": "...", "gate": "...", "globe": "...", "check": "...", "butterfly": "...",

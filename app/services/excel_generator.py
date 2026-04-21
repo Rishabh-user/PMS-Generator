@@ -452,15 +452,22 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         _write_label_value_row(ws, row, "Code", pms.pipe_code, col_end=total_cols)
         row += 1
 
+    # I.D. (mm) is rendered only when at least one size carries a non-zero
+    # inside diameter — used by GRE classes (A50/A51/A52). Row is inserted
+    # right after O.D.; other classes skip it.
     pipe_rows = [
         ("Size (in)", [p.size_inch for p in pms.pipe_data]),
         ("O.D. (mm)", [p.od_mm for p in pms.pipe_data]),
+    ]
+    if any((getattr(p, "id_mm", 0) or 0) > 0 for p in pms.pipe_data):
+        pipe_rows.append(("I.D. (mm)", [p.id_mm for p in pms.pipe_data]))
+    pipe_rows.extend([
         ("Schedule", [p.schedule for p in pms.pipe_data]),
         ("W.T. (mm)", [p.wall_thickness_mm for p in pms.pipe_data]),
         ("Type", [p.pipe_type for p in pms.pipe_data]),
         ("MOC", [p.material_spec for p in pms.pipe_data]),
         ("Ends", [p.ends for p in pms.pipe_data]),
-    ]
+    ])
 
     # Rows that benefit from merging (repeated values across sizes)
     mergeable_pipe_rows = {"Type", "MOC", "Ends"}
@@ -502,31 +509,43 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
 
+    # Rating row — GRE classes (A50/A52) show "20 bar, 93degC"; other classes
+    # leave fittings.rating empty → row is skipped.
+    if (getattr(pms.fittings, "rating", "") or "").strip():
+        _write_label_value_row(ws, row, "Rating", pms.fittings.rating, col_end=total_cols)
+        for c in range(1, total_cols + 1):
+            ws.cell(row=row, column=c).fill = ALT_FILL
+        row += 1
+
     # Fitting properties (MOC, Elbow, Tee, etc.) — with auto-merge.
     # Plug behavior: if the class populates plug_standard for sizes > 1.5"
     # (e.g. Copper A40 with Brazed/BW split), render Plug as a full merged
     # row. If Plug is populated only for small-bore (CS classes where the
     # hex-head threaded plug is small-bore only), render as a range row
     # spanning 0.5"-1.5" only (old behavior preserved).
-    # Extra rows (Coupl, Union, Sockolet, Nipple, Swage) render only if at
-    # least one size has a non-empty value — classes that don't populate
-    # these (most of the catalog) skip the rows entirely.
+    # Extra rows (Coupl, Union, Sockolet, Nipple, Swage, plus GRE-specific
+    # Mold. Tee / Red. Sad / Adaptor) render only if at least one size has
+    # a non-empty value — classes that don't populate these skip the rows.
     fitting_props = [
         ("MOC", lambda f: f.material_spec),
         ("Elbow", lambda f: f.elbow_standard),
         ("Tee", lambda f: f.tee_standard),
+        ("Mold. Tee", lambda f: f.mold_tee_standard),
         ("Red.", lambda f: f.reducer_standard),
+        ("Red. Sad", lambda f: f.red_saddle_standard),
         ("Cap", lambda f: f.cap_standard),
         ("Coupl", lambda f: f.coupling_standard),
         ("Plug", lambda f: f.plug_standard),
         ("Union", lambda f: f.union_standard),
         ("Sockolet", lambda f: f.sockolet_standard),
         ("Weldolet", lambda f: f.weldolet_spec),
+        ("Adaptor", lambda f: f.adaptor_standard),
         ("Nipple", lambda f: f.nipple_standard),
         ("Swage", lambda f: f.swage_standard),
     ]
     # Rows that render only when at least one size carries a value:
-    _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage"}
+    _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage",
+                      "Mold. Tee", "Red. Sad", "Adaptor"}
 
     fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
     plug_start_col = pipe_col_start
@@ -606,17 +625,25 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     _write_size_header_row(ws, row, pipe_sizes, col_start=pipe_col_start, total_cols=total_cols)
     row += 1
 
+    # Washers and Gasket #2 are optional (GRE A50/A51/A52 only); empty →
+    # row hidden.
     bng_rows = [
-        ("Stud Bolts", pms.bolts_nuts_gaskets.stud_bolts),
-        ("Hex Nuts", pms.bolts_nuts_gaskets.hex_nuts),
-        ("Gasket", pms.bolts_nuts_gaskets.gasket),
+        ("Stud Bolts", pms.bolts_nuts_gaskets.stud_bolts, False),
+        ("Hex Nuts", pms.bolts_nuts_gaskets.hex_nuts, False),
+        ("Washers", getattr(pms.bolts_nuts_gaskets, "washers", ""), True),
+        ("Gasket", pms.bolts_nuts_gaskets.gasket, False),
+        ("Gasket", getattr(pms.bolts_nuts_gaskets, "gasket_2", ""), True),
     ]
-    for i, (label, value) in enumerate(bng_rows):
-        fill = ALT_FILL if i % 2 == 0 else DATA_FILL
+    rendered = 0
+    for label, value, optional in bng_rows:
+        if optional and not (value or "").strip():
+            continue
+        fill = ALT_FILL if rendered % 2 == 0 else DATA_FILL
         _write_label_value_row(ws, row, label, value, col_end=total_cols)
         for c in range(1, total_cols + 1):
             ws.cell(row=row, column=c).fill = fill
         row += 1
+        rendered += 1
 
     row += 1
 
@@ -777,12 +804,16 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     pipe_rows = [
         ("Size (in)", [p.size_inch for p in pms.pipe_data]),
         ("O.D. (mm)", [p.od_mm for p in pms.pipe_data]),
+    ]
+    if any((getattr(p, "id_mm", 0) or 0) > 0 for p in pms.pipe_data):
+        pipe_rows.append(("I.D. (mm)", [p.id_mm for p in pms.pipe_data]))
+    pipe_rows.extend([
         ("Schedule", [p.schedule for p in pms.pipe_data]),
         ("W.T. (mm)", [p.wall_thickness_mm for p in pms.pipe_data]),
         ("Type", [p.pipe_type for p in pms.pipe_data]),
         ("MOC", [p.material_spec for p in pms.pipe_data]),
         ("Ends", [p.ends for p in pms.pipe_data]),
-    ]
+    ])
     # Rows that benefit from merging (repeated values across sizes)
     mergeable_pipe_rows = {"Type", "MOC", "Ends"}
     for label, values in pipe_rows:
@@ -820,22 +851,33 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
 
+    # Rating row (GRE classes only; otherwise skipped).
+    if (getattr(pms.fittings, "rating", "") or "").strip():
+        _write_label_value_row(ws, row, "Rating", pms.fittings.rating, col_end=total_cols)
+        for c in range(1, total_cols + 1):
+            ws.cell(row=row, column=c).fill = ALT_FILL
+        row += 1
+
     # Fitting properties — see first renderer for behavior explanation.
     fitting_props = [
         ("MOC", lambda f: f.material_spec),
         ("Elbow", lambda f: f.elbow_standard),
         ("Tee", lambda f: f.tee_standard),
+        ("Mold. Tee", lambda f: f.mold_tee_standard),
         ("Red.", lambda f: f.reducer_standard),
+        ("Red. Sad", lambda f: f.red_saddle_standard),
         ("Cap", lambda f: f.cap_standard),
         ("Coupl", lambda f: f.coupling_standard),
         ("Plug", lambda f: f.plug_standard),
         ("Union", lambda f: f.union_standard),
         ("Sockolet", lambda f: f.sockolet_standard),
         ("Weldolet", lambda f: f.weldolet_spec),
+        ("Adaptor", lambda f: f.adaptor_standard),
         ("Nipple", lambda f: f.nipple_standard),
         ("Swage", lambda f: f.swage_standard),
     ]
-    _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage"}
+    _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage",
+                      "Mold. Tee", "Red. Sad", "Adaptor"}
 
     fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
     plug_start_col = pipe_col_start
@@ -908,15 +950,23 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     row += 1
     _write_size_header_row(ws, row, pipe_sizes, col_start=pipe_col_start, total_cols=total_cols)
     row += 1
-    for i, (lbl, val) in enumerate([
-        ("Stud Bolts", pms.bolts_nuts_gaskets.stud_bolts),
-        ("Hex Nuts", pms.bolts_nuts_gaskets.hex_nuts),
-        ("Gasket", pms.bolts_nuts_gaskets.gasket),
-    ]):
+    # Washers and Gasket #2 are optional (GRE A50/A51/A52); empty → row hidden.
+    bng_rows = [
+        ("Stud Bolts", pms.bolts_nuts_gaskets.stud_bolts, False),
+        ("Hex Nuts", pms.bolts_nuts_gaskets.hex_nuts, False),
+        ("Washers", getattr(pms.bolts_nuts_gaskets, "washers", ""), True),
+        ("Gasket", pms.bolts_nuts_gaskets.gasket, False),
+        ("Gasket", getattr(pms.bolts_nuts_gaskets, "gasket_2", ""), True),
+    ]
+    rendered = 0
+    for lbl, val, optional in bng_rows:
+        if optional and not (val or "").strip():
+            continue
         _write_label_value_row(ws, row, lbl, val, col_end=total_cols)
         for c in range(1, total_cols + 1):
-            ws.cell(row=row, column=c).fill = ALT_FILL if i % 2 == 0 else DATA_FILL
+            ws.cell(row=row, column=c).fill = ALT_FILL if rendered % 2 == 0 else DATA_FILL
         row += 1
+        rendered += 1
     row += 1
 
     # Valves

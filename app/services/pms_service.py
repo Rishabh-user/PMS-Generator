@@ -84,6 +84,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             pipe_type=p.get("pipe_type", "Seamless"),
             material_spec=p.get("material_spec", ""),
             ends=p.get("ends", "BE"),
+            id_mm=float(p.get("id_mm", 0) or 0),
         ))
 
     f = ai_data.get("fittings", {})
@@ -96,6 +97,7 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         cap_standard=f.get("cap_standard", ""),
         plug_standard=f.get("plug_standard", ""),
         weldolet_spec=f.get("weldolet_spec", ""),
+        rating=f.get("rating", ""),
     )
 
     fw = ai_data.get("fittings_welded")
@@ -130,6 +132,9 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             sockolet_standard=fb.get("sockolet_standard", ""),
             nipple_standard=fb.get("nipple_standard", ""),
             swage_standard=fb.get("swage_standard", ""),
+            mold_tee_standard=fb.get("mold_tee_standard", ""),
+            red_saddle_standard=fb.get("red_saddle_standard", ""),
+            adaptor_standard=fb.get("adaptor_standard", ""),
         ))
 
     # Extra Fittings intentionally emitted as empty — the section was removed
@@ -159,6 +164,8 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         stud_bolts=bg.get("stud_bolts", ""),
         hex_nuts=bg.get("hex_nuts", ""),
         gasket=bg.get("gasket", ""),
+        washers=bg.get("washers", ""),
+        gasket_2=bg.get("gasket_2", ""),
     )
 
     v = ai_data.get("valves", {})
