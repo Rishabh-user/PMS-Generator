@@ -102,7 +102,7 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
   F-series 1500#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
   G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14)
   GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 24" (17 sizes)
-  CuNi (A30): 0.5" to 30" (20 sizes — per EEMUA 234 size range)
+  CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30" — do NOT emit those sizes)
   Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
   Titanium (A70): 0.5" to 6" ONLY (8 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6) — do NOT emit 8"+
   GRE (A50/A51/A52): A50/A52 start at 1" (19 sizes 1"-40"); A51 = 1"-6" only (6 sizes)
@@ -206,18 +206,23 @@ GALV / Epoxy-coated classes:
 Titanium (A70, 150# — pipe_code = "ASME B 36.10M" per spec):
   A70 (150#): 0.5-3"→40 | 4-6"→10   (size range 0.5"-6" ONLY — do NOT emit 8"+)
 
-CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs (from Pipe Class Sheet A30):
-  A30: No standard schedule — uses EEMUA 234 wall thickness tables
+CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs AND WTs (Pipe Class Sheet A30):
+  A30: No ASME schedule — uses EEMUA 234 wall thickness tables. 17 sizes total.
   NPS → OD (mm):
-    0.5"=16, 0.75"=25, 1"=30, 1.5"=44.5, 2"=57, 2.5"=73, 3"=88.9, 4"=108,
-    6"=159, 8"=219.1, 10"=267, 12"=323.9, 14"=368, 16"=419, 18"=457.2,
-    20"=508, 22"=559, 24"=610, 28"=711, 30"=762
+    0.5"=16, 0.75"=25, 1"=30, 1.5"=44.5, 2"=57, 3"=88.9, 4"=108, 6"=159,
+    8"=219.1, 10"=267, 12"=323.9, 14"=368, 16"=419, 18"=457.2, 20"=508,
+    24"=610, 28"=711
   NPS → WT (mm):
-    0.5"=2.0, 0.75"=2.0, 1"=2.5, 1.5"=2.5, 2"=2.5, 2.5"=2.5, 3"=2.5, 4"=3.0,
-    6"=3.5, 8"=4.5, 10"=5.5, 12"=7.0, 14"=8.0, 16"=9.0, 18"=9.5, 20"=10.0,
-    24"=11.0, 28"=12.5
-  Schedule: "-" for all (EEMUA has its own thickness system; no ASME schedule applies)
-  IMPORTANT: Use the exact OD values above; do NOT substitute ASME B36.10M/B36.19M ODs.
+    0.5"=2.0, 0.75"=2.0, 1"=2.5, 1.5"=2.5, 2"=2.5, 3"=2.5, 4"=3.0, 6"=3.5,
+    8"=4.5, 10"=5.5, 12"=7.0, 14"=8.0, 16"=9.0, 18"=9.5, 20"=11.0,
+    24"=13.0, 28"=15.0
+  Schedule: "-" for all (EEMUA uses its own thickness system; no ASME schedule applies).
+  IMPORTANT 1: Use the exact OD and WT values above. The post-processor does NOT
+    correct EEMUA classes (pipe_code = "EEMUA 234 20 BAR" is non-ASME), so the
+    values the AI emits are what the user sees. Get them right the first time.
+  IMPORTANT 2: Do NOT emit NPS 2.5", 22", or 30" for A30 — those sizes are not
+    in the EEMUA 234 range used by this project. The 17 sizes above are the
+    complete list.
 
 GRE (A50/A51/A52) — Manufacturer's Standard (NOT ASME):
   A50/A52 ODs (mm): 1"=34.1, 1.5"=49.1, 2"=57.8, 3"=86.4, 4"=110.6, 6"=166.6,
@@ -256,7 +261,9 @@ All mainstream classes have TWO pipe types with a size-based transition:
   DSS 20-series: Seamless → Welded (Longitudinally) with 100% RT (transition at ~10")
   SDSS 25-series: Seamless → Welded (Longitudinally) with 100% RT (transition at ~10")
   GALV 3/4/5/6/B4/D4: Seamless → LSAW, 100% RT (transition at ~14")
-  CuNi (30): ALL Seamless (no transition)
+  CuNi (A30): Seamless (0.5"-16") → Seam Welded (18"-28"). Transition at 18".
+    Pipe MOC is the same string for both types: "Annealed tube 90-10 CU-NI ALLOY
+    UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102".
   GRE (40/41/42): ALL manufacturer standard (single type)
   CPVC (60): ALL manufacturer standard
   Tubing (T80/T90): ALL Seamless
@@ -314,7 +321,10 @@ Tubing:
 === FITTINGS RULES ===
 TYPE split mirrors pipe type: "Butt Weld (SCH to match pipe), Seamless" for small sizes, "Butt Weld (SCH to match pipe), Welded" for large sizes.
 GALV screwed classes (3/4): Small sizes = "Screwed (SCRD), #3000", larger = "Butt Weld (SCH to match pipe), Seamless/Welded"
-CuNi (A30): Small sizes = "SW" (Socket Weld), larger = "Butt Weld (SCH to match pipe), Seamless"
+CuNi (A30): THREE-way fittings TYPE split per Excel:
+    0.5"-1.5" → "SW"                                     (Socket Weld)
+    2"-16"    → "Butt Weld (SCH to match pipe), Seamless"
+    18"-28"   → "BW, Welded"                             (Butt Weld, Welded pipe — matches the 18" seamless→welded pipe transition)
 Copper (A40): Small sizes (0.5-1.5) = "Brazed Fittings (SCH to match pipe), Seamless", larger (2-4) = "Butt Weld (SCH to match pipe), Seamless"
 GRE/CPVC: Manufacturer standard (adhesive bonded / laminated)
 Tubing (T80/T90): "Compression Fitting" — body AISI 316, ferrules and nuts in AISI 316
@@ -388,7 +398,7 @@ TYPE — compose the flange_type string from these components; do not copy a fix
     — 150#/300#/600# classes: do not cite flange notes unless class-specific.
 
   GALV screwed (A3/A4): small sizes use screwed-end flanges (SCRD), larger sizes use WN butt-welded
-  CuNi (A30): small sizes use socket-weld (SW) flange, larger sizes use WN flange per EEMUA 234
+  CuNi (A30): SW Flange for 0.5"-1.5"; WN Flange for 2"-28" (boundary at 2", per EEMUA 234 / Excel spec)
   Copper (A40): TYPE = "Solid slip on flange" (all sizes) per ASME B 16.24; STD = "ASME B 16.24"
 
 F/G-series (1500#/2500#) additional flange rows (populate compact_flange and hub_connector):
