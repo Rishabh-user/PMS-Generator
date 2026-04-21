@@ -127,16 +127,10 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             weldolet_spec=fb.get("weldolet_spec", ""),
         ))
 
-    ef = ai_data.get("extra_fittings", {})
-    extra_fittings = ExtraFittings(
-        coupling=ef.get("coupling", ""),
-        hex_plug=ef.get("hex_plug", ""),
-        union=ef.get("union", ""),
-        union_large=ef.get("union_large", ""),
-        olet=ef.get("olet", ""),
-        olet_large=ef.get("olet_large", ""),
-        swage=ef.get("swage", ""),
-    )
+    # Extra Fittings intentionally emitted as empty — the section was removed
+    # from the Excel output and the AI prompt. The Pydantic field is kept so
+    # previously-cached PMS entries still deserialize cleanly.
+    extra_fittings = ExtraFittings()
 
     fl = ai_data.get("flange", {})
     flange = FlangeData(

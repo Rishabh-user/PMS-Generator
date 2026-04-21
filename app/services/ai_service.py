@@ -515,26 +515,6 @@ The class-level string fields (ball, gate, globe, check, butterfly) serve as fal
 
 Multiple valve types in one field → comma-separated: "BLRT{{piping_class}}R, BLFT{{piping_class}}R"
 
-=== EXTRA FITTINGS ===
-Standard piping classes:
-  Coupling: "ASME B 16.11, sizes 0.5\\" to 2.0\\" only" — ONLY for 150#/300# classes
-  Union: "ASME B 16.11, sizes 0.5\\" to 2.0\\" only" — ONLY for 150# classes
-  Hex Plug: "ASME B 16.11, all sizes" — ALL classes
-  Olet: "MSS SP 97, [flange MOC], all sizes" — ALL classes
-  Swage: empty
-
-CuNi (30) extra fittings:
-  Coupling: EEMUA 234
-  Union: EEMUA 234
-  Sockolet: EEMUA 234
-  Nipple: EEMUA 234, MOC Same as pipe
-  Swage: EEMUA 234, MOC Same as pipe
-  Weldolet: EEMUA 234
-
-Tubing (T80/T90):
-  Only "Compression Fitting" — body AISI 316, ferrules and nuts in AISI 316
-  Ends: OD X THD, OD X OD, & OD X SW (Manufacturer Standard)
-
 === MISC ===
 Design Code:
   Standard: "ASME B 31.3"
@@ -605,7 +585,6 @@ IMPORTANT:
           "elbow_standard": "...", "tee_standard": "...", "reducer_standard": "...",
           "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "..."}}
     ],
-    "extra_fittings": {{"coupling": "...", "hex_plug": "...", "union": "...", "union_large": "", "olet": "...", "olet_large": "", "swage": ""}},
     "flange": {{"material_spec": "...", "face_type": "...", "flange_type": "...", "standard": "...",
                  "compact_flange": "", "hub_connector": ""}},
     "spectacle_blind": {{"material_spec": "...", "standard": "...", "standard_large": "..."}},
@@ -614,13 +593,14 @@ IMPORTANT:
         "rating": "...",
         "ball": "...", "gate": "...", "globe": "...", "check": "...", "butterfly": "...",
         "dbb": "...", "dbb_inst": "...",
-        "ball_by_size": [{{"size_inch": "0.5", "code": "BLRTA1R"}}, {{"size_inch": "2", "code": "BLRTA1R, BLFTA1R"}}, ...],
-        "gate_by_size": [{{"size_inch": "0.5", "code": "GAYMA1R"}}, ...],
-        "globe_by_size": [{{"size_inch": "0.5", "code": "GLYMA1R"}}, ...],
-        "check_by_size": [{{"size_inch": "0.5", "code": "CHPMA1R"}}, {{"size_inch": "4", "code": "CHSMA1R, CHDMA1R"}}, ...],
-        "butterfly_by_size": [{{"size_inch": "6", "code": "BFWTA1R, BFTPA1R"}}, ...],
-        "dbb_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJ"}}, ...],
-        "dbb_inst_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJT"}}, ...]
+        "//_boundary_note": "Each _by_size list should use the spec-accurate boundary. Check valves: piston-check (CHPM) for small-bore, swing/dual-plate (CHSM, CHDM) for large-bore — boundary typically at 2\\" for most CS classes. Ball: BLRT for small-bore, BLRT + BLFT for large-bore — boundary typically at 2\\" (150#, 300#) or class-specific. If the spec shows ONE entry (e.g. BLRTA1R, BLFTA1R applies to all sizes), emit ONE entry at size 0.5 and it will propagate via LVCF.",
+        "ball_by_size": [{{"size_inch": "0.5", "code": "BLRTA1R, BLFTA1R"}}],
+        "gate_by_size": [{{"size_inch": "0.5", "code": "GAYMA1R"}}],
+        "globe_by_size": [{{"size_inch": "0.5", "code": "GLYMA1R"}}],
+        "check_by_size": [{{"size_inch": "0.5", "code": "CHPMA1R"}}, {{"size_inch": "2", "code": "CHSMA1R, CHDMA1R"}}],
+        "butterfly_by_size": [{{"size_inch": "3", "code": "BFWTA1R, BFTPA1R"}}],
+        "dbb_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJ"}}],
+        "dbb_inst_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJT"}}]
     }},
     "notes": ["<position 1 text>", "<position 2 text>", "<position 3 text>", ...]
 }}

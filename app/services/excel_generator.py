@@ -435,32 +435,9 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     row += 1
 
-    # === EXTRA FITTINGS ===
-    ef = pms.extra_fittings
-    extra_items = [
-        ("Coupling", ef.coupling), ("Hex Head Plug", ef.hex_plug),
-        ("Union (Small Bore)", ef.union), ("Union (Large Bore)", ef.union_large),
-        ("Olet (Small Bore)", ef.olet), ("Olet (Large Bore)", ef.olet_large),
-        ("Swage", ef.swage),
-    ]
-    # Collect pipe sizes for size header rows in subsequent sections
+    # Extra Fittings section intentionally removed — the spec document doesn't
+    # include it and it added no value. pipe_sizes still needed below.
     pipe_sizes = [p.size_inch for p in pms.pipe_data]
-
-    has_extra = any(v for _, v in extra_items)
-    if has_extra:
-        # Extra Fittings values are class-level descriptors (e.g. "sizes 0.5"
-        # to 2.0" only") — they don't map to per-size columns, so we skip
-        # the size-header row and render each entry as a merged label+value.
-        _write_section_header(ws, row, "Extra Fittings", col_end=total_cols)
-        row += 1
-        for i, (label, value) in enumerate(extra_items):
-            if value:
-                fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-                _write_label_value_row(ws, row, label, value, col_end=total_cols)
-                for c in range(1, total_cols + 1):
-                    ws.cell(row=row, column=c).fill = fill
-                row += 1
-        row += 1
 
     # === FLANGE DATA ===
     _write_section_header(ws, row, "Flange", col_end=total_cols)
@@ -771,32 +748,9 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         row += 1
     row += 1
 
-    # Extra Fittings
-    ef = pms.extra_fittings
-    extra_items = [
-        ("Coupling", ef.coupling), ("Hex Head Plug", ef.hex_plug),
-        ("Union (Small Bore)", ef.union), ("Union (Large Bore)", ef.union_large),
-        ("Olet (Small Bore)", ef.olet), ("Olet (Large Bore)", ef.olet_large),
-        ("Swage", ef.swage),
-    ]
-    # Collect pipe sizes for size header rows in subsequent sections
+    # Extra Fittings section intentionally removed — not in the spec document.
+    # pipe_sizes is still needed for the remaining size-based sections below.
     pipe_sizes = [p.size_inch for p in pms.pipe_data]
-
-    # Only add section if there's any data
-    has_extra = any(v for _, v in extra_items)
-    if has_extra:
-        # Extra Fittings values are class-level descriptors (e.g. "sizes 0.5"
-        # to 2.0" only") — they don't map to per-size columns, so we skip
-        # the size-header row and render each entry as a merged label+value.
-        _write_section_header(ws, row, "Extra Fittings", col_end=total_cols)
-        row += 1
-        for i, (lbl, val) in enumerate(extra_items):
-            if val:
-                _write_label_value_row(ws, row, lbl, val, col_end=total_cols)
-                for c in range(1, total_cols + 1):
-                    ws.cell(row=row, column=c).fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-                row += 1
-        row += 1
 
     # Flange
     _write_section_header(ws, row, "Flange", col_end=total_cols)
