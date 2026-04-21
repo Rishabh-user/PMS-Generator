@@ -18,15 +18,12 @@ from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.validation_service import validate as validate_pms
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
 from app.services import data_service
-from app.utils.engineering import (
-    check_pt_adequacy,
-    interpolate_pressure_at_temp,
-)
+from app.utils.engineering import interpolate_pressure_at_temp
 from app.utils.engineering_constants import (
     HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
     MILL_TOLERANCE_PERCENT, MILL_TOLERANCE_FRACTION,
     JOINT_EFFICIENCY_E, WELD_STRENGTH_W, Y_COEFFICIENT,
-    SMALL_BORE_CUTOFF_NPS, AI_MAX_TOKENS,
+    SMALL_BORE_CUTOFF_NPS,
     DEFAULT_CORROSION_ALLOWANCE, DEFAULT_SERVICE,
     STRESS_CS, STRESS_SS316L, STRESS_SS316, STRESS_SS304L,
     STRESS_DSS, STRESS_SDSS, STRESS_CUNI, STRESS_API5LX60,

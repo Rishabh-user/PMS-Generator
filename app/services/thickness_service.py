@@ -28,7 +28,6 @@ from app.services.pms_service import generate_pms
 from app.services import data_service
 from app.utils.engineering_constants import (
     HYDROTEST_FACTOR,
-    JOINT_EFFICIENCY_E,
     MILL_TOLERANCE_FRACTION,
     MILL_TOLERANCE_PERCENT,
     WELD_STRENGTH_W,

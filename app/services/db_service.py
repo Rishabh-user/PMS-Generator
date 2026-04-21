@@ -9,7 +9,6 @@ and the system falls back to AI-only generation.
 """
 import json
 import logging
-from datetime import datetime, timezone
 
 import asyncpg
 

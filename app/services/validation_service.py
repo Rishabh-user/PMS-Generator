@@ -26,8 +26,6 @@ from app.utils.engineering import calculate_wall_thickness
 from app.utils.engineering_constants import (
     JOINT_EFFICIENCY_E,
     MILL_TOLERANCE_FRACTION,
-    WELD_STRENGTH_W,
-    Y_COEFFICIENT,
     get_allowable_stress,
 )
 from app.utils.pipe_data import get_wall_thickness
@@ -147,21 +145,19 @@ def _check_nace_consistency(pms: PMSResponse) -> list[ValidationFinding]:
 
 
 def _check_wt_vs_b3610m(pms: PMSResponse) -> list[ValidationFinding]:
-    """For each pipe row, verify the reported WT matches ASME B36.10M/B36.19M
-    lookup for the given (OD, schedule)."""
+    """Verify each pipe row's reported WT matches the ASME B36.10M/B36.19M
+    lookup for its (OD, schedule) pair."""
     findings: list[ValidationFinding] = []
     for p in pms.pipe_data:
         sch = (p.schedule or "").strip()
-        # Skip non-standard schedules ("-" used for custom calc thickness)
         if not sch or sch in ("-", "–", "—"):
             findings.append(ValidationFinding(
                 kind="warning",
                 rule="WT_LOOKUP_B3610M",
                 title=f"{p.size_inch}\": schedule is '-' (calculated wall)",
                 detail=(
-                    f"No ASME lookup available for this row; WT "
-                    f"{p.wall_thickness_mm} mm is not verified against B36.10M/19M. "
-                    "Trust the pressure adequacy check instead."
+                    f"No ASME lookup available; WT {p.wall_thickness_mm} mm "
+                    "verified by the B31.3 Eq. 3a pressure-adequacy check."
                 ),
                 size_inch=p.size_inch,
             ))
@@ -172,11 +168,10 @@ def _check_wt_vs_b3610m(pms: PMSResponse) -> list[ValidationFinding]:
             findings.append(ValidationFinding(
                 kind="warning",
                 rule="WT_LOOKUP_B3610M",
-                title=f"{p.size_inch}\": (OD {p.od_mm} mm, {sch}) not in B36.10M/19M table",
+                title=f"{p.size_inch}\": (OD {p.od_mm}, {sch}) not in B36.10M/19M",
                 detail=(
-                    "The (OD, schedule) combination is not a standard ASME pair. "
-                    "Could be a typo in the schedule, or a non-standard OD "
-                    "(CuNi/GRE/CPVC/tubing)."
+                    "Non-standard (OD, schedule) pair — could be a typo or a "
+                    "non-steel pipe (CuNi / GRE / CPVC / tubing)."
                 ),
                 size_inch=p.size_inch,
             ))
@@ -186,11 +181,13 @@ def _check_wt_vs_b3610m(pms: PMSResponse) -> list[ValidationFinding]:
             findings.append(ValidationFinding(
                 kind="error",
                 rule="WT_LOOKUP_B3610M",
-                title=f"{p.size_inch}\": WT {p.wall_thickness_mm} mm != ASME B36.10M/19M {std_wt} mm for {sch}",
+                title=(
+                    f"{p.size_inch}\": WT {p.wall_thickness_mm} mm != "
+                    f"ASME B36.10M/19M {std_wt} mm for {sch}"
+                ),
                 detail=(
-                    f"Schedule {sch} @ OD {p.od_mm} mm must have exactly {std_wt} mm "
-                    f"wall per ASME B36.10M/B36.19M. PMS reports {p.wall_thickness_mm} mm. "
-                    f"Either the schedule or the WT value is wrong."
+                    f"Schedule {sch} @ OD {p.od_mm} mm must be exactly {std_wt} mm "
+                    f"per ASME B36.10M/B36.19M. PMS reports {p.wall_thickness_mm} mm."
                 ),
                 size_inch=p.size_inch,
             ))
@@ -199,7 +196,7 @@ def _check_wt_vs_b3610m(pms: PMSResponse) -> list[ValidationFinding]:
                 kind="ok",
                 rule="WT_LOOKUP_B3610M",
                 title=f"{p.size_inch}\": WT matches ASME B36.10M/19M for {sch}",
-                detail=f"OD {p.od_mm} mm × {sch} = {std_wt} mm (matches PMS value).",
+                detail=f"OD {p.od_mm} mm × {sch} = {std_wt} mm (matches PMS).",
                 size_inch=p.size_inch,
             ))
     return findings
@@ -282,39 +279,174 @@ def _check_wt_pressure_adequacy(pms: PMSResponse) -> list[ValidationFinding]:
     return findings
 
 
-def _check_valve_code_prefix(pms: PMSResponse) -> list[ValidationFinding]:
-    """Valve codes should embed the class code (e.g. class A1 → 'BLRTA1R')."""
+# ── VDS code structure — strict letter vocabulary ─────────────────
+# Per 40801-SPE-80000-PP-SP-0002 §5.1 (Valve Identification), VDS codes
+# follow the format: [Type][Bore|Design][Seat][SPEC][EndConn]
+
+_VALVE_TYPE_PREFIXES = {"BL", "BF", "GA", "GL", "CH", "DB", "NE"}
+_VALVE_BORE_LETTERS = {"R", "F"}                               # Ball only
+_VALVE_DESIGN_LETTERS = {"P", "S", "D", "W", "Y", "I", "A", "T"}
+_VALVE_SEAT_LETTERS = {"M", "P", "T"}                          # Metal/PEEK/PTFE
+_VALVE_END_SUFFIXES = {"R", "J", "F", "H", "JT"}               # RF/RTJ/FF/Hub/RTJ-NPT
+_VALVE_END_LONG_FIRST = ("JT",)                                # try JT before J
+
+# Parser regex: Type(2) + BoreOrDesign(1) + Seat(1) + SPEC(2-5) + End(1-2)
+_VDS_PATTERN = re.compile(
+    r"^(?P<type>BL|BF|GA|GL|CH|DB|NE)"
+    r"(?P<slot3>[A-Z])"
+    r"(?P<seat>[A-Z])"
+    r"(?P<spec>[A-Z]\d{1,2}[A-Z]{0,3}?)"
+    r"(?P<end>JT|R|J|F|H)$"
+)
+
+
+def _parse_vds(code: str) -> dict | None:
+    """Parse a VDS code into structured parts. Returns None if malformed."""
+    m = _VDS_PATTERN.match(code.strip().upper())
+    if not m:
+        return None
+    return {
+        "type": m.group("type"),
+        "slot3": m.group("slot3"),  # Bore for Ball, Design for others
+        "seat": m.group("seat"),
+        "spec": m.group("spec"),
+        "end": m.group("end"),
+    }
+
+
+def _check_vds_code(code: str, expected_class: str) -> list[ValidationFinding]:
+    """Strictly validate a single VDS code against the spec's letter vocabulary."""
     findings: list[ValidationFinding] = []
-    cls = pms.piping_class.upper()
+    code = code.strip().upper()
+    parsed = _parse_vds(code)
+    if not parsed:
+        findings.append(ValidationFinding(
+            kind="error",
+            rule="VALVE_CODE_STRUCTURE",
+            title=f"VDS '{code}' does not match spec format",
+            detail=(
+                "Expected [Type(2)][Bore/Design(1)][Seat(1)][SPEC][End(1-2)] — "
+                "see 40801-SPE-80000-PP-SP-0002 §5.1."
+            ),
+        ))
+        return findings
+
+    # Type — always checked by regex but report anyway
+    if parsed["type"] not in _VALVE_TYPE_PREFIXES:
+        findings.append(ValidationFinding(
+            kind="error",
+            rule="VALVE_CODE_TYPE",
+            title=f"VDS '{code}': Type '{parsed['type']}' is not in "
+                  "BL/BF/GA/GL/CH/DB/NE",
+            detail="First two characters must be a known valve type.",
+        ))
+
+    # Slot 3 — Bore (Ball only) or Design (all others)
+    slot3 = parsed["slot3"]
+    if parsed["type"] == "BL":
+        if slot3 not in _VALVE_BORE_LETTERS:
+            findings.append(ValidationFinding(
+                kind="error",
+                rule="VALVE_CODE_BORE",
+                title=f"VDS '{code}': Ball valve bore letter '{slot3}' "
+                      "is not R or F",
+                detail="For Ball valves, position 3 must be R (Reduced) or F (Full).",
+            ))
+    else:
+        if slot3 not in _VALVE_DESIGN_LETTERS:
+            findings.append(ValidationFinding(
+                kind="error",
+                rule="VALVE_CODE_DESIGN",
+                title=f"VDS '{code}': design letter '{slot3}' is not in "
+                      "P/S/D/W/Y/I/A/T",
+                detail=(
+                    "For non-Ball valves, position 3 is the valve Design: "
+                    "P=Piston, S=Swing, D=Dual-Plate, W=Wafer, T=Triple-Offset, "
+                    "Y=Screw-and-Yoke, I=Inline, A=Angle."
+                ),
+            ))
+
+    # Seat
+    if parsed["seat"] not in _VALVE_SEAT_LETTERS:
+        findings.append(ValidationFinding(
+            kind="error",
+            rule="VALVE_CODE_SEAT",
+            title=f"VDS '{code}': seat letter '{parsed['seat']}' is not "
+                  "M/P/T",
+            detail="Seat must be M (Metal), P (PEEK), or T (PTFE).",
+        ))
+
+    # SPEC — must match the class
+    if parsed["spec"].upper() != expected_class.upper():
+        findings.append(ValidationFinding(
+            kind="error",
+            rule="VALVE_CODE_SPEC",
+            title=f"VDS '{code}': embedded SPEC '{parsed['spec']}' does not "
+                  f"match piping class '{expected_class}'",
+            detail="The SPEC field inside the VDS code must equal the class code.",
+        ))
+
+    # End connection
+    if parsed["end"] not in _VALVE_END_SUFFIXES:
+        findings.append(ValidationFinding(
+            kind="error",
+            rule="VALVE_CODE_END",
+            title=f"VDS '{code}': end connection '{parsed['end']}' is not "
+                  "R/J/F/H/JT",
+            detail=(
+                "End connection must be R (RF), J (RTJ), F (FF), H (Hub), or "
+                "JT (RTJ with NPT female — instrument only)."
+            ),
+        ))
+
+    return findings
+
+
+def _check_valve_code_prefix(pms: PMSResponse) -> list[ValidationFinding]:
+    """Validate every valve code in the PMS against the official VDS structure.
+
+    Checks for each code:
+      - Overall format (Type · Bore/Design · Seat · SPEC · End)
+      - Valid letter vocabulary at each position
+      - Embedded SPEC equals the piping class
+    """
+    findings: list[ValidationFinding] = []
+    cls = pms.piping_class
 
     groups = [
         ("Ball", pms.valves.ball),
         ("Gate", pms.valves.gate),
         ("Globe", pms.valves.globe),
         ("Check", pms.valves.check),
+        ("Butterfly", pms.valves.butterfly),
+        ("DBB", pms.valves.dbb),
     ]
+    any_bad = False
     for label, code_str in groups:
-        if not code_str:
+        if not code_str or code_str.upper() in ("USE GATE VALVE", "N/A", "NA", "-"):
             continue
         codes = [c.strip() for c in re.split(r"[,/]", code_str) if c.strip()]
-        bad = [c for c in codes if cls not in c.upper()]
-        if bad:
-            findings.append(ValidationFinding(
-                kind="warning",
-                rule="VALVE_CODE_PREFIX",
-                title=f"{label} valve code(s) do not embed class '{cls}'",
-                detail=(
-                    f"Convention: the class code should appear in the VDS. "
-                    f"Found: {', '.join(bad)}. Verify the codes reference the correct class."
-                ),
-            ))
-        else:
-            findings.append(ValidationFinding(
-                kind="ok",
-                rule="VALVE_CODE_PREFIX",
-                title=f"{label} valve code(s) embed class '{cls}'",
-                detail=f"Codes: {code_str}",
-            ))
+        for code in codes:
+            # Strip trailing "T" for DBB-inst variants before parsing
+            core = code[:-1] if code.endswith("T") and "DB" in code.upper()[:2] else code
+            per_code = _check_vds_code(core, cls)
+            if per_code:
+                any_bad = True
+                # Tag findings with the valve group for context
+                for f in per_code:
+                    f.title = f"{label}: {f.title}"
+                findings.extend(per_code)
+
+    if not any_bad:
+        findings.append(ValidationFinding(
+            kind="ok",
+            rule="VALVE_CODE_STRUCTURE",
+            title=f"All VDS codes conform to spec structure for class '{cls}'",
+            detail=(
+                "Every valve code parses cleanly: Type · Bore/Design · Seat · "
+                f"SPEC={cls} · EndConn per 40801-SPE-80000-PP-SP-0002 §5.1."
+            ),
+        ))
     return findings
 
 
@@ -365,7 +497,7 @@ def _check_mill_tolerance(pms: PMSResponse) -> list[ValidationFinding]:
     return [ValidationFinding(
         kind="ok",
         rule="MILL_TOLERANCE",
-        title=f"Mill tolerance is 12.5% (ASME B36.10M)",
+        title="Mill tolerance is 12.5% (ASME B36.10M)",
         detail="",
     )]
 

@@ -112,62 +112,68 @@ Standard NPS sequence: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20,
 Use ASME B36.10M for CS/LTCS/GALV, ASME B36.19M for SS/DSS/SDSS.
 Wall thicknesses must be EXACT standard values from the appropriate ASME table.
 
-All per-class schedule rules below are verbatim from the project PMS specification
-document (40801-SPE-80000-PP-SP-0001 Rev A0). Follow them EXACTLY — do not
-substitute "standard" ASME schedules by interpolation, and do not change a
-schedule because it looks unusual. These values reflect specific project
-engineering choices incorporating corrosion allowance, material limits, and
-fabrication standards.
+All per-class schedule rules below are verbatim from the project Pipe Wall
+Thickness Calculation workbook (20171-SPOG-80000-PP-CL-0001 Rev 03) —
+specifically the "Selected Thickness" lookup table (cols N/O/P) on each
+class sheet. Follow them EXACTLY — do not substitute "standard" ASME
+schedules by interpolation, and do not change a schedule because it looks
+unusual. These values reflect specific project engineering choices
+incorporating corrosion allowance, material limits, and fabrication
+standards.
 
-CS 1-series (A1/B1/D1/E1/F1/G1 and NACE variants — identical schedules per PDF):
-  A1  (150#):  0.5-1.5"→160 | 2-6"→80 | 8-28"→STD | 30-36"→XS
-  A1N (150#):  0.5-1.5"→160 | 2-6"→80 | 8-28"→STD | 30-32"→XS
-  B1  (300#):  0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
-  B1N (300#):  0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
-  D1  (600#):  0.5-2"→160 | 3-24"→80
-  D1N (600#):  0.5-2"→160 | 3-24"→80
-  E1  (900#):  0.5-3"→160 | 4-24"→120
-  E1N (900#):  0.5-3"→160 | 4-24"→120
-  F1  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20"→140 | 22"→160 | 24"→140
-  F1N (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20"→140 | 22"→160 | 24"→140
+CS 1-series (A1/B1/D1/E1/F1/G1 and NACE variants):
+  A1  (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD | 30-36"→XS
+  A1N (150#):  0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20"→XS | 22"→30 | 24"→XS | 30"→30
+  B1  (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
+  B1N (300#):  0.5-1.5"→XXS | 2-3"→160 | 4"→120 | 6-8"→80 | 10-24"→60 | 26-30"→"-"
+  D1  (600#):  0.5-1.5"→XXS | 2"→160 | 3-24"→80
+  D1N (600#):  0.5-0.75"→"-" | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-24"→100
+  E1  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
+  E1N (900#):  0.5-0.75"→"-" | 1-4"→XXS | 6"→160 | 8-16"→140 | 18-24"→120
+  F1  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20-24"→140
+  F1N (1500#): 0.5-2"→"-" | 3-6"→XXS | 8-10"→"-" | 12-24"→160
   G1  (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-24"→"-" (calc wall thickness)
-  G1N (2500#): same as G1
+  G1N (2500#): 0.5-12"→"-" (all calc wall thickness)
 
-LTCS 1L-series (A1L/B1L/D1L/E1L/F1L/G1L) and LTCS NACE 1LN-series:
-  A1L  (150#):  0.5-1.5"→160 | 2-28"→XS | 30"→30
-  A1LN (150#):  0.5-1.5"→160 | 2-28"→XS | 30"→30
-  B1L  (300#):  0.5-1.5"→160 | 2-6"→XS | 8-20"→40 | 22"→"-" | 24"→40
+LTCS 1L-series (A1L/B1L/D1L/E1L/F1L) and LTCS NACE 1LN-series:
+  A1L  (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD | 30"→XS
+  A1LN (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD | 30"→XS
+  B1L  (300#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→40 | 30"→"-"
   B1LN (300#):  same as B1L
-  D1L  (600#):  0.5-1.5"→XXS | 2"→160 | 3-6"→XS | 8"→XS | 10-24"→80
-  D1LN (600#):  same as D1L
-  E1L  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
-  E1LN (900#):  same as E1L
-  F1L  (1500#): 0.5-1.5"→XXS | 2-8"→XXS | 10-24"→"-" (calc WT)
-  F1LN (1500#): same as F1L
-  G1L  (2500#): 0.5-1"→XXS | 1.5-24"→"-" (calc WT)
-  G1LN (2500#): same as G1L
+  D1LN (600#):  0.5-2"→160 | 3-20"→80
+  D7LN (600#):  0.5-0.75"→"-" | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-20"→100
+  E1LN (900#):  0.5"→XXS | 0.75-3"→160 | 4-16"→120
+  E7LN (900#):  0.5-0.75"→"-" | 1-4"→XXS | 6"→160 | 8-16"→140
+  F1LN (1500#): 0.5-6"→XXS | 8-16"→"-" (calc WT)
+  F7LN (1500#): 0.5-16"→"-" (calc WT)
+  G1LN (2500#): 0.5-1"→XXS | 1.5-12"→"-" | 14-18"→"-"
+  G7LN (2500#): 0.5-12"→"-" | 14-18"→"-"
 
 CS 2-series (heavy-wall — A2N/A2LN/B2N/D2N/E2N/F2N/G2N):
-  A2N  (150#):  0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20-28"→XS | 30"→30
-  A2LN (150#):  0.5-1.5"→XXS | 2"→160 | 3-28"→XS | 30"→30
-  B2N  (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2"→80 | 3-6"→80 | 8-20"→40 | 22"→60 | 24"→40
-  D2N  (600#):  0.5-0.75"→"-" (calc WT) | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-24"→100
-  E2N  (900#):  starts at 1" | 1-4"→XXS | 6"→160 | 8-16"→140 | 18-24"→120
-  F2N  (1500#): starts at 1" | 1-2"→"-" (calc WT) | 3-6"→XXS | 8-10"→"-" (calc WT) | 12-24"→160
-  G2N  (2500#): starts at 1" | 1-24"→"-" (all calc WT)
+  A2   (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-16"→STD
+  A2N  (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-28"→STD | 30"→XS
+  B2   (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-16"→40
+  B2N  (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→60 | 24"→40
+  D2   (600#):  0.5-1.5"→XXS | 2"→160 | 3-8"→80
+  D2N  (600#):  0.75-1.5"→XXS | 2"→160 | 3-24"→80
+  D4   (600#):  0.5-1.5"→XXS | 2"→160 | 3-24"→80
+  E2   (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-8"→120
+  E2N  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
+  F2N  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20-24"→140
+  G2N  (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-14"→"-" (calc WT)
 
 SS 316L 10-series (use "S" suffix for B36.19M schedules):
-  A10  (150#): 0.5-0.75"→160 | 1-2"→80S | 3-20"→40S | 22"→STD | 24"→40S
+  A10  (150#): 0.5-1.5"→80S | 2-8"→40S | 10-14"→10S | 16-20"→40S | 22"→STD | 24"→40S | 30"→STD
   A10N (150#): same as A10
-  B10  (300#): 0.5-1.5"→160 | 2"→80S | 3-18"→40S | 20"→80S | 22"→XS | 24"→80S
+  B10  (300#): 0.5-1.5"→160 | 2-14"→40S | 16-20"→80S | 22"→60 | 24"→30 | 30"→"-"
   B10N (300#): same as B10
-  D10  (600#): 0.5-1.5"→160 | 2-10"→80S | 12-20"→60 | 22"→"-" | 24"→60
+  D10  (600#): 0.5"→XXS | 0.75-1.5"→160 | 2-10"→80S | 12-24"→80
   D10N (600#): same as D10
-  E10  (900#): 0.5-1.5"→160 | 2-6"→80S | 8-24"→100
+  E10  (900#): 0.5"→XXS | 0.75-2"→160 | 3"→80S | 4-6"→120 | 8"→100
   E10N (900#): same as E10
-  F10  (1500#): 0.5-24"→160
-  F10N (1500#): 0.5-24"→160
-  G10  (2500#): 0.5-3"→XXS | 4-12"→"-" (calc WT)
+  F10  (1500#): 0.5-1.5"→XXS | 2-8"→160
+  F10N (1500#): same as F10
+  G10  (2500#): 0.5-2"→XXS | 3-12"→"-" (calc WT)
   G10N (2500#): same as G10
 
 DSS 20-series (UNS S31803, use "S" suffix):
@@ -407,29 +413,73 @@ GASKETS:
     DSS: OCT Ring, DSS UNS S31803, Max 22 HRC Hardness, ASME B16.20
     SDSS: OCT Ring, SDSS UNS S32750, Max 22 HRC Hardness, ASME B16.20
 
-=== VALVE CODES ===
-Pattern: [TYPE PREFIX][CLASS CODE][FACE SUFFIX]
-  CLASS CODE = exact piping class name (A1, B1N, D20, E25N, etc.)
-  FACE SUFFIX: R = RF (150#-600#) | J = RTJ (900#-2500#) | F = FF (CuNi/GRE/CPVC) | JT = (Tubing)
+=== VALVE CODES (VDS) — per 40801-SPE-80000-PP-SP-0002 ===
+OFFICIAL VDS format:    [Type] + [Bore/Design] + [Seat] + [SPEC] + [EndConn]
+  Type     (2 chars):  BL=Ball | BF=Butterfly | GA=Gate | GL=Globe |
+                       CH=Check | DB=DBB | NE=Needle
+  Bore     (Ball ONLY, 1 char): R=Reduced Bore | F=Full Bore
+  Design   (non-Ball, 1 char):  P=Piston (Check) | S=Swing (Check) |
+                                D=Dual-Plate (Check) | W=Wafer (BF) |
+                                T=Triple-Offset (BF) | Y=Screw-and-Yoke (Gate/Globe) |
+                                I=Straight-Inline (Needle) | A=Angle (Needle)
+  Seat     (1 char):   M=Metal | P=PEEK | T=PTFE
+  SPEC:                exact piping class code (A1, A1LN, F20N, G25N, T90C, etc.)
+  EndConn:             R=RF | J=RTJ | F=FF | H=Hub | JT=RTJ with NPT female (inst.)
 
-Standard valve prefixes:
-  Ball Reduced Trunnion: BLRT | Ball Full Trunnion: BLFT
-  Ball Reduced Port (soft-seat):  BLRP | Ball Full Port (soft-seat):  BLFP  (E/F/G-series 900#+)
-  Ball Reduced Port (metal-seat): BLRM | Ball Full Port (metal-seat): BLFM  (ALL G-series 2500# classes)
-  Gate Y-body: GAYM
-  Globe Y-body: GLYM
-  Check Piston: CHPM | Check Swing: CHSM | Check Dual-Plate: CHDM
-  Butterfly Wafer: BFWT | Butterfly Triple-Offset: BFTP
-  DBB Reduced Port (soft-seat):  DBRP  (available in 900#+ classes)
-  DBB Reduced Port (metal-seat): DBRM  (ALL G-series 2500# classes — list alongside DBRP)
-  DBB (Inst): DBB code with T suffix appended (e.g., DBRPE20NJ → DBRPE20NJT). Use soft-seat (DBRP) only.
-  Tubing valves: DBB=DBFP, Needle=NEIP, Ball=BLFP, Check=CHPM (with JT suffix)
+GOTCHA — letter T has two meanings:
+  • in Seat  position → T = PTFE
+  • in Design position (Butterfly only) → T = Triple-Offset
+  Example: BLRTA1R = BL · R · T · A1 · R = Ball / Reduced bore / PTFE seat / A1 / RF
+           BFTPA1R = BF · T · P · A1 · R = Butterfly / Triple-Offset / Peek seat / A1 / RF
 
-valves.rating field MUST include face-type suffix:
-  150# / 300# / 600#: "150#, RF" / "300#, RF" / "600#, RF"
-  900# / 1500# / 2500#: "900#, RTJ" / "1500#, RTJ" / "2500#, RTJ"
+Pre-built prefixes (Type+Bore/Design+Seat):
+  Ball:       BLRT (R bore, PTFE seat)     BLFT (F bore, PTFE)
+              BLRP (R bore, PEEK — 900#+)  BLFP (F bore, PEEK)
+              BLRM (R bore, Metal — all G-series)  BLFM (F bore, Metal)
+  Gate:       GAYM (Y-body, Metal)
+  Globe:      GLYM (Y-body, Metal)
+  Check:      CHPM (Piston, Metal)   CHSM (Swing, Metal)   CHDM (Dual-Plate, Metal)
+  Butterfly:  BFWT (Wafer, PTFE)     BFTP (Triple-Offset, PEEK)
+  DBB:        DBRP (R bore, PEEK — 900#+)  DBRM (R bore, Metal — all G-series)
+  DBB (Inst): add T suffix (RTJ + NPT female), e.g. DBRPE20NJT — soft-seat (DBRP) only.
+  Needle:     NEIP (Straight-Inline, PEEK) | NEAP (Angle, PEEK) — tubing only
+  Tubing:     BLFP, CHPM, DBFP, NEIP — all with JT end suffix
+
+EndConn (last char/s — must match piping rating face):
+  150#/300#/600#   → R (RF)
+  900#/1500#/2500# → J (RTJ)
+  CuNi (A30)       → F (FF)
+  Tubing (T80/T90) → F or JT (per inst. isolation)
+  Hub-connected    → H (rare — only when spec explicitly calls for compact flange)
+
+valves.rating field MUST include face-type:
+  "150#, RF" / "300#, RF" / "600#, RF"
+  "900#, RTJ" / "1500#, RTJ" / "2500#, RTJ"
   CuNi: "150#, FF"
   Tubing: "10000# (69 Mpa)" or as specified
+
+=== VALVE DESIGN STANDARDS (from VMS Section 6) ===
+Every VDS emitted MUST follow these standards. The AI should reference them
+when populating design_code / standards-related notes fields.
+
+  • P-T rating basis (all valves): ASME B16.34
+  • Face-to-face / end-to-end:     ASME B16.10 OR API 6D
+  • Ball valve (≤ 24" AND ≤ 600#): API 6D OR ISO 17292
+  • Ball valve (> 600#):           API 6D
+  • Gate valve:                    API 600 / API 602 / API 603 (as applicable)
+  • Globe valve:                   API 602 OR BS EN ISO 15761 OR BS 1873
+  • Check valve:                   API 594 / API 6D / BS 1868 / BS 5352 /
+                                   BS EN ISO 15761 / API 602 (as applicable)
+  • Sour service (any valve):      NACE MR0175 / ISO 15156
+  • Forged construction:           required for DN 40 (NPS 1½) AND below
+
+Material / construction rules the AI must respect:
+  • Metal-seated ball: tungsten-carbide coated, min 1050 Vickers, 150–250 µm thick
+  • Trunnion-mounted ball: Double-Block-and-Bleed (DBB) with spring-loaded seats
+  • Gate valves: for "clean" non-hydrocarbon service; for 900#+ HC, allowed ≤ 1.5"
+  • Gate wedge: solid ≤ 1.5", flexible > 1.5"
+  • Wafer-type valves: NOT allowed in flammable/combustible service
+  • Full-bore ball required: PSV inlet/outlet, piggable lines
 
 Special valve rules:
   E-series (900#) Ball: Small sizes → "USE GATE VALVE", larger sizes (typically 6"+) → BLRP/BLFP codes

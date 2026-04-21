@@ -120,6 +120,45 @@ def _write_section_header(ws, row: int, text: str, col_start: int = 1, col_end: 
     ws.merge_cells(start_row=row, start_column=col_start, end_row=row, end_column=col_end)
 
 
+def _lvcf_by_size(by_size, pipe_sizes: list) -> list:
+    """Last-Value-Carried-Forward: expand a sparse `{size: code}` list from
+    the AI (e.g. only boundary sizes given) to a full list aligned with
+    `pipe_sizes`, so the merge logic renders contiguous groups correctly.
+
+    Example (A1 Check):
+        by_size    = [{"0.5": "CHPMA1R"}, {"2": "CHSMA1R, CHDMA1R"}]
+        pipe_sizes = ["0.5","0.75","1","1.5","2","3","4","6"...]
+        result     = ["CHPMA1R","CHPMA1R","CHPMA1R","CHPMA1R",
+                      "CHSMA1R, CHDMA1R","CHSMA1R, CHDMA1R", …]
+
+    Entries are sorted by numeric size before propagation. Any size in
+    pipe_sizes that falls before the first explicit entry gets "".
+    """
+    def _num(s):
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            return None
+
+    entries = sorted(
+        [(_num(e.size_inch), e.code) for e in by_size if _num(e.size_inch) is not None],
+        key=lambda x: x[0],
+    )
+    out = []
+    current = ""
+    idx = 0
+    for size in pipe_sizes:
+        tgt = _num(size)
+        if tgt is None:
+            out.append(current)
+            continue
+        while idx < len(entries) and entries[idx][0] <= tgt:
+            current = entries[idx][1]
+            idx += 1
+        out.append(current)
+    return out
+
+
 def _write_merged_data_row(ws, row: int, label: str, values: list, col_start: int = 2,
                            total_cols: int = 20, font=DATA_FONT, fill=DATA_FILL):
     """Write a data row that auto-merges consecutive cells with identical values.
@@ -231,7 +270,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     num_pipe_cols = max(len(pms.pipe_data), 1)
     total_cols = max(num_pipe_cols + 2, 19)  # Col 1 = label, col 2..N = data
     pipe_col_start = 2
-    pipe_col_end = pipe_col_start + num_pipe_cols - 1
 
     # Column widths — col A = label, col B onwards = data columns
     ws.column_dimensions["A"].width = 22  # label
@@ -410,9 +448,10 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     has_extra = any(v for _, v in extra_items)
     if has_extra:
+        # Extra Fittings values are class-level descriptors (e.g. "sizes 0.5"
+        # to 2.0" only") — they don't map to per-size columns, so we skip
+        # the size-header row and render each entry as a merged label+value.
         _write_section_header(ws, row, "Extra Fittings", col_end=total_cols)
-        row += 1
-        _write_size_header_row(ws, row, pipe_sizes, col_start=pipe_col_start, total_cols=total_cols)
         row += 1
         for i, (label, value) in enumerate(extra_items):
             if value:
@@ -525,9 +564,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
             continue
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
-            # Size-specific rendering — map codes to pipe size columns
-            size_code_map = {e.size_inch: e.code for e in by_size}
-            values = [size_code_map.get(s, "") for s in pipe_sizes]
+            values = _lvcf_by_size(by_size, pipe_sizes)
             _write_merged_data_row(ws, row, label, values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         else:
@@ -748,9 +785,10 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     # Only add section if there's any data
     has_extra = any(v for _, v in extra_items)
     if has_extra:
+        # Extra Fittings values are class-level descriptors (e.g. "sizes 0.5"
+        # to 2.0" only") — they don't map to per-size columns, so we skip
+        # the size-header row and render each entry as a merged label+value.
         _write_section_header(ws, row, "Extra Fittings", col_end=total_cols)
-        row += 1
-        _write_size_header_row(ws, row, pipe_sizes, col_start=pipe_col_start, total_cols=total_cols)
         row += 1
         for i, (lbl, val) in enumerate(extra_items):
             if val:
@@ -852,8 +890,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
             continue
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
-            size_code_map = {e.size_inch: e.code for e in by_size}
-            values = [size_code_map.get(s, "") for s in pipe_sizes]
+            values = _lvcf_by_size(by_size, pipe_sizes)
             _write_merged_data_row(ws, row, lbl, values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         else:
