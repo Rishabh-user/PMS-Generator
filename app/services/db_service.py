@@ -135,6 +135,40 @@ async def delete_cached_pms(cache_key: str) -> None:
         logger.error("DB delete error for key %s: %s", cache_key, e)
 
 
+async def list_cached_classes() -> list[dict]:
+    """Return every cached PMS entry (one row per cache_key), newest first.
+
+    Used by the frontend's Piping Class Specification page to show a direct
+    download button only for classes that have a stored result — so we can
+    serve Excel without triggering an AI generation.
+    """
+    if not _pool:
+        return []
+    try:
+        async with _pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (piping_class)
+                    piping_class, material, corrosion_allowance, service, updated_at
+                FROM pms_cache
+                ORDER BY piping_class, updated_at DESC
+                """
+            )
+        return [
+            {
+                "piping_class": r["piping_class"],
+                "material": r["material"],
+                "corrosion_allowance": r["corrosion_allowance"],
+                "service": r["service"],
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("DB list_cached_classes error: %s", e)
+        return []
+
+
 async def clear_all_cache() -> int:
     """Delete all cached PMS entries. Returns count deleted."""
     if not _pool:

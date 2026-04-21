@@ -220,6 +220,19 @@ async def api_clear_cache():
     return {"status": "ok", "message": "Cache cleared. Next generation will use fresh AI data."}
 
 
+@router.get("/cached-classes")
+async def api_list_cached_classes():
+    """List piping classes that have a PMS result stored in the database.
+
+    Used by the Piping Class Specification page to show a direct "Download
+    Excel" button only for classes that are already cached — so the user can
+    download without waiting for (or paying for) a fresh AI generation.
+    """
+    from app.services import db_service
+    rows = await db_service.list_cached_classes()
+    return {"cached": rows, "total": len(rows)}
+
+
 @router.post("/validate-pms", response_model=ValidationReport)
 async def api_validate_pms(req: PMSRequest):
     """
