@@ -297,9 +297,17 @@ GALV (3/4/5/6,B4,D4):
 CuNi (30):
   Annealed tube 90-10 CU-NI ALLOY UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102
 
-Copper (A40):
+Copper (A40) — ASTM B 42 "Regular" copper pipe, pipe_code = "ASTM B42 (Regular)":
+  USE THESE EXACT ODs AND WTs (Pipe Class Sheet A40 — NON-ASME, post-processor
+  does NOT correct these values, so AI's emission is what the user sees):
+    NPS → OD (mm):
+      0.5"=21.3, 0.75"=26.7, 1"=33.4, 1.5"=48.3, 2"=60.3, 3"=88.9, 4"=114.0
+      (Note: 4" OD is 114.0 per ASTM B42, NOT 114.3 like ASME B36.10M.)
+    NPS → WT (mm):
+      0.5"=2.72, 0.75"=2.9, 1"=3.2, 1.5"=3.81, 2"=3.96, 3"=5.56, 4"=6.35
+    Schedule: "-" for all sizes (no ASME schedule applies to ASTM B 42).
   Pipe MOC: "ASTM B 42 UNS C12200"
-  Pipe type split by size:
+  Pipe type split by size (boundary at 2"):
     0.5"-1.5" → "Seamless Hard Drawn H80 (Regular)"
     2"-4"     → "Seamless light Drawn H55 (Regular)"
   Ends: "BE" (butt end — the spec says BE even though soldered ends are common)
@@ -349,13 +357,20 @@ STANDARDS (apply to ALL material families unless noted):
   Weldolet: MSS SP 97, [flange MOC] (e.g., "MSS SP 97, ASTM A 105N" for CS)
   GALV screwed classes: Elbow/Tee/Red/Cap = ASME B 16.11
   CuNi classes: All fittings per EEMUA 234; additional: Coupling, Union, Sockolet, Nipple, Swage per EEMUA 234
-  Copper (A40):
-    elbow_standard  = "ASME B 16.22"   (Wrought Copper Solder-Joint fittings)
-    tee_standard    = "ASME B 16.22"
-    reducer_standard = "ASME B 16.22"
-    cap_standard    = "ASME B 16.22"
-    plug_standard   = "ASTM B 75"      (brass/copper pipe plug material spec)
-    weldolet_spec   = "Not Applicable" (copper pipe uses brazed olets if any)
+  Copper (A40) — ALL fitting standards carry the MOC split values per Excel:
+    For EVERY fittings_by_size entry, populate ALL of these fields with the
+    MATERIAL MOC for that size (not an engineering standard like B 16.22).
+    This mirrors the A40 Excel sheet where rows 23-34 (Elbow, Tee, Red., Cap,
+    Coupl, Plug, Union, Sockolet, Weldolet, Nipple, Swage) all carry the
+    pipe MOC split rather than individual standard codes.
+
+    Sizes 0.5"-1.5" → every field below = "ASTM B 124 UNS C11000"
+    Sizes 2"-4"     → every field below = "ASTM B 42 UNS C12200"
+
+    Fields to populate on each fittings_by_size entry:
+      material_spec, elbow_standard, tee_standard, reducer_standard, cap_standard,
+      coupling_standard, plug_standard, union_standard, sockolet_standard,
+      weldolet_spec, nipple_standard, swage_standard
   GRE classes: All per manufacturer/GRE system standard
 
 fittings_by_size: One entry per pipe size. Each entry includes size_inch, type (Seamless/Welded), fitting_type, material_spec, and all standards. material_spec may differ between seamless and welded sizes.
@@ -450,7 +465,10 @@ GASKETS:
     DSS: ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler
     SDSS: ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler
     GALV: 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
-    CuNi: 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
+    CuNi (A30): 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
+    Copper (A40): ASME B 16.21, Full face gasket, 2mm, CNAF
+      (CNAF = Compressed Non-Asbestos Fiber. Use this exact gasket string for A40;
+       do NOT use the CuNi neoprene rule — A40 has its own spec per Excel.)
   RTJ classes (900#+):
     CS/LTCS: ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG
     SS: OCT Ring, SS316L, Max 160 BHN Hardness, ASME B16.20
@@ -650,8 +668,15 @@ IMPORTANT:
     "fittings_by_size": [
         {{"size_inch": "0.5", "type": "Seamless", "fitting_type": "...", "material_spec": "...",
           "elbow_standard": "...", "tee_standard": "...", "reducer_standard": "...",
-          "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "..."}}
+          "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "...",
+          "coupling_standard": "", "union_standard": "", "sockolet_standard": "",
+          "nipple_standard": "", "swage_standard": ""}}
     ],
+    // For most classes, leave coupling_standard / union_standard / sockolet_standard /
+    // nipple_standard / swage_standard as empty strings — the Excel renderer
+    // auto-hides rows where ALL sizes are empty. Only populate these for classes
+    // whose spec sheet (per its "Pipe Class Sheet") shows values on these rows —
+    // notably Copper A40 (MOC-split values) and CuNi A30 (EEMUA 234).
     "flange": {{"material_spec": "...", "face_type": "...", "flange_type": "...", "standard": "...",
                  "compact_flange": "", "hub_connector": ""}},
     "spectacle_blind": {{"material_spec": "...", "standard": "...", "standard_large": "..."}},

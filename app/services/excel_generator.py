@@ -273,6 +273,25 @@ def _b1648_max_size_for(pms) -> float:
     return B1648_MAX_SIZE_DEFAULT
 
 
+def _any_nonempty(values) -> bool:
+    """True if any value in the list is a non-empty string after stripping."""
+    return any(str(v or "").strip() for v in values)
+
+
+def _has_value_above_size(fittings_by_size, attr: str, size_threshold: float) -> bool:
+    """True if any size > threshold carries a non-empty value on the given attribute.
+    Used to decide whether to render a row as a range-row (small-bore only, e.g.
+    Plug in CS classes) or a merged-data-row spanning all sizes (A40 Copper where
+    Plug is populated for both small and large sizes)."""
+    for f in fittings_by_size:
+        try:
+            if float(str(f.size_inch).strip().rstrip('"')) > size_threshold and str(getattr(f, attr, "") or "").strip():
+                return True
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return False
+
+
 def _split_index_at_size(pipe_data, max_size_inches: float) -> int:
     """Return the index of the first pipe_data entry whose size exceeds
     max_size_inches. If all sizes are ≤ max, returns len(pipe_data).
@@ -483,24 +502,43 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
 
-    # Fitting properties (MOC, Elbow, Tee, etc.) — with auto-merge
+    # Fitting properties (MOC, Elbow, Tee, etc.) — with auto-merge.
+    # Plug behavior: if the class populates plug_standard for sizes > 1.5"
+    # (e.g. Copper A40 with Brazed/BW split), render Plug as a full merged
+    # row. If Plug is populated only for small-bore (CS classes where the
+    # hex-head threaded plug is small-bore only), render as a range row
+    # spanning 0.5"-1.5" only (old behavior preserved).
+    # Extra rows (Coupl, Union, Sockolet, Nipple, Swage) render only if at
+    # least one size has a non-empty value — classes that don't populate
+    # these (most of the catalog) skip the rows entirely.
     fitting_props = [
         ("MOC", lambda f: f.material_spec),
         ("Elbow", lambda f: f.elbow_standard),
         ("Tee", lambda f: f.tee_standard),
         ("Red.", lambda f: f.reducer_standard),
         ("Cap", lambda f: f.cap_standard),
+        ("Coupl", lambda f: f.coupling_standard),
         ("Plug", lambda f: f.plug_standard),
+        ("Union", lambda f: f.union_standard),
+        ("Sockolet", lambda f: f.sockolet_standard),
         ("Weldolet", lambda f: f.weldolet_spec),
+        ("Nipple", lambda f: f.nipple_standard),
+        ("Swage", lambda f: f.swage_standard),
     ]
+    # Rows that render only when at least one size carries a value:
+    _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage"}
 
     fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
-    plug_start_col = pipe_col_start  # 0.5" column
+    plug_start_col = pipe_col_start
     plug_end_col = _size_column_index(fitting_sizes, "1.5", pipe_col_start=pipe_col_start)
+    plug_spans_large = _has_value_above_size(pms.fittings_by_size, "plug_standard", 1.5)
+
     for prop_idx, (label, getter) in enumerate(fitting_props):
         fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
         prop_values = [getter(f) or "" for f in pms.fittings_by_size]
-        if label == "Plug":
+        if label in _OPTIONAL_ROWS and not _any_nonempty(prop_values):
+            continue  # skip row entirely — nothing to show
+        if label == "Plug" and not plug_spans_large:
             plug_value = next((v for v in prop_values if v), "")
             _write_range_value_row(ws, row, label, plug_value,
                                    start_col=plug_start_col, end_col=plug_end_col,
@@ -512,8 +550,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     row += 1
 
-    # Extra Fittings section intentionally removed — the spec document doesn't
-    # include it and it added no value. pipe_sizes still needed below.
     pipe_sizes = [p.size_inch for p in pms.pipe_data]
 
     # === FLANGE DATA ===
@@ -784,24 +820,34 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
                            total_cols=total_cols, fill=DATA_FILL)
     row += 1
 
-    # Fitting properties (MOC, Elbow, Tee, etc.) — with auto-merge
+    # Fitting properties — see first renderer for behavior explanation.
     fitting_props = [
         ("MOC", lambda f: f.material_spec),
         ("Elbow", lambda f: f.elbow_standard),
         ("Tee", lambda f: f.tee_standard),
         ("Red.", lambda f: f.reducer_standard),
         ("Cap", lambda f: f.cap_standard),
+        ("Coupl", lambda f: f.coupling_standard),
         ("Plug", lambda f: f.plug_standard),
+        ("Union", lambda f: f.union_standard),
+        ("Sockolet", lambda f: f.sockolet_standard),
         ("Weldolet", lambda f: f.weldolet_spec),
+        ("Nipple", lambda f: f.nipple_standard),
+        ("Swage", lambda f: f.swage_standard),
     ]
+    _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage"}
 
     fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
-    plug_start_col = pipe_col_start  # 0.5" column
+    plug_start_col = pipe_col_start
     plug_end_col = _size_column_index(fitting_sizes, "1.5", pipe_col_start=pipe_col_start)
+    plug_spans_large = _has_value_above_size(pms.fittings_by_size, "plug_standard", 1.5)
+
     for prop_idx, (label, getter) in enumerate(fitting_props):
         fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
         prop_values = [getter(f) or "" for f in pms.fittings_by_size]
-        if label == "Plug":
+        if label in _OPTIONAL_ROWS and not _any_nonempty(prop_values):
+            continue
+        if label == "Plug" and not plug_spans_large:
             plug_value = next((v for v in prop_values if v), "")
             _write_range_value_row(ws, row, label, plug_value,
                                    start_col=plug_start_col, end_col=plug_end_col,
@@ -812,8 +858,6 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         row += 1
     row += 1
 
-    # Extra Fittings section intentionally removed — not in the spec document.
-    # pipe_sizes is still needed for the remaining size-based sections below.
     pipe_sizes = [p.size_inch for p in pms.pipe_data]
 
     # Flange

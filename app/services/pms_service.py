@@ -125,6 +125,11 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             cap_standard=fb.get("cap_standard", ""),
             plug_standard=fb.get("plug_standard", ""),
             weldolet_spec=fb.get("weldolet_spec", ""),
+            coupling_standard=fb.get("coupling_standard", ""),
+            union_standard=fb.get("union_standard", ""),
+            sockolet_standard=fb.get("sockolet_standard", ""),
+            nipple_standard=fb.get("nipple_standard", ""),
+            swage_standard=fb.get("swage_standard", ""),
         ))
 
     # Extra Fittings intentionally emitted as empty — the section was removed

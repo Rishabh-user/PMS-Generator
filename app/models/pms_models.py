@@ -51,6 +51,15 @@ class FittingBySize(BaseModel):
     cap_standard: str = Field(default="", description="Cap standard code")
     plug_standard: str = Field(default="", description="Plug standard code")
     weldolet_spec: str = Field(default="", description="Weldolet specification")
+    # Optional "extra" fitting rows — populated for classes like Copper (A40)
+    # and CuNi (A30) where the spec sheet carries a value on each row; empty
+    # for most other classes (Excel generator auto-hides rows where ALL sizes
+    # are empty, so this has no visual effect on classes that don't need it).
+    coupling_standard: str = Field(default="", description="Coupling standard code")
+    union_standard: str = Field(default="", description="Union standard code")
+    sockolet_standard: str = Field(default="", description="Sockolet standard code")
+    nipple_standard: str = Field(default="", description="Nipple specification")
+    swage_standard: str = Field(default="", description="Swage specification")
 
 
 class ExtraFittings(BaseModel):
