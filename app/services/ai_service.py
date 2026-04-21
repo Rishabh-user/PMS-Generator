@@ -149,19 +149,21 @@ CS 2-series NACE (heavy-wall, 6mm CA — A2N–G2N) and LTCS 2LN-series (A2LN–
   F2N  / F2LN  (1500#): starts at 3" | 3-6"→XXS | 8-10"→"-" | 12-24"→160
   G2N  / G2LN  (2500#): starts at 1" | 1-24"→"-" (all calc WT)
 
-SS 316L 10-series (use "S" suffix for B36.19M schedules):
+SS 316L 10-series — A10/A10N are pure B36.19M; B10/D10/E10/F10/G10 are
+MIXED ("ASME B 36.19M / B 36.10M" pipe_code — seamless small-bore uses
+B36.19M S-schedules, welded large-bore uses B36.10M non-S schedules):
   A10  (150#, 17 sizes 0.5"-24"): 0.5-0.75"→160 | 1-2"→80S | 3-20"→40S | 22"→STD | 24"→40S
-  A10N (150#, 17 sizes 0.5"-24"): same as A10  (N variant has identical schedule per Excel)
-  B10  (300#): 0.5-1.5"→160 | 2-14"→40S | 16-20"→80S | 22"→60 | 24"→30 | 30"→"-"
-  B10N (300#): same as B10
-  D10  (600#): 0.5"→XXS | 0.75-1.5"→160 | 2-10"→80S | 12-24"→80
-  D10N (600#): same as D10
-  E10  (900#): 0.5"→XXS | 0.75-2"→160 | 3"→80S | 4-6"→120 | 8"→100
-  E10N (900#): same as E10
-  F10  (1500#): 0.5-1.5"→XXS | 2-8"→160
-  F10N (1500#): same as F10
-  G10  (2500#): 0.5-2"→XXS | 3-12"→"-" (calc WT)
-  G10N (2500#): same as G10
+  A10N (150#, 17 sizes 0.5"-24"): same as A10
+  B10  (300#, 17 sizes 0.5"-24"): 0.5-1.5"→160 | 2"→80S | 3-18"→40S | 20"→80S | 22"→XS | 24"→80S
+  B10N (300#, 17 sizes 0.5"-24"): same as B10
+  D10  (600#, 17 sizes 0.5"-24"): 0.5-1.5"→160 | 2-10"→80S | 12-20"→60 | 22"→"-" (calc WT) | 24"→60
+  D10N (600#, 17 sizes 0.5"-24"): same as D10
+  E10  (900#, 17 sizes 0.5"-24"): 0.5-1.5"→160 | 2-6"→80S | 8-24"→100
+  E10N (900#, 17 sizes 0.5"-24"): same as E10
+  F10  (1500#, 17 sizes 0.5"-24"): 0.5-24"→160 (uniform SCH 160 across ALL sizes)
+  F10N (1500#, 17 sizes 0.5"-24"): same as F10
+  G10  (2500#, 11 sizes 0.5"-12" ONLY — do NOT emit 14"+): 0.5-3"→XXS | 4-12"→"-" (calc WT)
+  G10N (2500#, 11 sizes 0.5"-12" ONLY): same as G10
 
 DSS 20-series (UNS S31803, use "S" suffix):
   A20  (150#): 0.5-2"→80S | 3-24"→10S | 26-28"→10 | 30"→10S | 32"→10
@@ -177,17 +179,20 @@ DSS 20-series (UNS S31803, use "S" suffix):
   G20  (2500#): 0.5-1"→80S | 1.5-10"→160 | 12"→"-" (calc WT) | 14"→120
   G20N (2500#): same as G20
 
-SDSS 25-series (UNS S32750, use "S" suffix):
-  A25  (150#): 0.5-2"→80S | 3-24"→10S | 26-28"→10 | 30"→10S | 32"→10
-  A25N (150#): same as A25
-  B25  (300#): 0.5-2"→80S | 3-12"→10S | 14-16"→10 | 18-22"→10 | 24"→40S | 26-32"→STD
-  D25  (600#): 0.5-2"→80S | 3-6"→40S | 8-10"→20 | 12-18"→40S/80S | 20"→80S | 22"→XS | 24"→30
-  E25  (900#): 0.5-2"→80S | 3-10"→40S | 12-14"→80S | 16-24"→60
-  E25N (900#): same as E25
-  F25  (1500#): 0.5-2"→80S | 3"→40S | 4-8"→80S | 10-14"→80 | 16-24"→100
-  F25N (1500#): same as F25
-  G25  (2500#): 0.5-2"→80S | 3"→160 | 4"→120 | 6"→160 | 8-20"→140 | 22-24"→160
-  G25N (2500#): same as G25
+SDSS 25-series (UNS S32750) — A25/A25N pure B36.19M; B25/D25/E25/F25 +
+their N variants are MIXED ("ASME B 36.19M / B 36.10M"); G25/G25N pure B36.10M:
+  A25  (150#, 21 sizes 0.5"-32"): 0.5-2"→80S | 3-24"→10S | 26-28"→10 | 30"→10S | 32"→10
+  A25N (150#, 21 sizes 0.5"-32"): same as A25
+  B25  (300#, 21 sizes 0.5"-32"): 0.5-2"→80S | 3-16"→10S | 18-22"→10 | 24"→40S | 26-32"→STD
+  B25N (300#, 21 sizes 0.5"-32"): same as B25
+  D25  (600#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3-6"→40S | 8-10"→20 | 12-16"→40S | 18-20"→80S | 22"→XS | 24"→30
+  D25N (600#, 17 sizes 0.5"-24"): same as D25
+  E25  (900#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3-10"→40S | 12-14"→80S | 16-24"→60
+  E25N (900#, 17 sizes 0.5"-24"): same as E25
+  F25  (1500#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3"→40S | 4-8"→80S | 10-14"→80 | 16-24"→100
+  F25N (1500#, 17 sizes 0.5"-24"): same as F25
+  G25  (2500#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3"→160 | 4"→120 | 6"→160 | 8-20"→140 | 22-24"→160
+  G25N (2500#, 17 sizes 0.5"-24"): same as G25
 
 GALV / Epoxy-coated classes:
   A3 (150# GALV screwed):           0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD
@@ -564,7 +569,7 @@ Pipe Code (exact string per spec sheet row "Code"):
   Mixed seamless-small-bore + welded-large-bore variants — use BOTH codes separated by " / ":
     B10, B10N, D10, D10N, E10, E10N, F10, F10N, G10, G10N:    "ASME B 36.19M / B 36.10M"
     B20, B20N, D20, D20N, E20, E20N, F20, F20N:               "ASME B 36.19M / B 36.10M"
-    B25, B25N, D25, E25, E25N, F25, F25N:                     "ASME B 36.19M / B 36.10M"
+    B25, B25N, D25, D25N, E25, E25N, F25, F25N:               "ASME B 36.19M / B 36.10M"
   G20, G20N, G25, G25N, G2N (2500# duplex/SDSS variants with welded pipe only): "ASME B 36.10M"
   CuNi (A30):                                                 "EEMUA 234 20 BAR"
   Copper (A40):                                               "ASTM B42 (Regular)"
