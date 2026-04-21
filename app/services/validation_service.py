@@ -28,8 +28,6 @@ from app.utils.engineering_constants import (
     MILL_TOLERANCE_FRACTION,
     get_allowable_stress,
 )
-from app.utils.pipe_data import get_wall_thickness
-
 logger = logging.getLogger(__name__)
 
 
@@ -144,62 +142,9 @@ def _check_nace_consistency(pms: PMSResponse) -> list[ValidationFinding]:
     )]
 
 
-def _check_wt_vs_b3610m(pms: PMSResponse) -> list[ValidationFinding]:
-    """Verify each pipe row's reported WT matches the ASME B36.10M/B36.19M
-    lookup for its (OD, schedule) pair."""
-    findings: list[ValidationFinding] = []
-    for p in pms.pipe_data:
-        sch = (p.schedule or "").strip()
-        if not sch or sch in ("-", "–", "—"):
-            findings.append(ValidationFinding(
-                kind="warning",
-                rule="WT_LOOKUP_B3610M",
-                title=f"{p.size_inch}\": schedule is '-' (calculated wall)",
-                detail=(
-                    f"No ASME lookup available; WT {p.wall_thickness_mm} mm "
-                    "verified by the B31.3 Eq. 3a pressure-adequacy check."
-                ),
-                size_inch=p.size_inch,
-            ))
-            continue
-
-        std_wt = get_wall_thickness(p.od_mm, sch)
-        if std_wt is None:
-            findings.append(ValidationFinding(
-                kind="warning",
-                rule="WT_LOOKUP_B3610M",
-                title=f"{p.size_inch}\": (OD {p.od_mm}, {sch}) not in B36.10M/19M",
-                detail=(
-                    "Non-standard (OD, schedule) pair — could be a typo or a "
-                    "non-steel pipe (CuNi / GRE / CPVC / tubing)."
-                ),
-                size_inch=p.size_inch,
-            ))
-            continue
-
-        if abs(std_wt - p.wall_thickness_mm) > 0.05:
-            findings.append(ValidationFinding(
-                kind="error",
-                rule="WT_LOOKUP_B3610M",
-                title=(
-                    f"{p.size_inch}\": WT {p.wall_thickness_mm} mm != "
-                    f"ASME B36.10M/19M {std_wt} mm for {sch}"
-                ),
-                detail=(
-                    f"Schedule {sch} @ OD {p.od_mm} mm must be exactly {std_wt} mm "
-                    f"per ASME B36.10M/B36.19M. PMS reports {p.wall_thickness_mm} mm."
-                ),
-                size_inch=p.size_inch,
-            ))
-        else:
-            findings.append(ValidationFinding(
-                kind="ok",
-                rule="WT_LOOKUP_B3610M",
-                title=f"{p.size_inch}\": WT matches ASME B36.10M/19M for {sch}",
-                detail=f"OD {p.od_mm} mm × {sch} = {std_wt} mm (matches PMS).",
-                size_inch=p.size_inch,
-            ))
-    return findings
+# WT vs B36.10M/19M table check removed — we no longer store the standard
+# WT lookup table. The pressure-adequacy check below (ASME B31.3 Eq. 3a) is
+# the remaining engineering validator for each pipe row.
 
 
 def _parse_ca_mm(ca: str) -> float:
@@ -511,7 +456,6 @@ def validate(pms: PMSResponse) -> ValidationReport:
     findings.extend(_check_nace_consistency(pms))
     findings.extend(_check_mill_tolerance(pms))
     findings.extend(_check_flange_rating(pms))
-    findings.extend(_check_wt_vs_b3610m(pms))
     findings.extend(_check_wt_pressure_adequacy(pms))
     findings.extend(_check_valve_code_prefix(pms))
 

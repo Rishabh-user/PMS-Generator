@@ -245,6 +245,83 @@ def _size_column_index(pipe_sizes: list, target_size: str, pipe_col_start: int =
     return pipe_col_start + default_offset
 
 
+# ASME B 16.48 project size boundary for Spectacle Blinds.
+# Sizes ≤ this value use "ASME B 16.48"; sizes > this use "Spacer and blind...".
+# Previously split was index-based (len // 2), which silently shifted the
+# boundary when the class's size count changed. Using a size cutoff keeps
+# the boundary stable. Per verified Excel spec:
+#   SS 316L 10-series (A10, A10N, etc.): boundary = 12" (Spacer from 14")
+#   All other classes:                   boundary = 14" (Spacer from 16")
+B1648_MAX_SIZE_DEFAULT = 14.0
+B1648_MAX_SIZE_SS_10SERIES = 12.0
+
+
+def _b1648_max_size_for(pms) -> float:
+    """Return the project-specific B16.48 size cutoff for the class.
+
+    SS 316L 10-series (A10 / A10N, and by extension B10/D10/E10/F10/G10 + N
+    variants): cutoff = 12" — Spacer and blind starts at 14".
+    Every other class: cutoff = 14" — Spacer and blind starts at 16".
+    """
+    cls = (getattr(pms, "piping_class", "") or "").upper().strip()
+    # Match "A10", "A10N", "B10", "B10N", "D10", ..., "G10N" (10-series SS 316L)
+    # Shape: [A|B|D|E|F|G] + "10" + ("" | "N")
+    if len(cls) >= 3 and cls[0] in "ABDEFG" and cls[1:3] == "10":
+        tail = cls[3:]
+        if tail in ("", "N"):
+            return B1648_MAX_SIZE_SS_10SERIES
+    return B1648_MAX_SIZE_DEFAULT
+
+
+def _split_index_at_size(pipe_data, max_size_inches: float) -> int:
+    """Return the index of the first pipe_data entry whose size exceeds
+    max_size_inches. If all sizes are ≤ max, returns len(pipe_data).
+    If all sizes are > max, returns 0."""
+    for i, p in enumerate(pipe_data):
+        try:
+            size_val = float(str(p.size_inch).strip().rstrip('"'))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if size_val > max_size_inches:
+            return i
+    return len(pipe_data)
+
+
+def _render_spectacle_blind_row(
+    ws, row: int, pms, pipe_col_start: int, total_cols: int,
+) -> None:
+    """Render the Spectacle row with a size-based split at 14" (B1648_MAX_SIZE_INCHES).
+    Handles three cases: all small / all large / mixed."""
+    for c in range(1, total_cols + 1):
+        _apply_style(ws, row, c, font=DATA_FONT, fill=ALT_FILL, alignment=CENTER)
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
+
+    standard = pms.spectacle_blind.standard or ""
+    standard_large = pms.spectacle_blind.standard_large or ""
+    n = len(pms.pipe_data)
+    if n == 0:
+        return
+
+    cutoff = _b1648_max_size_for(pms)
+    split = _split_index_at_size(pms.pipe_data, cutoff) if standard_large else n
+
+    if split == 0 and standard_large:
+        # All sizes > 14": only standard_large applies
+        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=total_cols)
+        ws.cell(row=row, column=pipe_col_start).value = standard_large
+    elif split >= n or not standard_large:
+        # All sizes ≤ 14" (or no large-standard defined)
+        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=total_cols)
+        ws.cell(row=row, column=pipe_col_start).value = standard
+    else:
+        left_end = pipe_col_start + split - 1
+        right_start = pipe_col_start + split
+        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=left_end)
+        ws.cell(row=row, column=pipe_col_start).value = standard
+        ws.merge_cells(start_row=row, start_column=right_start, end_row=row, end_column=total_cols)
+        ws.cell(row=row, column=right_start).value = standard_large
+
+
 def _write_label_value_row(ws, row: int, label: str, value: str, col_start: int = 1, val_col: int = 2, col_end: int = 20):
     """Write a label-value pair row.
 
@@ -482,21 +559,8 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     row += 1
     _write_label_value_row(ws, row, "MOC", pms.spectacle_blind.material_spec, col_end=total_cols)
     row += 1
-    # Spectacle row — col 1 = label, pipe size columns split for small vs large ranges
-    for c in range(1, total_cols + 1):
-        _apply_style(ws, row, c, font=DATA_FONT, fill=ALT_FILL, alignment=CENTER)
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
-    if pms.spectacle_blind.standard_large and len(pms.pipe_data) > 0:
-        mid = len(pms.pipe_data) // 2
-        left_end = pipe_col_start + mid - 1
-        right_start = pipe_col_start + mid
-        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=left_end)
-        ws.cell(row=row, column=pipe_col_start).value = pms.spectacle_blind.standard
-        ws.merge_cells(start_row=row, start_column=right_start, end_row=row, end_column=total_cols)
-        ws.cell(row=row, column=right_start).value = pms.spectacle_blind.standard_large
-    else:
-        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=total_cols)
-        ws.cell(row=row, column=pipe_col_start).value = pms.spectacle_blind.standard
+    # Spectacle row — split at 14" (ASME B 16.48 project cutoff)
+    _render_spectacle_blind_row(ws, row, pms, pipe_col_start, total_cols)
     ws.row_dimensions[row].height = 25
     row += 2
 
@@ -790,21 +854,8 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     row += 1
     _write_label_value_row(ws, row, "MOC", pms.spectacle_blind.material_spec, col_end=total_cols)
     row += 1
-    # Spectacle row — col 1 = label, pipe size columns split for small vs large ranges
-    for c in range(1, total_cols + 1):
-        _apply_style(ws, row, c, font=DATA_FONT, fill=ALT_FILL, alignment=CENTER)
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Spectacle"
-    if pms.spectacle_blind.standard_large and len(pms.pipe_data) > 0:
-        mid = len(pms.pipe_data) // 2
-        left_end = pipe_col_start + mid - 1
-        right_start = pipe_col_start + mid
-        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=left_end)
-        ws.cell(row=row, column=pipe_col_start).value = pms.spectacle_blind.standard
-        ws.merge_cells(start_row=row, start_column=right_start, end_row=row, end_column=total_cols)
-        ws.cell(row=row, column=right_start).value = pms.spectacle_blind.standard_large
-    else:
-        ws.merge_cells(start_row=row, start_column=pipe_col_start, end_row=row, end_column=total_cols)
-        ws.cell(row=row, column=pipe_col_start).value = pms.spectacle_blind.standard
+    # Spectacle row — split at 14" (ASME B 16.48 project cutoff)
+    _render_spectacle_blind_row(ws, row, pms, pipe_col_start, total_cols)
     ws.row_dimensions[row].height = 25
     row += 2
 

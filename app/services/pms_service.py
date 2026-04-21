@@ -26,7 +26,7 @@ from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
 from app.services import db_service
 from app.utils.pipe_data import correct_pipe_data
-from app.utils.engineering_constants import HYDROTEST_FACTOR
+from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PERCENT
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,11 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         class_type=class_type,
         material=req.material,
         corrosion_allowance=req.corrosion_allowance,
-        mill_tolerance=ai_data.get("mill_tolerance", ""),
+        # Mill tolerance is a fixed ASME B36.10M standard (12.5% for seamless
+        # pipe) — set deterministically from engineering_constants so it never
+        # depends on whether the AI remembered to emit it, and so old cached
+        # entries get the value filled in on the next regenerate.
+        mill_tolerance=f"{MILL_TOLERANCE_PERCENT}%",
         design_code=ai_data.get("design_code", ""),
         service=req.service,
         branch_chart=ai_data.get("branch_chart", ""),
@@ -261,26 +265,20 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             "Try regenerating, or contact support if the issue persists."
         )
 
-    # Correct OD and wall thickness values — material-aware
-    # Steel pipes use ASME B36.10M/19M; CuNi uses EEMUA 234; GRE/CPVC/Tubing preserve AI values
-    # For '-' schedule sizes, compute WT per ASME B31.3 Eq. 3a using the class's P-T envelope.
+    # Correct OD and wall thickness values using ASME B36.10M / B36.19M
+    # standard tables. The AI picks the Schedule per class rules in the
+    # prompt; correct_pipe_data() overwrites AI's (often hallucinated) WT
+    # and OD with the authoritative standard values. Non-ASME pipe codes
+    # (CuNi EEMUA 234, Copper ASTM B42, GRE, CPVC, Tubing) and "-" schedule
+    # rows (calculated WT) are left untouched — the AI's value stands.
     if "pipe_data" in ai_data:
-        material_for_correction = req.material or entry.get("material", "")
-        pt_data = entry.get("pressure_temperature", {}) or {}
-        pressures = pt_data.get("pressures") or []
-        temperatures = pt_data.get("temperatures") or []
-        design_pressure = max(pressures) if pressures else None
-        design_temp = max(temperatures) if temperatures else None
         correct_pipe_data(
             ai_data["pipe_data"],
-            material=material_for_correction,
-            design_pressure_barg=design_pressure,
-            design_temp_c=design_temp,
-            corrosion_allowance=req.corrosion_allowance,
+            pipe_code=ai_data.get("pipe_code", ""),
         )
         logger.info(
-            "Corrected pipe_data (material='%s', P=%s barg, T=%s°C) using OD/WT tables + B31.3 calc for '-' schedules",
-            material_for_correction, design_pressure, design_temp,
+            "Corrected pipe_data for %s (pipe_code='%s') — WT/OD replaced from ASME tables where applicable",
+            req.piping_class, ai_data.get("pipe_code", ""),
         )
 
     # Merge P-T from JSON + AI-generated data

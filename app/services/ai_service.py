@@ -101,10 +101,13 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
   E-series 900#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
   F-series 1500#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
   G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14)
-  GALV (3/4/5/6): 0.5" to 24" (17 sizes)
-  CuNi (30): 0.5" to 36" (22 sizes — per EEMUA 234 size range)
-  GRE (40/41/42): 0.75" to 24" (14 sizes)
-  Tubing (T80/T90): Single size 0.5" only
+  GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 24" (17 sizes)
+  CuNi (A30): 0.5" to 30" (20 sizes — per EEMUA 234 size range)
+  Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
+  Titanium (A70): 0.5" to 6" ONLY (8 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6) — do NOT emit 8"+
+  GRE (A50/A51/A52): A50/A52 start at 1" (19 sizes 1"-40"); A51 = 1"-6" only (6 sizes)
+  CPVC (A60): 0.5" to 8" (10 sizes: 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 6, 8)
+  Tubing (T80/T90): Short size range per rating — T*A = 0.5"-1.5", T*B/C similar
 
 Standard NPS sequence: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36
 
@@ -121,50 +124,34 @@ unusual. These values reflect specific project engineering choices
 incorporating corrosion allowance, material limits, and fabrication
 standards.
 
-CS 1-series (A1/B1/D1/E1/F1/G1 and NACE variants):
-  A1  (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD | 30-36"→XS
-  A1N (150#):  0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20"→XS | 22"→30 | 24"→XS | 30"→30
-  B1  (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
-  B1N (300#):  0.5-1.5"→XXS | 2-3"→160 | 4"→120 | 6-8"→80 | 10-24"→60 | 26-30"→"-"
-  D1  (600#):  0.5-1.5"→XXS | 2"→160 | 3-24"→80
-  D1N (600#):  0.5-0.75"→"-" | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-24"→100
-  E1  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
-  E1N (900#):  0.5-0.75"→"-" | 1-4"→XXS | 6"→160 | 8-16"→140 | 18-24"→120
-  F1  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20-24"→140
-  F1N (1500#): 0.5-2"→"-" | 3-6"→XXS | 8-10"→"-" | 12-24"→160
-  G1  (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-24"→"-" (calc wall thickness)
-  G1N (2500#): 0.5-12"→"-" (all calc wall thickness)
+CS 1-series (A1/B1/D1/E1/F1/G1 and NACE variants — N/non-N identical schedule per Excel):
+  A1  / A1N  (150#):  0.5-1.5"→160 | 2-6"→80 | 8-28"→STD | 30-36"→XS
+  B1  / B1N  (300#):  0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
+  D1  / D1N  (600#):  0.5-2"→160 | 3-24"→80
+  E1  / E1N  (900#):  0.5-3"→160 | 4-24"→120
+  F1  / F1N  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20"→140 | 22"→160 | 24"→140
+  G1  / G1N  (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-24"→"-" (calc WT)
 
-LTCS 1L-series (A1L/B1L/D1L/E1L/F1L) and LTCS NACE 1LN-series:
-  A1L  (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD | 30"→XS
-  A1LN (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD | 30"→XS
-  B1L  (300#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→40 | 30"→"-"
-  B1LN (300#):  same as B1L
-  D1LN (600#):  0.5-2"→160 | 3-20"→80
-  D7LN (600#):  0.5-0.75"→"-" | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-20"→100
-  E1LN (900#):  0.5"→XXS | 0.75-3"→160 | 4-16"→120
-  E7LN (900#):  0.5-0.75"→"-" | 1-4"→XXS | 6"→160 | 8-16"→140
-  F1LN (1500#): 0.5-6"→XXS | 8-16"→"-" (calc WT)
-  F7LN (1500#): 0.5-16"→"-" (calc WT)
-  G1LN (2500#): 0.5-1"→XXS | 1.5-12"→"-" | 14-18"→"-"
-  G7LN (2500#): 0.5-12"→"-" | 14-18"→"-"
+LTCS 1L-series and 1LN-series (A1L–G1L, A1LN–G1LN — L/LN identical schedule per Excel):
+  A1L  / A1LN  (150#):  0.5-1.5"→160 | 2-28"→XS | 30"→30
+  B1L  / B1LN  (300#):  0.5-1.5"→160 | 2-6"→XS | 8-20"→40 | 22"→"-" | 24"→40
+  D1L  / D1LN  (600#):  0.5-2"→160 | 3-8"→XS | 10-24"→80
+  E1L  / E1LN  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
+  F1L  / F1LN  (1500#): 0.5-8"→XXS | 10-24"→"-" (calc WT)
+  G1L  / G1LN  (2500#): 0.5-1"→XXS | 1.5-24"→"-" (calc WT)
 
-CS 2-series (heavy-wall — A2N/A2LN/B2N/D2N/E2N/F2N/G2N):
-  A2   (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-16"→STD
-  A2N  (150#):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-28"→STD | 30"→XS
-  B2   (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-16"→40
-  B2N  (300#):  0.5-0.75"→XXS | 1-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→60 | 24"→40
-  D2   (600#):  0.5-1.5"→XXS | 2"→160 | 3-8"→80
-  D2N  (600#):  0.75-1.5"→XXS | 2"→160 | 3-24"→80
-  D4   (600#):  0.5-1.5"→XXS | 2"→160 | 3-24"→80
-  E2   (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-8"→120
-  E2N  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
-  F2N  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20-24"→140
-  G2N  (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-14"→"-" (calc WT)
+CS 2-series NACE (heavy-wall, 6mm CA — A2N–G2N) and LTCS 2LN-series (A2LN–G2LN):
+  A2N  (150#):  0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20-24"→XS
+  A2LN (150#):  0.5-1.5"→XXS | 2"→160 | 3-28"→XS | 30"→30
+  B2N  / B2LN  (300#):  0.5-1.5"→XXS | 2-3"→160 | 4"→120 | 6-10"→XS | 12-24"→60
+  D2N  / D2LN  (600#):  0.5-0.75"→"-" | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-24"→100
+  E2N  / E2LN  (900#):  starts at 1" | 1-4"→XXS | 6"→160 | 8-16"→140 | 18-24"→120
+  F2N  / F2LN  (1500#): starts at 3" | 3-6"→XXS | 8-10"→"-" | 12-24"→160
+  G2N  / G2LN  (2500#): starts at 1" | 1-24"→"-" (all calc WT)
 
 SS 316L 10-series (use "S" suffix for B36.19M schedules):
-  A10  (150#): 0.5-1.5"→80S | 2-8"→40S | 10-14"→10S | 16-20"→40S | 22"→STD | 24"→40S | 30"→STD
-  A10N (150#): same as A10
+  A10  (150#, 17 sizes 0.5"-24"): 0.5-0.75"→160 | 1-2"→80S | 3-20"→40S | 22"→STD | 24"→40S
+  A10N (150#, 17 sizes 0.5"-24"): same as A10  (N variant has identical schedule per Excel)
   B10  (300#): 0.5-1.5"→160 | 2-14"→40S | 16-20"→80S | 22"→60 | 24"→30 | 30"→"-"
   B10N (300#): same as B10
   D10  (600#): 0.5"→XXS | 0.75-1.5"→160 | 2-10"→80S | 12-24"→80
@@ -210,6 +197,9 @@ GALV / Epoxy-coated classes:
                                     0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20-24"→XS
   B4 (300# GALV):                   0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
   D4 (600# GALV):                   0.5-2"→160 | 3-24"→80
+
+Titanium (A70, 150# — pipe_code = "ASME B 36.10M" per spec):
+  A70 (150#): 0.5-3"→40 | 4-6"→10   (size range 0.5"-6" ONLY — do NOT emit 8"+)
 
 CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs (from Pipe Class Sheet A30):
   A30: No standard schedule — uses EEMUA 234 wall thickness tables
@@ -295,8 +285,13 @@ GALV (3/4/5/6,B4,D4):
 CuNi (30):
   Annealed tube 90-10 CU-NI ALLOY UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102
 
-Copper (31/40):
-  ASTM B 88 Type K or ASTM B 75
+Copper (A40):
+  Pipe MOC: "ASTM B 42 UNS C12200"
+  Pipe type split by size:
+    0.5"-1.5" → "Seamless Hard Drawn H80 (Regular)"
+    2"-4"     → "Seamless light Drawn H55 (Regular)"
+  Ends: "BE" (butt end — the spec says BE even though soldered ends are common)
+  Size range is LIMITED: 0.5" through 4" ONLY (7 sizes total). No 6"+ sizes.
 
 GRE (50/51/52):
   Manufacturer standard per GRE system rating
@@ -314,7 +309,8 @@ Tubing:
 === FITTINGS RULES ===
 TYPE split mirrors pipe type: "Butt Weld (SCH to match pipe), Seamless" for small sizes, "Butt Weld (SCH to match pipe), Welded" for large sizes.
 GALV screwed classes (3/4): Small sizes = "Screwed (SCRD), #3000", larger = "Butt Weld (SCH to match pipe), Seamless/Welded"
-CuNi (30): Small sizes = "SW" (Socket Weld), larger = "Butt Weld (SCH to match pipe), Seamless"
+CuNi (A30): Small sizes = "SW" (Socket Weld), larger = "Butt Weld (SCH to match pipe), Seamless"
+Copper (A40): Small sizes (0.5-1.5) = "Brazed Fittings (SCH to match pipe), Seamless", larger (2-4) = "Butt Weld (SCH to match pipe), Seamless"
 GRE/CPVC: Manufacturer standard (adhesive bonded / laminated)
 Tubing (T80/T90): "Compression Fitting" — body AISI 316, ferrules and nuts in AISI 316
 
@@ -327,7 +323,9 @@ FITTINGS MOC BY MATERIAL:
   DSS (20-series): Seamless=ASTM A 815 Gr.WP-S UNS S31803, Welded=ASTM A 815 Gr.WP-WX UNS S31803
   SDSS (25-series): Seamless=ASTM A 815 Gr.WP-S UNS S32750, Welded=ASTM A 815 Gr.WP-WX UNS S32750
   GALV (3/4/5/6,B4,D4): Screwed=ASTM A 105N-Galvanized, BW=ASTM A 234 Gr. WPB, Seamless Galvanized
-  CuNi (30): 90-10 Cu-Ni per EEMUA 234
+  CuNi (A30): 90-10 Cu-Ni per EEMUA 234
+  Copper (A40): Small sizes (0.5-1.5) = "ASTM B 124 UNS C11000",
+                Large sizes (2-4)     = "ASTM B 42 UNS C12200"
   Titanium (70): ASTM B 363 Gr. 2
 
 STANDARDS (apply to ALL material families unless noted):
@@ -336,6 +334,13 @@ STANDARDS (apply to ALL material families unless noted):
   Weldolet: MSS SP 97, [flange MOC] (e.g., "MSS SP 97, ASTM A 105N" for CS)
   GALV screwed classes: Elbow/Tee/Red/Cap = ASME B 16.11
   CuNi classes: All fittings per EEMUA 234; additional: Coupling, Union, Sockolet, Nipple, Swage per EEMUA 234
+  Copper (A40):
+    elbow_standard  = "ASME B 16.22"   (Wrought Copper Solder-Joint fittings)
+    tee_standard    = "ASME B 16.22"
+    reducer_standard = "ASME B 16.22"
+    cap_standard    = "ASME B 16.22"
+    plug_standard   = "ASTM B 75"      (brass/copper pipe plug material spec)
+    weldolet_spec   = "Not Applicable" (copper pipe uses brazed olets if any)
   GRE classes: All per manufacturer/GRE system standard
 
 fittings_by_size: One entry per pipe size. Each entry includes size_inch, type (Seamless/Welded), fitting_type, material_spec, and all standards. material_spec may differ between seamless and welded sizes.
@@ -349,16 +354,23 @@ MOC by material family:
   DSS (20-series): ASTM A 182 Gr. F51
   SDSS (25-series): ASTM A 182 Gr. F53 (or Gr. F55 in some variants)
   GALV (3/4/5/6,B4,D4): ASTM A 105N Galvanized (screwed flanges for small, WN for large)
-  CuNi (30): 90-10Cu-Ni per EEMUA 234 20 BAR; Blind Flange = ASTM A 105N FF with 3mm 90-10 CuNi weld deposit
+  CuNi (A30): 90-10Cu-Ni per EEMUA 234 20 BAR; Blind Flange = ASTM A 105N FF with 3mm 90-10 CuNi weld deposit
+  Copper (A40): "ASTM B61 UNS C92200" (bronze cast flange per ASME B 16.24);
+                Blind Flange MOC = "ASTM A 105N RF With 3mm Copper over lay"
+  CPVC  (A60): manufacturer CPVC flange; face FF
+  GRE   (A50/51/52): manufacturer (Bondstrand / equivalent) flange; face FF
 
-FACE by rating:
+FACE by rating / material:
   150#: "150# RF, Serrated Finish"
   300#: "300# RF, Serrated Finish"
   600#: "600# RF, Serrated Finish"
   900# (E-series): Small bore (0.5-1.5") = "1500#, RTJ", Larger sizes (2"+) = "900#, RTJ"
   1500# (F-series): "1500#, RTJ"
   2500# (G-series): "2500#, RTJ"
-  CuNi EEMUA: "EEMUA 20 bar, FF" (Flat Face)
+  CuNi (A30) EEMUA: "EEMUA 20 bar, FF" (Flat Face)
+  Copper (A40): "FF" — Flat Face, per ASME B 16.24 bronze flanges
+  GRE (A50/A51/A52): "FF" — Flat Face, manufacturer std
+  CPVC (A60): "FF" — Flat Face, per ASTM F 441 socket-flange
   GALV: "150# RF, Serrated Finish" (same as 150#)
 
 TYPE — compose the flange_type string from these components; do not copy a fixed template:
@@ -372,6 +384,7 @@ TYPE — compose the flange_type string from these components; do not copy a fix
 
   GALV screwed (A3/A4): small sizes use screwed-end flanges (SCRD), larger sizes use WN butt-welded
   CuNi (A30): small sizes use socket-weld (SW) flange, larger sizes use WN flange per EEMUA 234
+  Copper (A40): TYPE = "Solid slip on flange" (all sizes) per ASME B 16.24; STD = "ASME B 16.24"
 
 F/G-series (1500#/2500#) additional flange rows (populate compact_flange and hub_connector):
   compact_flange — describe the Norsok L-005 WN Compact Flange used for layout-constrained installations. Include the Norsok L-005 reference and a short note that it is for layout constraint.
@@ -381,8 +394,24 @@ F/G-series (1500#/2500#) additional flange rows (populate compact_flange and hub
 MOC: Same as flange MOC
 Standard: "ASME B 16.48" (standard sizes)
 Standard (large): "Spacer and blind as per ASME B 16.48 (Note 5)" (sizes not covered by B16.48)
+
+PROJECT SIZE BOUNDARY (class-family specific — do NOT guess, use these rules):
+  SS 316L 10-series (A10, A10N, B10, B10N, D10, D10N, E10, E10N, F10, F10N, G10, G10N):
+    Sizes 0.5"-12" → "ASME B 16.48"
+    Sizes 14"+     → "Spacer and blind as per ASME B 16.48 (Note 5)"
+  ALL OTHER CLASSES (CS/LTCS/GALV/Epoxy/DSS/SDSS — A1/A1N/A1L/A1LN, A20/A20N, A25/A25N, etc.):
+    Sizes 0.5"-14" → "ASME B 16.48"
+    Sizes 16"+     → "Spacer and blind as per ASME B 16.48 (Note 5)"
+  The Excel renderer enforces this boundary by size, so the strings you
+  emit in spectacle_blind.standard and spectacle_blind.standard_large are
+  positioned on the correct side of the cutoff automatically.
+
+For 900#/1500#/2500# (E/F/G RTJ classes), drop the "(Note 5)" suffix since
+the RTJ note-list does not include a note 5 for spectacle blinds; use
+"Spacer and blind as per ASME B 16.48" without parenthetical.
+
 F/G series (1500#/2500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48",
-  Standard_large = "Spacer and blind as per ASME B 16.48" (ALWAYS populate this for F/G classes — the reference splits the row with B16.48 on the small-size side and "Spacer and blind as per ASME B 16.48" on the large-size side)
+  Standard_large = "Spacer and blind as per ASME B 16.48" (ALWAYS populate this for F/G classes — the reference splits the row with B16.48 on the small-size side (≤14") and "Spacer and blind as per ASME B 16.48" on the large-size side (≥16")).
 GALV classes: MOC = "ASTM A 105N Galvanized"
 
 === BOLTS / NUTS / GASKETS ===
@@ -446,16 +475,22 @@ Pre-built prefixes (Type+Bore/Design+Seat):
   Tubing:     BLFP, CHPM, DBFP, NEIP — all with JT end suffix
 
 EndConn (last char/s — must match piping rating face):
-  150#/300#/600#   → R (RF)
+  150#/300#/600#   → R (RF)  — standard steel classes
   900#/1500#/2500# → J (RTJ)
-  CuNi (A30)       → F (FF)
+  CuNi (A30)       → F (FF)  — Flat Face face-type, per EEMUA 234
+  Copper (A40)     → F (FF)  — Flat Face, per ASME B 16.24
+  GRE (A50/51/52)  → F (FF)  — Flat Face, manufacturer std
+  CPVC (A60)       → F (FF)  — Flat Face, ASTM F 441 socket/flange
   Tubing (T80/T90) → F or JT (per inst. isolation)
   Hub-connected    → H (rare — only when spec explicitly calls for compact flange)
 
 valves.rating field MUST include face-type:
   "150#, RF" / "300#, RF" / "600#, RF"
   "900#, RTJ" / "1500#, RTJ" / "2500#, RTJ"
-  CuNi: "150#, FF"
+  CuNi (A30):    "150#, FF"  (actually EEMUA 20 bar but use 150# convention)
+  Copper (A40):  "150#, FF"
+  GRE (A50-52):  "150#, FF"
+  CPVC (A60):    "150#, FF"
   Tubing: "10000# (69 Mpa)" or as specified
 
 === VALVE DESIGN STANDARDS (from VMS Section 6) ===
@@ -521,13 +556,31 @@ Design Code:
   + NACE suffix: ", NACE-MR-01-75/ISO-15156-1/2/3" if N or LN in class name
   CuNi: "ASME B 31.3 / EEMUA 234"
 
-Pipe Code: ASME B 36.10M (CS/LTCS/GALV) or ASME B 36.19M (SS/DSS/SDSS) or EEMUA 234 (CuNi)
+Pipe Code (exact string per spec sheet row "Code"):
+  CS / LTCS / GALV / Epoxy (A1…G1 series, A1N…G1N, LTCS 1L/1LN, 2-series, 3/4/5/6): "ASME B 36.10M"
+  SS 316L 10-series (A10, A10N):                              "ASME B 36.19M"
+  DSS 20-series (A20, A20N):                                  "ASME B 36.19M"
+  SDSS 25-series (A25, A25N):                                 "ASME B 36.19M"
+  Mixed seamless-small-bore + welded-large-bore variants — use BOTH codes separated by " / ":
+    B10, B10N, D10, D10N, E10, E10N, F10, F10N, G10, G10N:    "ASME B 36.19M / B 36.10M"
+    B20, B20N, D20, D20N, E20, E20N, F20, F20N:               "ASME B 36.19M / B 36.10M"
+    B25, B25N, D25, E25, E25N, F25, F25N:                     "ASME B 36.19M / B 36.10M"
+  G20, G20N, G25, G25N, G2N (2500# duplex/SDSS variants with welded pipe only): "ASME B 36.10M"
+  CuNi (A30):                                                 "EEMUA 234 20 BAR"
+  Copper (A40):                                               "ASTM B42 (Regular)"
+  GRE A50 / A52:                                              "Manufacturer's Std."
+  GRE A51:                                                    "Manufacturer's Std (BONSTRAND Series 50000C)"
+  CPVC (A60):                                                 "ASTM F 441"
+  Tubing (T80A/B/C, T90A/B/C):                                "ASTM A 269"
 Mill Tolerance: {MILL_TOLERANCE_PERCENT}% (standard) — {MILL_TOLERANCE_PERCENT / 100}
 Branch Chart:
-  CS/LTCS/SS/DSS/SDSS: Ref. APPENDIX-1, Chart 1
-  GALV: Ref. APPENDIX-1, Chart 2
-  CuNi: Ref. APPENDIX-1, Chart 3
-  GRE: Ref. APPENDIX-1, Chart 4
+  CS/LTCS/SS/DSS/SDSS (all numbered/N/L/LN variants): Ref. APPENDIX-1, Chart 1
+  GALV (A3/A4/B4/D4/A5):                              Ref. APPENDIX-1, Chart 2
+  CuNi (A30):                                         Ref. APPENDIX-1, Chart 3
+  Copper (A40):                                       Ref. APPENDIX-1, Chart 3  (same as CuNi)
+  GRE (A50/A51/A52), Epoxy-lined CS (A6):             Ref. APPENDIX-1, Chart 4
+  CPVC (A60):                                         Ref. APPENDIX-1, Chart 4  (manufacturer sockets)
+  Tubing (T80/T90):                                   "" (no branch chart — compression fittings only)
 Ends: "BE" (bevel end for standard piping), "PE" (plain end for CuNi/tubing), special for GRE/CPVC
 
 === NOTES (STANDARD NUMBERED LIST) ===
@@ -566,7 +619,6 @@ IMPORTANT:
 {{
     "design_code": "...",
     "pipe_code": "...",
-    "mill_tolerance": "{MILL_TOLERANCE_PERCENT}%",
     "branch_chart": "Ref. APPENDIX-1, Chart 1",
     "hydrotest_pressure": "",
     "pipe_data": [
@@ -611,7 +663,7 @@ CRITICAL:
 3. For 900#+ classes (E/F/G-series), include dbb and dbb_inst fields with DBRP prefix codes. dbb_inst code = dbb code + "T" suffix. Omit dbb/dbb_inst for 150#-600# classes.
 3. fittings_by_size count MUST match pipe_data count.
 4. fittings_welded MUST be populated (not null) if class has welded fittings.
-5. Wall thickness values will be auto-corrected from ASME B36.10M/B36.19M lookup tables after generation. Focus on selecting the CORRECT SCHEDULE for each size — the WT will be looked up. For "-" schedule sizes (calculated WT), provide the calculated WT value.
+5. The od_mm and wall_thickness_mm fields for ASME-coded pipe classes (B36.10M / B36.19M — CS, LTCS, GALV, SS, DSS, SDSS, Titanium) are OVERWRITTEN after generation using the authoritative standard tables. Your ONLY job for those classes is to pick the correct SCHEDULE per the per-class rules above; the post-processor looks up the WT. Put any reasonable number in wall_thickness_mm — it will be replaced. EXCEPTION: for schedules written as "-" (calculated WT), the AI's value is kept, so compute and provide the correct calculated WT per ASME B31.3 Eq. 3a. For NON-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer std, CPVC ASTM F441, Tubing ASTM A269), the AI's od_mm and wall_thickness_mm ARE preserved — be accurate for those.
 6. Return ONLY JSON. No markdown fences, no commentary.
 7. For GALV classes, gasket is neoprene/EPDM rubber (NOT spiral wound).
 8. For CuNi classes, use EEMUA 234 standards throughout.
