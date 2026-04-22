@@ -133,6 +133,12 @@ def _lvcf_by_size(by_size, pipe_sizes: list) -> list:
 
     Entries are sorted by numeric size before propagation. Any size in
     pipe_sizes that falls before the first explicit entry gets "".
+
+    Post-filter: "USE GATE VALVE" is a small-bore-only placeholder used on
+    the Ball row for E/F/G-series classes where a ball valve isn't
+    available at small sizes. Regardless of what boundary the AI emits
+    (e.g. LVCF might carry it forward to size 6"), cap this text at
+    sizes ≤ 1.5" — any cell > 1.5" carrying "USE GATE VALVE" is blanked.
     """
     def _num(s):
         try:
@@ -156,6 +162,16 @@ def _lvcf_by_size(by_size, pipe_sizes: list) -> list:
             current = entries[idx][1]
             idx += 1
         out.append(current)
+
+    # Cap "USE GATE VALVE" at 1.5" — project rule.
+    for i, (size, val) in enumerate(zip(pipe_sizes, out)):
+        if not val:
+            continue
+        if "USE GATE VALVE" not in val.upper():
+            continue
+        n = _num(size)
+        if n is not None and n > 1.5:
+            out[i] = ""
     return out
 
 
@@ -276,20 +292,6 @@ def _b1648_max_size_for(pms) -> float:
 def _any_nonempty(values) -> bool:
     """True if any value in the list is a non-empty string after stripping."""
     return any(str(v or "").strip() for v in values)
-
-
-def _has_value_above_size(fittings_by_size, attr: str, size_threshold: float) -> bool:
-    """True if any size > threshold carries a non-empty value on the given attribute.
-    Used to decide whether to render a row as a range-row (small-bore only, e.g.
-    Plug in CS classes) or a merged-data-row spanning all sizes (A40 Copper where
-    Plug is populated for both small and large sizes)."""
-    for f in fittings_by_size:
-        try:
-            if float(str(f.size_inch).strip().rstrip('"')) > size_threshold and str(getattr(f, attr, "") or "").strip():
-                return True
-        except (ValueError, TypeError, AttributeError):
-            continue
-    return False
 
 
 def _split_index_at_size(pipe_data, max_size_inches: float) -> int:
@@ -547,18 +549,29 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage",
                       "Mold. Tee", "Red. Sad", "Adaptor"}
 
+    # Plug is always a small-bore row — see first renderer for rationale.
     fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
     plug_start_col = pipe_col_start
     plug_end_col = _size_column_index(fitting_sizes, "1.5", pipe_col_start=pipe_col_start)
-    plug_spans_large = _has_value_above_size(pms.fittings_by_size, "plug_standard", 1.5)
 
     for prop_idx, (label, getter) in enumerate(fitting_props):
         fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
         prop_values = [getter(f) or "" for f in pms.fittings_by_size]
         if label in _OPTIONAL_ROWS and not _any_nonempty(prop_values):
             continue  # skip row entirely — nothing to show
-        if label == "Plug" and not plug_spans_large:
-            plug_value = next((v for v in prop_values if v), "")
+        if label == "Plug":
+            plug_value = ""
+            for f, v in zip(pms.fittings_by_size, prop_values):
+                if not v:
+                    continue
+                try:
+                    if float(str(f.size_inch).strip().rstrip('"')) <= 1.5:
+                        plug_value = v
+                        break
+                except (ValueError, TypeError):
+                    continue
+            if not plug_value:
+                plug_value = next((v for v in prop_values if v), "")
             _write_range_value_row(ws, row, label, plug_value,
                                    start_col=plug_start_col, end_col=plug_end_col,
                                    total_cols=total_cols, fill=fill)
@@ -879,18 +892,36 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     _OPTIONAL_ROWS = {"Coupl", "Union", "Sockolet", "Nipple", "Swage",
                       "Mold. Tee", "Red. Sad", "Adaptor"}
 
+    # Plug is always a small-bore row — threaded plugs only apply at sizes
+    # ≤ 1.5" in this project, regardless of class. Even when the AI emits
+    # plug_standard on larger sizes (e.g. A40 MOC-split), only the
+    # small-bore value is shown; the ≥ 2" portion of the Plug row stays
+    # blank.
     fitting_sizes = [f.size_inch for f in pms.fittings_by_size]
     plug_start_col = pipe_col_start
     plug_end_col = _size_column_index(fitting_sizes, "1.5", pipe_col_start=pipe_col_start)
-    plug_spans_large = _has_value_above_size(pms.fittings_by_size, "plug_standard", 1.5)
 
     for prop_idx, (label, getter) in enumerate(fitting_props):
         fill = ALT_FILL if prop_idx % 2 == 0 else DATA_FILL
         prop_values = [getter(f) or "" for f in pms.fittings_by_size]
         if label in _OPTIONAL_ROWS and not _any_nonempty(prop_values):
             continue
-        if label == "Plug" and not plug_spans_large:
-            plug_value = next((v for v in prop_values if v), "")
+        if label == "Plug":
+            # Use the first non-empty small-bore value (size ≤ 1.5"); if the
+            # AI emitted plug only for large sizes (shouldn't happen but
+            # defend anyway), fall back to any non-empty value.
+            plug_value = ""
+            for f, v in zip(pms.fittings_by_size, prop_values):
+                if not v:
+                    continue
+                try:
+                    if float(str(f.size_inch).strip().rstrip('"')) <= 1.5:
+                        plug_value = v
+                        break
+                except (ValueError, TypeError):
+                    continue
+            if not plug_value:
+                plug_value = next((v for v in prop_values if v), "")
             _write_range_value_row(ws, row, label, plug_value,
                                    start_col=plug_start_col, end_col=plug_end_col,
                                    total_cols=total_cols, fill=fill)

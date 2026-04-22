@@ -428,20 +428,21 @@ STANDARDS (apply to ALL material families unless noted):
   Weldolet: MSS SP 97, [flange MOC] (e.g., "MSS SP 97, ASTM A 105N" for CS)
   GALV screwed classes: Elbow/Tee/Red/Cap = ASME B 16.11
   CuNi classes: All fittings per EEMUA 234; additional: Coupling, Union, Sockolet, Nipple, Swage per EEMUA 234
-  Copper (A40) — ALL fitting standards carry the MOC split values per Excel:
-    For EVERY fittings_by_size entry, populate ALL of these fields with the
-    MATERIAL MOC for that size (not an engineering standard like B 16.22).
-    This mirrors the A40 Excel sheet where rows 23-34 (Elbow, Tee, Red., Cap,
-    Coupl, Plug, Union, Sockolet, Weldolet, Nipple, Swage) all carry the
-    pipe MOC split rather than individual standard codes.
+  Copper (A40) — fitting standards carry the MOC split values per Excel.
+    For EVERY fittings_by_size entry, populate these fields with the MATERIAL
+    MOC for that size (not an engineering standard like B 16.22):
 
     Sizes 0.5"-1.5" → every field below = "ASTM B 124 UNS C11000"
     Sizes 2"-4"     → every field below = "ASTM B 42 UNS C12200"
 
     Fields to populate on each fittings_by_size entry:
       material_spec, elbow_standard, tee_standard, reducer_standard, cap_standard,
-      coupling_standard, plug_standard, union_standard, sockolet_standard,
-      weldolet_spec, nipple_standard, swage_standard
+      coupling_standard, union_standard, sockolet_standard, weldolet_spec,
+      nipple_standard, swage_standard
+
+    EXCEPTION for plug_standard (threaded plugs are small-bore only):
+      Sizes 0.5"-1.5" → plug_standard = "ASTM B 124 UNS C11000"
+      Sizes 2"-4"     → plug_standard = ""   (leave blank — plug row stops at 1.5")
   GRE classes: All per manufacturer/GRE system standard
 
 fittings_by_size: One entry per pipe size. Each entry includes size_inch, type (Seamless/Welded), fitting_type, material_spec, and all standards. material_spec may differ between seamless and welded sizes.
@@ -633,8 +634,8 @@ Material / construction rules the AI must respect:
   • Full-bore ball required: PSV inlet/outlet, piggable lines
 
 Special valve rules:
-  E-series (900#) Ball: Small sizes → "USE GATE VALVE", larger sizes (typically 6"+) → BLRP/BLFP codes
-  F-series (1500#) Ball: Small sizes → "USE GATE VALVE", larger sizes → BLRP/BLFP codes (soft-seat only)
+  E-series (900#) Ball: 0.5"-1.5" → "USE GATE VALVE" (small-bore only); 2"+ → BLRP/BLFP codes (no ball valve between 2" and the spec boundary; the renderer caps "USE GATE VALVE" at 1.5" regardless)
+  F-series (1500#) Ball: 0.5"-1.5" → "USE GATE VALVE"; 2"+ → BLRP/BLFP codes (soft-seat only)
   ****** MANDATORY RULE FOR G-SERIES 2500# (G1, G1N, G1LN, G2N, G7LN, G9, G10, G20N, G23, G24, G25, G25N, D25N, etc.) ******
   For ANY piping class starting with the letter "G" (2500# rating):
     The "ball" field MUST contain exactly FOUR codes, comma-separated in this order:
@@ -642,7 +643,8 @@ Special valve rules:
        Example for G25N: "BLRPG25NJ, BLFPG25NJ, BLFMG25NJ, BLRMG25NJ"
        Example for G1  : "BLRPG1J, BLFPG1J, BLFMG1J, BLRMG1J"
        Example for G20N: "BLRPG20NJ, BLFPG20NJ, BLFMG20NJ, BLRMG20NJ"
-       (For small sizes, ball_by_size entries should still use "USE GATE VALVE")
+       (For small sizes 0.5"-1.5", ball_by_size entries should still use "USE GATE VALVE";
+        the renderer caps "USE GATE VALVE" text at 1.5" even if LVCF would otherwise carry it forward.)
     The "dbb" field MUST contain exactly TWO codes comma-separated:
        DBRP + class-code-with-J + ", " + DBRM + class-code-with-J
        Example for G25N: "DBRPG25NJ, DBRMG25NJ"
@@ -800,7 +802,10 @@ CRITICAL:
 3. For 900#+ classes (E/F/G-series), include dbb and dbb_inst fields with DBRP prefix codes. dbb_inst code = dbb code + "T" suffix. Omit dbb/dbb_inst for 150#-600# classes.
 3. fittings_by_size count MUST match pipe_data count.
 4. fittings_welded MUST be populated (not null) if class has welded fittings.
-5. The od_mm and wall_thickness_mm fields for ASME-coded pipe classes (B36.10M / B36.19M — CS, LTCS, GALV, SS, DSS, SDSS, Titanium) are OVERWRITTEN after generation using the authoritative standard tables. Your ONLY job for those classes is to pick the correct SCHEDULE per the per-class rules above; the post-processor looks up the WT. Put any reasonable number in wall_thickness_mm — it will be replaced. EXCEPTION: for schedules written as "-" (calculated WT), the AI's value is kept, so compute and provide the correct calculated WT per ASME B31.3 Eq. 3a. For NON-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer std, CPVC ASTM F441, Tubing ASTM A269), the AI's od_mm and wall_thickness_mm ARE preserved — be accurate for those.
+5. The od_mm and wall_thickness_mm fields for ASME-coded pipe classes (B36.10M / B36.19M — CS, LTCS, GALV, SS, DSS, SDSS, Titanium) are OVERWRITTEN after generation. Your ONLY job for those classes is to pick the correct SCHEDULE per the per-class rules above. Put any reasonable number in wall_thickness_mm — it WILL be replaced:
+   - When schedule maps to a standard code (SCH 160, 80S, STD, XS, etc.): post-processor looks up WT from the ASME B36.10M / B36.19M tables.
+   - When schedule is "-" (calculated WT case, e.g. F1LN 10-24", G2N 1-24"): post-processor COMPUTES WT server-side per ASME B31.3 §304.1.2 Eq. 3a using the class's design pressure (max from P-T table), design temperature (max from P-T table), material stress, joint factor E=1.0, Y=0.4, W=1.0, corrosion allowance from the request, and mill tolerance 12.5%. So your emitted WT for "-" schedule rows will ALSO be replaced — emit any plausible value.
+   For NON-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer std, CPVC ASTM F441, Tubing ASTM A269), the AI's od_mm and wall_thickness_mm ARE preserved — be accurate for those.
 6. Return ONLY JSON. No markdown fences, no commentary.
 7. For GALV classes, gasket is neoprene/EPDM rubber (NOT spiral wound).
 8. For CuNi classes, use EEMUA 234 standards throughout.

@@ -78,32 +78,71 @@ def calculate_wall_thickness_mm(
 def correct_pipe_data(
     pipe_data: list[dict],
     pipe_code: str | None = None,
+    material: str | None = None,
+    design_pressure_barg: float | None = None,
+    design_temp_c: float | None = None,
+    corrosion_allowance: str | float | None = None,
     **_unused,
 ) -> list[dict]:
     """Post-process AI-generated pipe rows.
 
-    For each row, if the class uses ASME B36.10M or B36.19M (standard steel
-    pipe), replace:
-      - od_mm              with the standard OD for that NPS
-      - wall_thickness_mm  with the standard WT for (NPS, Schedule) —
-                           only when Schedule maps to a known code.
+    Three code paths, picked per-row:
 
-    Rows with Schedule="-" (calculated WT), non-matching NPS, or non-ASME
-    pipe codes (CuNi / Copper / GRE / CPVC / Tubing) are left untouched so
-    the AI-generated value stands.
+      1. ASME class + standard Schedule (e.g. "SCH 160", "80S", "STD", "XS"):
+         od_mm and wall_thickness_mm are replaced with authoritative values
+         from the ASME B36.10M / B36.19M tables in engineering_constants.
 
-    Extra **kwargs are accepted (and ignored) for backwards compatibility
-    with the previous signature that took material / pressure / temp args.
+      2. ASME class + Schedule == "-" (calculated WT, e.g. F1LN 10-24",
+         G2N 1-24"): od_mm is replaced from the OD table and
+         wall_thickness_mm is COMPUTED per ASME B31.3 §304.1.2 Eq. 3a using
+         the class's design pressure, design temperature, material stress,
+         and corrosion allowance. Requires `design_pressure_barg`,
+         `design_temp_c`, `material`, and `corrosion_allowance` to be
+         provided by the caller (pms_service passes them from
+         pipe_classes.json P-T data + the request).
+
+      3. Non-ASME pipe code (CuNi EEMUA 234, Copper ASTM B42, GRE
+         manufacturer std, CPVC ASTM F441, Tubing ASTM A269): row is left
+         untouched — the AI's emitted values stand.
     """
+    ca_mm = _parse_corrosion_allowance_mm(corrosion_allowance)
+
     for row in pipe_data:
         nps = row.get("size_inch") or row.get("nps")
+        schedule = row.get("schedule")
 
+        # OD correction (ASME-only)
         od = lookup_od(nps, pipe_code=pipe_code)
         if od is not None:
             row["od_mm"] = od
 
-        wt = lookup_wall_thickness(nps, row.get("schedule"), pipe_code=pipe_code)
+        # WT correction — standard-schedule lookup first
+        wt = lookup_wall_thickness(nps, schedule, pipe_code=pipe_code)
         if wt is not None:
             row["wall_thickness_mm"] = wt
+            continue
+
+        # Calculated-WT path: "-" schedule on an ASME class.
+        # Only runs when (a) we have an OD for this NPS (standard ASME size),
+        # (b) schedule explicitly says "-", and (c) the caller gave us P/T/
+        # material so we can evaluate Eq. 3a. If any piece is missing, fall
+        # through and leave the AI's value.
+        sched_str = str(schedule or "").strip()
+        is_calc_schedule = sched_str in ("-", "--", "— ", "—")
+        if (od is not None
+                and is_calc_schedule
+                and design_pressure_barg is not None
+                and design_temp_c is not None
+                and material):
+            computed = calculate_wall_thickness_mm(
+                od_mm=od,
+                design_pressure_barg=design_pressure_barg,
+                design_temp_c=design_temp_c,
+                material_spec=material,
+                corrosion_allowance_mm=ca_mm,
+                joint_factor=1.0,
+            )
+            if computed is not None and computed > 0:
+                row["wall_thickness_mm"] = computed
 
     return pipe_data

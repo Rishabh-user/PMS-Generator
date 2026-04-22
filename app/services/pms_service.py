@@ -277,20 +277,37 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             "Try regenerating, or contact support if the issue persists."
         )
 
-    # Correct OD and wall thickness values using ASME B36.10M / B36.19M
-    # standard tables. The AI picks the Schedule per class rules in the
-    # prompt; correct_pipe_data() overwrites AI's (often hallucinated) WT
-    # and OD with the authoritative standard values. Non-ASME pipe codes
-    # (CuNi EEMUA 234, Copper ASTM B42, GRE, CPVC, Tubing) and "-" schedule
-    # rows (calculated WT) are left untouched — the AI's value stands.
+    # Correct OD and wall thickness values.
+    #   - ASME-coded classes with standard schedules: WT/OD replaced from
+    #     ASME B36.10M / B36.19M lookup tables.
+    #   - ASME-coded classes with Schedule "-": WT is COMPUTED per ASME
+    #     B31.3 §304.1.2 Eq. 3a using the class's design P/T envelope (max
+    #     pressure/temperature from pipe_classes.json) and the request's
+    #     material / CA. OD is replaced from the OD table.
+    #   - Non-ASME pipe codes (CuNi, Copper, GRE, CPVC, Tubing): untouched.
     if "pipe_data" in ai_data:
+        pt_data = entry.get("pressure_temperature", {}) or {}
+        pressures = pt_data.get("pressures") or []
+        temperatures = pt_data.get("temperatures") or []
+        design_pressure = max(pressures) if pressures else None
+        design_temp = max(temperatures) if temperatures else None
+        material_for_correction = req.material or entry.get("material", "")
         correct_pipe_data(
             ai_data["pipe_data"],
             pipe_code=ai_data.get("pipe_code", ""),
+            material=material_for_correction,
+            design_pressure_barg=design_pressure,
+            design_temp_c=design_temp,
+            corrosion_allowance=req.corrosion_allowance,
         )
         logger.info(
-            "Corrected pipe_data for %s (pipe_code='%s') — WT/OD replaced from ASME tables where applicable",
+            "Corrected pipe_data for %s (pipe_code='%s', material='%s', "
+            "P=%s barg, T=%s°C, CA=%s) — WT/OD from ASME tables where "
+            "schedule is a standard code; WT computed per B31.3 Eq. 3a "
+            "where schedule is '-'",
             req.piping_class, ai_data.get("pipe_code", ""),
+            material_for_correction, design_pressure, design_temp,
+            req.corrosion_allowance,
         )
 
     # Merge P-T from JSON + AI-generated data
