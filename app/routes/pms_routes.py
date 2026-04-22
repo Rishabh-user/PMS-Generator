@@ -5,19 +5,26 @@ import io
 import logging
 import re
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.pms_models import PMSRequest, PMSResponse, BulkDownloadRequest
 from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
-from app.models.pms_agent_models import PMSAgentRequest, PMSAgentResponse
+from app.models.pms_agent_models import (
+    PMSAgentRequest,
+    PMSAgentResponse,
+    AgentSessionSummary,
+    AgentSessionDetail,
+    UpsertAgentSessionRequest,
+    RenameAgentSessionRequest,
+)
 from app.models.validation_models import ValidationReport
 from app.services.pms_service import generate_excel, generate_pms, regenerate_pms, clear_cache
 from app.services.thickness_service import compute_thickness
 from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.validation_service import validate as validate_pms
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
-from app.services import data_service
+from app.services import data_service, db_service
 from app.utils.engineering import interpolate_pressure_at_temp
 from app.utils.engineering_constants import (
     HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
@@ -332,6 +339,118 @@ async def api_pms_agent_chat(req: PMSAgentRequest):
     except Exception as e:
         logger.exception("PMS agent chat error")
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
+# ── PMS Agent conversation sessions ────────────────────────────────
+# Persistent chat history, scoped per user via X-User-Id header.
+# If the header is missing, sessions fall into a shared 'anonymous' bucket.
+# Requires DATABASE_URL to be configured; without it, endpoints return
+# empty lists / 503 for writes so the frontend can degrade gracefully.
+#
+# NOTE: The X-User-Id header is trusted as-is — the PMS backend has no
+# authentication of its own. This is acceptable for internal tooling where
+# the React frontend is the only caller, but for production multi-tenant
+# use, replace with verified JWT / session cookies.
+
+def _service_unavailable():
+    raise HTTPException(
+        status_code=503,
+        detail="Chat history is currently unavailable — DATABASE_URL is not "
+               "configured on the server, or the connection failed. The chat "
+               "itself still works, but saved conversations cannot be listed "
+               "or persisted.",
+    )
+
+
+@router.get(
+    "/pms-agent/sessions",
+    response_model=list[AgentSessionSummary],
+)
+async def api_list_agent_sessions(
+    x_user_id: str | None = Header(default=None),
+):
+    """List the caller's saved PMS-agent chat sessions (summaries, no
+    blocks). Empty list when DB isn't configured."""
+    if not db_service.is_available():
+        return []
+    rows = await db_service.list_agent_sessions(x_user_id or "anonymous")
+    return rows
+
+
+@router.get(
+    "/pms-agent/sessions/{session_id}",
+    response_model=AgentSessionDetail,
+)
+async def api_get_agent_session(
+    session_id: str,
+    x_user_id: str | None = Header(default=None),
+):
+    """Fetch a single session with its full block list."""
+    if not db_service.is_available():
+        _service_unavailable()
+    data = await db_service.get_agent_session(x_user_id or "anonymous", session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return data
+
+
+@router.put("/pms-agent/sessions/{session_id}")
+async def api_upsert_agent_session(
+    session_id: str,
+    req: UpsertAgentSessionRequest,
+    x_user_id: str | None = Header(default=None),
+):
+    """Create or overwrite a session. Called by the frontend on every
+    meaningful chat update (debounced)."""
+    if not db_service.is_available():
+        _service_unavailable()
+    if not session_id or len(session_id) > 32:
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    ok = await db_service.upsert_agent_session(
+        user_id=x_user_id or "anonymous",
+        session_id=session_id,
+        title=req.title,
+        blocks=req.blocks,
+        message_count=req.message_count,
+        last_message_preview=req.last_message_preview,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save session")
+    return {"ok": True}
+
+
+@router.patch("/pms-agent/sessions/{session_id}")
+async def api_rename_agent_session(
+    session_id: str,
+    req: RenameAgentSessionRequest,
+    x_user_id: str | None = Header(default=None),
+):
+    if not db_service.is_available():
+        _service_unavailable()
+    ok = await db_service.rename_agent_session(
+        user_id=x_user_id or "anonymous",
+        session_id=session_id,
+        title=req.title,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
+
+
+@router.delete("/pms-agent/sessions/{session_id}")
+async def api_delete_agent_session(
+    session_id: str,
+    x_user_id: str | None = Header(default=None),
+):
+    if not db_service.is_available():
+        _service_unavailable()
+    ok = await db_service.delete_agent_session(
+        user_id=x_user_id or "anonymous",
+        session_id=session_id,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
 
 
 @router.post("/compute-thickness", response_model=ComputeThicknessResponse)

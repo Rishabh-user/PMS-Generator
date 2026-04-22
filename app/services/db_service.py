@@ -36,6 +36,31 @@ CREATE_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_pms_cache_piping_class ON pms_cache (piping_class);
 """
 
+# ── pms_agent_sessions — saved PMS-Agent chats ─────────────────────
+# One row per user+session_id. `blocks_json` holds the entire MessageBlock[]
+# array from the frontend so the chat can be restored on load. Scoped by
+# `user_id` (typically passed via X-User-Id header); requests without a
+# user id fall into the reserved 'anonymous' bucket.
+
+CREATE_AGENT_SESSIONS_SQL = """
+CREATE TABLE IF NOT EXISTS pms_agent_sessions (
+    id            VARCHAR(32) NOT NULL,
+    user_id       VARCHAR(128) NOT NULL DEFAULT 'anonymous',
+    title         TEXT NOT NULL DEFAULT 'New chat',
+    blocks_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+    message_count INT  NOT NULL DEFAULT 0,
+    last_preview  TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, id)
+);
+"""
+
+CREATE_AGENT_SESSIONS_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_pms_agent_sessions_user_updated
+    ON pms_agent_sessions (user_id, updated_at DESC);
+"""
+
 
 def is_available() -> bool:
     """Check if the database connection pool is initialized and ready."""
@@ -59,7 +84,11 @@ async def init_pool():
         async with _pool.acquire() as conn:
             await conn.execute(CREATE_TABLE_SQL)
             await conn.execute(CREATE_INDEX_SQL)
-        logger.info("PostgreSQL pool initialized and pms_cache table ready")
+            await conn.execute(CREATE_AGENT_SESSIONS_SQL)
+            await conn.execute(CREATE_AGENT_SESSIONS_INDEX_SQL)
+        logger.info(
+            "PostgreSQL pool initialized — pms_cache + pms_agent_sessions tables ready"
+        )
     except Exception as e:
         logger.error("Failed to initialize PostgreSQL pool: %s", e)
         _pool = None
@@ -181,3 +210,161 @@ async def clear_all_cache() -> int:
     except Exception as e:
         logger.error("DB clear error: %s", e)
         return 0
+
+
+# ─────────────────────────────────────────────────────────────────
+# PMS Agent chat sessions
+# ─────────────────────────────────────────────────────────────────
+# All five functions return safe defaults (empty list / None / False) when
+# the DB pool is unavailable so route handlers can surface "history sync
+# off" without crashing.
+
+def _normalize_user_id(user_id: str | None) -> str:
+    uid = (user_id or "").strip()
+    if not uid or len(uid) > 128:
+        return "anonymous"
+    return uid
+
+
+async def list_agent_sessions(user_id: str) -> list[dict]:
+    """Return a user's saved PMS-agent sessions (summaries only — no blocks
+    payload), newest first."""
+    if not _pool:
+        return []
+    uid = _normalize_user_id(user_id)
+    try:
+        async with _pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, title, message_count, last_preview, created_at, updated_at
+                FROM pms_agent_sessions
+                WHERE user_id = $1
+                ORDER BY updated_at DESC
+                LIMIT 200
+                """,
+                uid,
+            )
+        return [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "message_count": r["message_count"],
+                "last_message_preview": r["last_preview"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("DB list_agent_sessions error (user=%s): %s", uid, e)
+        return []
+
+
+async def get_agent_session(user_id: str, session_id: str) -> dict | None:
+    """Fetch the full session (with blocks). Returns None if not found or
+    DB unavailable."""
+    if not _pool:
+        return None
+    uid = _normalize_user_id(user_id)
+    try:
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, title, blocks_json, message_count, last_preview,
+                       created_at, updated_at
+                FROM pms_agent_sessions
+                WHERE user_id = $1 AND id = $2
+                """,
+                uid, session_id,
+            )
+        if not row:
+            return None
+        blocks = row["blocks_json"]
+        if isinstance(blocks, str):
+            blocks = json.loads(blocks)
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "blocks": blocks or [],
+            "message_count": row["message_count"],
+            "last_message_preview": row["last_preview"],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        }
+    except Exception as e:
+        logger.error("DB get_agent_session error (%s/%s): %s", uid, session_id, e)
+        return None
+
+
+async def upsert_agent_session(
+    user_id: str,
+    session_id: str,
+    title: str,
+    blocks: list,
+    message_count: int,
+    last_message_preview: str,
+) -> bool:
+    """Create or overwrite a session. Returns True on success."""
+    if not _pool:
+        return False
+    uid = _normalize_user_id(user_id)
+    try:
+        blocks_json = json.dumps(blocks, default=str)
+        async with _pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO pms_agent_sessions
+                    (id, user_id, title, blocks_json, message_count, last_preview, created_at, updated_at)
+                VALUES ($1, $2, $3, $4::jsonb, $5, $6, NOW(), NOW())
+                ON CONFLICT (user_id, id)
+                DO UPDATE SET
+                    title         = EXCLUDED.title,
+                    blocks_json   = EXCLUDED.blocks_json,
+                    message_count = EXCLUDED.message_count,
+                    last_preview  = EXCLUDED.last_preview,
+                    updated_at    = NOW()
+                """,
+                session_id, uid, title, blocks_json, message_count, last_message_preview,
+            )
+        return True
+    except Exception as e:
+        logger.error("DB upsert_agent_session error (%s/%s): %s", uid, session_id, e)
+        return False
+
+
+async def rename_agent_session(user_id: str, session_id: str, title: str) -> bool:
+    """Rename a session without touching blocks."""
+    if not _pool:
+        return False
+    uid = _normalize_user_id(user_id)
+    try:
+        async with _pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE pms_agent_sessions
+                SET title = $3, updated_at = NOW()
+                WHERE user_id = $1 AND id = $2
+                """,
+                uid, session_id, title.strip() or "New chat",
+            )
+        # asyncpg returns e.g. "UPDATE 1"; split to check affected rows
+        return result.split()[-1] != "0"
+    except Exception as e:
+        logger.error("DB rename_agent_session error (%s/%s): %s", uid, session_id, e)
+        return False
+
+
+async def delete_agent_session(user_id: str, session_id: str) -> bool:
+    if not _pool:
+        return False
+    uid = _normalize_user_id(user_id)
+    try:
+        async with _pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM pms_agent_sessions WHERE user_id = $1 AND id = $2",
+                uid, session_id,
+            )
+        return result.split()[-1] != "0"
+    except Exception as e:
+        logger.error("DB delete_agent_session error (%s/%s): %s", uid, session_id, e)
+        return False

@@ -14,6 +14,38 @@ class AgentHistoryTurn(BaseModel):
     content: str = Field(..., description="Message text (plain or markdown)")
 
 
+# ── Chat session persistence models ────────────────────────────────
+# These are used by the GET/PUT/PATCH/DELETE /api/pms-agent/sessions
+# endpoints, backed by the pms_agent_sessions PostgreSQL table.
+
+class AgentSessionSummary(BaseModel):
+    id: str
+    title: str
+    message_count: int = 0
+    last_message_preview: str = ""
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class AgentSessionDetail(AgentSessionSummary):
+    blocks: list[dict] = Field(
+        default_factory=list,
+        description="The full MessageBlock array as saved by the frontend; "
+                    "opaque server-side JSON (render logic lives on the client).",
+    )
+
+
+class UpsertAgentSessionRequest(BaseModel):
+    title: str = Field(..., description="Session title (auto-derived client-side)")
+    blocks: list[dict] = Field(..., description="Full MessageBlock array")
+    message_count: int = 0
+    last_message_preview: str = ""
+
+
+class RenameAgentSessionRequest(BaseModel):
+    title: str = Field(..., description="New title (trimmed, non-empty)")
+
+
 class PMSAgentRequest(BaseModel):
     prompt: str = Field(..., description="User's natural-language query")
     history: list[AgentHistoryTurn] = Field(
