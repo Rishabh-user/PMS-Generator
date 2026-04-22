@@ -370,9 +370,10 @@ async def api_list_agent_sessions(
     x_user_id: str | None = Header(default=None),
 ):
     """List the caller's saved PMS-agent chat sessions (summaries, no
-    blocks). Empty list when DB isn't configured."""
+    blocks). Returns 503 when DB isn't configured so the frontend can
+    distinguish 'truly empty history' from 'history sync off'."""
     if not db_service.is_available():
-        return []
+        _service_unavailable()
     rows = await db_service.list_agent_sessions(x_user_id or "anonymous")
     return rows
 
