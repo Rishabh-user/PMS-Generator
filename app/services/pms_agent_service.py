@@ -1,17 +1,28 @@
 """
-PMS Agent service — natural-language prompt parsing for the PMS generator.
+PMS Agent service — natural-language chat over the piping-class catalogue.
 
-This is intentionally deterministic (no LLM call) so the feature works
-regardless of AI credit status and returns instantly. The parser extracts
-piping class codes, ratings, materials, corrosion allowances, services,
-and design conditions from free-text queries, then matches against the
-embedded pipe-class data.
+Two-stage pipeline:
+  1. Deterministic parser (regex) extracts structured parameters — class
+     code, rating, material, CA, service, design conditions — from the
+     user's prompt. Also produces the matched_classes and suggested_action
+     the frontend needs for deep-linking into the generator.
+  2. Claude (Anthropic) turns the user's prompt + parsed intent + match
+     list + conversation history into a warm, conversational reply.
+
+If the Anthropic call fails (no key, rate limit, credit balance, etc.)
+the service falls back to a deterministic template reply so the agent
+never hard-fails.
 """
+import json
 import logging
 import re
 
+import anthropic
+
+from app.config import settings
 from app.models.pms_agent_models import (
     AgentAction,
+    AgentHistoryTurn,
     ClassMatch,
     ParsedQuery,
     PMSAgentRequest,
@@ -342,11 +353,143 @@ def _build_action(q: ParsedQuery, matches: list[ClassMatch]) -> AgentAction:
     return AgentAction(type="list_only")
 
 
+_AGENT_SYSTEM_PROMPT = """You are the "PMS Generator AI Agent" — a friendly, expert assistant for
+a Piping Material Specification (PMS) tool used by process-piping engineers on
+an oil & gas project.
+
+You help users find and generate PMS sheets for piping classes. The project
+has 92 piping classes using codes like A1, B1N, D1L, E1LN, F10, G20N, A30
+(CuNi), A40 (Copper), A50/A51/A52 (GRE), A60 (CPVC), A70 (Titanium), plus
+tubing classes T80A/B/C and T90A/B/C.
+
+Class code structure: [Rating letter][Material number][Suffix]
+  Rating: A=150# | B=300# | D=600# | E=900# | F=1500# | G=2500#
+  Material: 1=CS 3mm CA | 2=CS 6mm CA | 1L=LTCS | 10=SS316L | 20=DSS | 25=SDSS |
+            30=CuNi | 40=Copper | 50-52=GRE | 60=CPVC | 70=Titanium
+  Suffix:  N=NACE (sour) | L=Low Temp | LN=LT+NACE
+
+YOUR JOB IS TO:
+1. Interpret the user's request (even if informal — "give me a 300 sour class"
+   means 300#, NACE, probably CS or SS).
+2. Confirm what you understood in plain English, briefly.
+3. Describe the matched classes in context — why they fit, what service
+   they're for, notable characteristics (e.g. "F10 is a 1500# SS316L spec
+   with mixed seamless/welded pipe").
+4. Suggest next steps — opening the generator, refining the search, etc.
+5. For follow-ups ("what about 600#?", "the NACE version?") use the
+   conversation history to stay on topic.
+
+STYLE:
+- Warm and conversational, not robotic or formal.
+- Short paragraphs — 1 to 3 sentences per idea.
+- Use **bold** sparingly for class codes and key numbers.
+- When there are multiple matches, briefly contrast them so the user can pick.
+- When there are no matches, be helpful — suggest alternative searches,
+  ask a clarifying question, or guide them toward the right filters.
+- Never invent piping classes or standards. If you're unsure, say so.
+- Never show JSON or raw API structure to the user — you're the human-facing
+  layer; the UI renders class cards separately.
+- Keep replies under ~120 words unless the user asks for more detail.
+"""
+
+
+def _format_matches_for_ai(matches: list[ClassMatch]) -> str:
+    if not matches:
+        return "NONE — no piping class matched the user's query."
+    lines = []
+    for m in matches:
+        lines.append(
+            f"- {m.piping_class}: {m.rating} · {m.material} · CA {m.corrosion_allowance} · "
+            f"P-T: {m.pt_preview} (match score: {m.score:.2f})"
+        )
+    return "\n".join(lines)
+
+
+def _format_parsed_for_ai(parsed: ParsedQuery) -> str:
+    parts = []
+    if parsed.piping_class: parts.append(f"class={parsed.piping_class}")
+    if parsed.rating: parts.append(f"rating={parsed.rating}")
+    if parsed.material: parts.append(f"material={parsed.material}")
+    if parsed.corrosion_allowance: parts.append(f"CA={parsed.corrosion_allowance}")
+    if parsed.service: parts.append(f"service={parsed.service}")
+    if parsed.design_pressure_barg is not None: parts.append(f"P={parsed.design_pressure_barg} barg")
+    if parsed.design_temp_c is not None: parts.append(f"T={parsed.design_temp_c}°C")
+    parts.append(f"intent={parsed.intent}")
+    return ", ".join(parts) if parts else "(nothing specific extracted)"
+
+
+async def _compose_ai_reply(
+    prompt: str,
+    parsed: ParsedQuery,
+    matches: list[ClassMatch],
+    history: list[AgentHistoryTurn],
+) -> str | None:
+    """Ask Claude to write a conversational reply grounded in the matched
+    classes. Returns None on any failure (no key, rate limit, etc.) so the
+    caller can fall back to the deterministic template."""
+    if not settings.anthropic_api_key:
+        return None
+
+    # Context block the LLM uses as ground-truth
+    context = (
+        f"USER PROMPT:\n{prompt}\n\n"
+        f"WHAT THE PARSER EXTRACTED:\n{_format_parsed_for_ai(parsed)}\n\n"
+        f"MATCHED PIPING CLASSES (from the deterministic catalogue search):\n"
+        f"{_format_matches_for_ai(matches)}\n\n"
+        f"Now write your reply to the user. Ground every claim about a class "
+        f"in the matches above — do NOT invent classes or values not listed."
+    )
+
+    # Build messages list: prior history, then the current turn with context
+    messages = []
+    # Keep the last 10 history turns to cap latency and token use
+    for turn in history[-10:]:
+        messages.append({"role": turn.role, "content": turn.content})
+    messages.append({"role": "user", "content": context})
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=512,
+            system=_AGENT_SYSTEM_PROMPT,
+            messages=messages,
+        )
+        text = response.content[0].text.strip() if response.content else ""
+        return text or None
+    except anthropic.AuthenticationError:
+        logger.warning("PMS agent: Anthropic auth error — falling back to deterministic reply")
+        return None
+    except anthropic.RateLimitError:
+        logger.warning("PMS agent: Anthropic rate limit — falling back to deterministic reply")
+        return None
+    except anthropic.APIError as e:
+        logger.warning("PMS agent: Anthropic API error (%s) — falling back to deterministic reply", e)
+        return None
+    except Exception as e:
+        logger.exception("PMS agent: unexpected error generating AI reply: %s", e)
+        return None
+
+
 async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
-    """Entry point for POST /api/pms-agent/chat."""
+    """Entry point for POST /api/pms-agent/chat.
+
+    Flow:
+      1. Parse the user's prompt deterministically (regex).
+      2. Search the catalogue for matching classes.
+      3. Ask Claude to compose a warm, conversational reply grounded in the
+         parsed intent + matches + prior conversation turns.
+      4. If Claude is unavailable, fall back to a deterministic template reply.
+      5. Build a suggested_action so the UI can deep-link into the generator.
+    """
     parsed = parse_prompt(req.prompt)
     matches = find_matches(parsed)
-    reply = _compose_reply(parsed, matches)
+
+    # Prefer the AI-generated reply; fall back to the deterministic one.
+    reply = await _compose_ai_reply(req.prompt, parsed, matches, req.history)
+    if not reply:
+        reply = _compose_reply(parsed, matches)
+
     action = _build_action(parsed, matches)
     return PMSAgentResponse(
         reply=reply,

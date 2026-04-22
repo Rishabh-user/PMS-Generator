@@ -8,8 +8,21 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 
+class AgentHistoryTurn(BaseModel):
+    """One prior turn of the conversation, sent back to give Claude multi-turn context."""
+    role: Literal["user", "assistant"]
+    content: str = Field(..., description="Message text (plain or markdown)")
+
+
 class PMSAgentRequest(BaseModel):
     prompt: str = Field(..., description="User's natural-language query")
+    history: list[AgentHistoryTurn] = Field(
+        default_factory=list,
+        description=(
+            "Prior conversation turns in order (oldest first). The frontend "
+            "should cap this to the last ~10 turns to keep latency low."
+        ),
+    )
 
 
 class ClassMatch(BaseModel):
