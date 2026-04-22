@@ -41,6 +41,35 @@ class ClassMatch(BaseModel):
     )
 
 
+class FieldSuggestion(BaseModel):
+    """When a user-provided value doesn't match any valid option, the agent
+    returns this so the frontend can render 'did you mean …?' chips."""
+    field: Literal["rating", "material", "corrosion_allowance"]
+    provided: str = Field(..., description="What the user actually typed")
+    suggestions: list[str] = Field(
+        default_factory=list,
+        description="Valid values the user might have meant (closest first)",
+    )
+
+
+class SlotState(BaseModel):
+    """Snapshot of the three required fields for generating a PMS.
+    The frontend uses this to render progress pills (Rating ✓ · Material ?
+    · CA ?) and to decide whether a Download flow can start."""
+    rating: Optional[str] = None
+    material: Optional[str] = None
+    corrosion_allowance: Optional[str] = None
+    missing: list[str] = Field(
+        default_factory=list,
+        description="Required fields the user hasn't supplied yet (subset of "
+                    "['rating','material','corrosion_allowance']).",
+    )
+    complete: bool = Field(
+        default=False,
+        description="True when all three required fields are filled.",
+    )
+
+
 class ParsedQuery(BaseModel):
     """What the agent understood from the prompt."""
     piping_class: Optional[str] = None
@@ -69,3 +98,25 @@ class PMSAgentResponse(BaseModel):
     interpreted: ParsedQuery
     matched_classes: list[ClassMatch] = Field(default_factory=list)
     suggested_action: AgentAction = Field(default_factory=AgentAction)
+    slots: SlotState = Field(
+        default_factory=SlotState,
+        description="Slot-filling state — which of Rating / Material / CA have "
+                    "been supplied, which are missing, and whether the trio is complete.",
+    )
+    field_suggestions: list[FieldSuggestion] = Field(
+        default_factory=list,
+        description="For any user-supplied value that didn't match valid options, "
+                    "the closest valid values. Frontend renders these as 'did you "
+                    "mean …?' chips.",
+    )
+    available_values: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Canonical valid values per field (for dropdown / autocomplete). "
+                    "Keys: 'rating', 'material', 'corrosion_allowance'.",
+    )
+    allow_bulk_download: bool = Field(
+        default=False,
+        description="True when matched_classes contains concrete class rows the user "
+                    "can multi-select and ZIP-download. False for empty results or "
+                    "pure info queries.",
+    )

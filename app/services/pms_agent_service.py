@@ -24,9 +24,11 @@ from app.models.pms_agent_models import (
     AgentAction,
     AgentHistoryTurn,
     ClassMatch,
+    FieldSuggestion,
     ParsedQuery,
     PMSAgentRequest,
     PMSAgentResponse,
+    SlotState,
 )
 from app.services import data_service
 
@@ -353,6 +355,118 @@ def _build_action(q: ParsedQuery, matches: list[ClassMatch]) -> AgentAction:
     return AgentAction(type="list_only")
 
 
+# ── Slot-filling helpers ────────────────────────────────────────────
+
+def _available_values() -> dict[str, list[str]]:
+    """Return the canonical valid values for each required field, derived from
+    the pipe-class catalogue. Used both for the agent's system prompt and for
+    the /api/pms-agent/chat response so the frontend can render autocomplete
+    chips."""
+    data = data_service.get_all_entries()
+    ratings = sorted({e.get("rating", "") for e in data if e.get("rating") and e.get("rating") != "-"})
+    materials = sorted({e.get("material", "") for e in data if e.get("material")})
+    cas = sorted({e.get("corrosion_allowance", "") for e in data if e.get("corrosion_allowance")})
+    return {"rating": ratings, "material": materials, "corrosion_allowance": cas}
+
+
+def _similarity(a: str, b: str) -> float:
+    """Quick-and-cheap similarity score in [0..1] — substring bonus + char-set
+    overlap. Used to rank 'did you mean …?' suggestions."""
+    a, b = a.upper().strip(), b.upper().strip()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if a in b or b in a:
+        return 0.8
+    set_a, set_b = set(a.replace(" ", "")), set(b.replace(" ", ""))
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
+def _suggest_values(provided: str, field: str, top: int = 5) -> list[str]:
+    """Return up to `top` valid values for `field` ranked by similarity to
+    `provided`. Empty list if `provided` already matches exactly."""
+    options = _available_values().get(field, [])
+    ranked = sorted(options, key=lambda v: -_similarity(provided, v))
+    # Filter to meaningful matches (similarity > 0.2) to avoid random noise
+    return [v for v in ranked if _similarity(provided, v) > 0.2][:top]
+
+
+def _build_slot_state(parsed: ParsedQuery, matches: list[ClassMatch]) -> SlotState:
+    """Compute slot-filling state. When the user hasn't typed a specific class
+    code (e.g. 'generate PMS' with no parameters), the three required fields
+    are Rating + Material + CA. If the user already referenced a class code
+    directly (e.g. 'A1'), slots are auto-filled from the matching entry."""
+    rating = parsed.rating
+    material = parsed.material
+    ca = parsed.corrosion_allowance
+
+    # If the user pointed at a specific class, we can fill slots from the match
+    if parsed.piping_class and matches and matches[0].score >= 0.95:
+        m = matches[0]
+        rating = rating or m.rating
+        material = material or m.material
+        ca = ca or m.corrosion_allowance
+
+    # Normalize CA (parser returns '3 mm' but catalogue uses '3 mm', '6 mm', 'NIL', '1.5 mm')
+    missing = []
+    if not rating:
+        missing.append("rating")
+    if not material:
+        missing.append("material")
+    if not ca:
+        missing.append("corrosion_allowance")
+    return SlotState(
+        rating=rating,
+        material=material,
+        corrosion_allowance=ca,
+        missing=missing,
+        complete=not missing,
+    )
+
+
+def _build_field_suggestions(parsed: ParsedQuery, raw_prompt: str) -> list[FieldSuggestion]:
+    """For any field the parser extracted that doesn't match a valid catalogue
+    value, return suggestions. Also flag unrecognized material/rating tokens
+    that failed to parse at all (best-effort substring match on the raw prompt)."""
+    suggestions: list[FieldSuggestion] = []
+    values = _available_values()
+
+    # Check parsed material
+    if parsed.material:
+        mats = [m.upper() for m in values["material"]]
+        if parsed.material.upper() not in mats and not any(parsed.material.upper() in m for m in mats):
+            suggestions.append(FieldSuggestion(
+                field="material",
+                provided=parsed.material,
+                suggestions=_suggest_values(parsed.material, "material"),
+            ))
+
+    # Check parsed rating
+    if parsed.rating:
+        ratings_norm = [r.replace(" ", "") for r in values["rating"]]
+        if parsed.rating.replace(" ", "") not in ratings_norm:
+            suggestions.append(FieldSuggestion(
+                field="rating",
+                provided=parsed.rating,
+                suggestions=_suggest_values(parsed.rating, "rating"),
+            ))
+
+    # Check parsed CA
+    if parsed.corrosion_allowance:
+        cas = [c.upper() for c in values["corrosion_allowance"]]
+        if parsed.corrosion_allowance.upper() not in cas:
+            suggestions.append(FieldSuggestion(
+                field="corrosion_allowance",
+                provided=parsed.corrosion_allowance,
+                suggestions=_suggest_values(parsed.corrosion_allowance, "corrosion_allowance"),
+            ))
+
+    return suggestions
+
+
 _AGENT_SYSTEM_PROMPT = """You are the "PMS Generator AI Agent" — a friendly, expert assistant for
 a Piping Material Specification (PMS) tool used by process-piping engineers on
 an oil & gas project.
@@ -368,28 +482,58 @@ Class code structure: [Rating letter][Material number][Suffix]
             30=CuNi | 40=Copper | 50-52=GRE | 60=CPVC | 70=Titanium
   Suffix:  N=NACE (sour) | L=Low Temp | LN=LT+NACE
 
-YOUR JOB IS TO:
-1. Interpret the user's request (even if informal — "give me a 300 sour class"
-   means 300#, NACE, probably CS or SS).
-2. Confirm what you understood in plain English, briefly.
-3. Describe the matched classes in context — why they fit, what service
-   they're for, notable characteristics (e.g. "F10 is a 1500# SS316L spec
-   with mixed seamless/welded pipe").
-4. Suggest next steps — opening the generator, refining the search, etc.
-5. For follow-ups ("what about 600#?", "the NACE version?") use the
-   conversation history to stay on topic.
+TO GENERATE A PMS EXCEL REPORT, the user MUST provide three fields:
+  1. Pressure Rating  (required) — e.g. 150#, 300#, 600#, 900#, 1500#, 2500#, or EEMUA 20 bar for CuNi
+  2. Material         (required) — CS, CS NACE, LTCS, LTCS NACE, SS316L, SS316L NACE, DSS, DSS NACE, SDSS, SDSS NACE, CS GALV, CS - Epoxy Lined, CuNi, Copper, GRE, CPVC, Titanium, 6 MO Tubing, SS 316/316L (Tubing)
+  3. Corrosion Allowance (required) — NIL, 1.5 mm, 3 mm, or 6 mm
+
+SLOT-FILLING BEHAVIOUR:
+
+• If the user just says "generate PMS" with NO fields provided → ask for ALL
+  three explicitly in a friendly numbered list. Example:
+    "Happy to generate a PMS sheet! I need three things:
+       1. **Pressure Rating** (e.g. 150#, 300#, 600# …)
+       2. **Material** (e.g. CS, SS316L, DSS …)
+       3. **Corrosion Allowance** (NIL, 1.5 mm, 3 mm, or 6 mm)
+     You can send them all in one message — e.g. '150# CS 3mm'."
+
+• If the user provides SOME but not all fields → acknowledge what you got,
+  then ask ONLY for the missing ones. Never ask for fields already given.
+
+• If a user-provided value doesn't match any valid option (e.g. "Platinum"
+  as material, or "200#" as rating), DON'T just reject it — show the closest
+  valid alternatives. Example:
+    "I don't recognize **Platinum** as a catalogue material. Did you mean
+     one of these? Titanium · CuNi · SS316L · DSS. Pick one and I'll pull
+     the matching classes."
+
+• If all three fields are filled and matches were found, describe the
+  matches briefly (rating, material family, suffix meaning) and tell the
+  user they can **select one or many** and download the Excel(s). If they
+  select multiple, they get a single ZIP archive.
+
+• If the user names a specific class directly (A1, F20N, etc.), that
+  short-circuits slot-filling — jump straight to describing that class
+  and offering the download.
+
+OTHER GOALS:
+1. Interpret informal phrasing ("give me a 300 sour class" = 300#, NACE,
+   likely CS/SS).
+2. For follow-ups ("what about 600#?", "the NACE version?") use
+   conversation history to stay on topic and preserve earlier slots.
+3. Describe matched classes in useful context — why they fit, what service
+   they're for, notable traits (e.g. "F10 is a 1500# SS316L spec with a
+   mixed seamless/welded pipe transition").
 
 STYLE:
-- Warm and conversational, not robotic or formal.
-- Short paragraphs — 1 to 3 sentences per idea.
-- Use **bold** sparingly for class codes and key numbers.
-- When there are multiple matches, briefly contrast them so the user can pick.
-- When there are no matches, be helpful — suggest alternative searches,
-  ask a clarifying question, or guide them toward the right filters.
-- Never invent piping classes or standards. If you're unsure, say so.
-- Never show JSON or raw API structure to the user — you're the human-facing
-  layer; the UI renders class cards separately.
-- Keep replies under ~120 words unless the user asks for more detail.
+- Warm and conversational — you're a helpful colleague, not a form.
+- Short paragraphs, 1–3 sentences per idea.
+- Use **bold** for class codes, key ratings, and required-field names.
+- For multiple matches, briefly contrast them so the user can pick.
+- Never invent piping classes or values. If unsure, say so.
+- Never echo JSON or mention "parser" / "matched_classes" — the UI renders
+  the class cards separately; you're just the conversational layer.
+- Keep replies under ~120 words unless the user explicitly asks for detail.
 """
 
 
@@ -423,6 +567,8 @@ async def _compose_ai_reply(
     parsed: ParsedQuery,
     matches: list[ClassMatch],
     history: list[AgentHistoryTurn],
+    slots: SlotState,
+    field_suggestions: list[FieldSuggestion],
 ) -> str | None:
     """Ask Claude to write a conversational reply grounded in the matched
     classes. Returns None on any failure (no key, rate limit, etc.) so the
@@ -430,14 +576,38 @@ async def _compose_ai_reply(
     if not settings.anthropic_api_key:
         return None
 
-    # Context block the LLM uses as ground-truth
+    # Slot context
+    slot_lines = [
+        f"  Rating: {slots.rating or '❓ MISSING'}",
+        f"  Material: {slots.material or '❓ MISSING'}",
+        f"  Corrosion Allowance: {slots.corrosion_allowance or '❓ MISSING'}",
+        f"  Complete (all 3 filled): {slots.complete}",
+    ]
+    slot_block = "\n".join(slot_lines)
+
+    # Field-suggestion context (did-you-mean)
+    fs_block = ""
+    if field_suggestions:
+        fs_lines = []
+        for fs in field_suggestions:
+            fs_lines.append(
+                f"  - {fs.field}: user said '{fs.provided}' which is NOT in the catalogue. "
+                f"Nearest valid values: {', '.join(fs.suggestions) if fs.suggestions else '(no close match)'}"
+            )
+        fs_block = "\nUSER-PROVIDED VALUES THAT DON'T MATCH THE CATALOGUE:\n" + "\n".join(fs_lines) + "\n"
+
     context = (
         f"USER PROMPT:\n{prompt}\n\n"
         f"WHAT THE PARSER EXTRACTED:\n{_format_parsed_for_ai(parsed)}\n\n"
+        f"SLOT-FILLING STATE (the 3 required fields for generating a PMS):\n{slot_block}\n"
+        f"{fs_block}\n"
         f"MATCHED PIPING CLASSES (from the deterministic catalogue search):\n"
         f"{_format_matches_for_ai(matches)}\n\n"
-        f"Now write your reply to the user. Ground every claim about a class "
-        f"in the matches above — do NOT invent classes or values not listed."
+        f"Now write your reply to the user. Rules:\n"
+        f"  • If slots are incomplete AND no class code was given → ask for the missing field(s) by name.\n"
+        f"  • If field suggestions above are non-empty → present 'did you mean …?' with those values.\n"
+        f"  • If matches exist → describe them briefly and invite the user to select one or many for download.\n"
+        f"  • Ground every claim about a class in the MATCHED list above — do NOT invent values."
     )
 
     # Build messages list: prior history, then the current turn with context
@@ -477,16 +647,25 @@ async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
     Flow:
       1. Parse the user's prompt deterministically (regex).
       2. Search the catalogue for matching classes.
-      3. Ask Claude to compose a warm, conversational reply grounded in the
-         parsed intent + matches + prior conversation turns.
-      4. If Claude is unavailable, fall back to a deterministic template reply.
-      5. Build a suggested_action so the UI can deep-link into the generator.
+      3. Compute slot-filling state (Rating / Material / CA) and
+         field-suggestion hints for any values that didn't match the
+         catalogue.
+      4. Ask Claude to compose a warm, conversational reply grounded in the
+         parsed intent + matches + slot state + conversation history.
+      5. If Claude is unavailable, fall back to a deterministic template reply.
+      6. Build a suggested_action + return full slot / suggestion state so
+         the frontend can render progress pills, did-you-mean chips, and
+         the multi-select download UI.
     """
     parsed = parse_prompt(req.prompt)
     matches = find_matches(parsed)
+    slots = _build_slot_state(parsed, matches)
+    field_suggestions = _build_field_suggestions(parsed, req.prompt)
 
     # Prefer the AI-generated reply; fall back to the deterministic one.
-    reply = await _compose_ai_reply(req.prompt, parsed, matches, req.history)
+    reply = await _compose_ai_reply(
+        req.prompt, parsed, matches, req.history, slots, field_suggestions,
+    )
     if not reply:
         reply = _compose_reply(parsed, matches)
 
@@ -496,4 +675,8 @@ async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
         interpreted=parsed,
         matched_classes=matches,
         suggested_action=action,
+        slots=slots,
+        field_suggestions=field_suggestions,
+        available_values=_available_values(),
+        allow_bulk_download=len(matches) > 0,
     )

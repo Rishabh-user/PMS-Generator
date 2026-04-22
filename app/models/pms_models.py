@@ -13,6 +13,14 @@ class PMSRequest(BaseModel):
     )
 
 
+class BulkDownloadRequest(BaseModel):
+    """Request body for /api/download-excel-zip — a list of classes the user
+    has selected (Select All or explicit checkboxes). Each item is the same
+    shape as a normal PMSRequest. The endpoint generates every PMS in
+    parallel, packs them into a single ZIP archive, and streams it back."""
+    classes: list[PMSRequest] = Field(..., description="Classes to download")
+
+
 class PressureTemperature(BaseModel):
     temperatures: list[float] = Field(default_factory=list, description="Temperature values in deg C")
     pressures: list[float] = Field(default_factory=list, description="Pressure values in barg")

@@ -8,7 +8,7 @@ import re
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from app.models.pms_models import PMSRequest, PMSResponse
+from app.models.pms_models import PMSRequest, PMSResponse, BulkDownloadRequest
 from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
 from app.models.pms_agent_models import PMSAgentRequest, PMSAgentResponse
 from app.models.validation_models import ValidationReport
@@ -143,6 +143,66 @@ async def api_download_excel(req: PMSRequest):
     except Exception as e:
         logger.exception("Error generating Excel")
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
+@router.post("/download-excel-zip")
+async def api_download_excel_zip(req: BulkDownloadRequest):
+    """Generate an Excel PMS for each class in the request and return them
+    all packed into a single ZIP archive. Used by the AI-Agent multi-select
+    download flow — user picks N classes, gets one ZIP back."""
+    import zipfile
+    if not req.classes:
+        raise HTTPException(status_code=400, detail="No classes selected")
+    if len(req.classes) > 50:
+        raise HTTPException(status_code=400, detail="Too many classes in one ZIP request (max 50)")
+
+    buf = io.BytesIO()
+    failures: list[str] = []
+    successes: list[str] = []
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for cls_req in req.classes:
+                try:
+                    pms = await generate_pms(cls_req)
+                    excel_bytes = generate_excel(pms)
+                    safe_rating = pms.rating.replace("#", "").replace(" ", "_").replace("/", "_") or "NA"
+                    fname = f"PMS_{pms.piping_class}_{safe_rating}.xlsx"
+                    zf.writestr(fname, excel_bytes)
+                    successes.append(pms.piping_class)
+                except Exception as e:
+                    logger.warning("Bulk ZIP: failed to generate %s: %s", cls_req.piping_class, e)
+                    failures.append(f"{cls_req.piping_class}: {e}")
+
+            # Include a short manifest so the user knows what succeeded / failed
+            manifest = "PMS Bulk Download Manifest\n" + "=" * 40 + "\n\n"
+            manifest += f"Requested: {len(req.classes)} class{'es' if len(req.classes) != 1 else ''}\n"
+            manifest += f"Generated: {len(successes)}\n"
+            manifest += f"Failed:    {len(failures)}\n\n"
+            if successes:
+                manifest += "SUCCEEDED:\n" + "\n".join(f"  - {s}" for s in successes) + "\n\n"
+            if failures:
+                manifest += "FAILED:\n" + "\n".join(f"  - {f}" for f in failures) + "\n"
+            zf.writestr("_manifest.txt", manifest)
+
+        if not successes:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not generate any of the {len(req.classes)} classes. "
+                       f"First error: {failures[0] if failures else 'unknown'}",
+            )
+
+        buf.seek(0)
+        filename = f"PMS_Bulk_{len(successes)}_classes.zip"
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error creating bulk ZIP")
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
 
 @router.get("/pms/{piping_class}", response_model=PMSResponse)
