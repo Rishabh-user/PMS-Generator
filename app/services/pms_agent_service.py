@@ -102,10 +102,21 @@ _DESIGN_TEMP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Intent keywords
+# Intent keywords. List-signal phrases are checked FIRST because they
+# dominate — "Generate all PMS of rating 150" is a browse/list request
+# even though it contains "generate". If we evaluated "generate" first
+# the slot-filling gate would kick in and refuse to return matches
+# until Material + CA + Service were also filled, which is exactly the
+# opposite of what the user wants when they ask for "all".
 _INTENT_PATTERNS = [
-    (r"\b(generate|create|build|make|produce|get)\b", "generate"),
+    # Explicit list verbs
     (r"\b(list|show|find|search|which|what|available|browse)\b", "list"),
+    # "all/every X" quantifiers — catches "all PMS", "all classes",
+    # "every piping class", "all of them", "list them all", etc.
+    (r"\b(?:all|every)\b(?:\s+(?:the\s+)?(?:pms|piping|classes?|entries?|matches?|results?|of))?", "list"),
+    # Single-class generate verbs (gated)
+    (r"\b(generate|create|build|make|produce|get)\b", "generate"),
+    # Info / describe verbs (never gated)
     (r"\b(tell|describe|info|details|explain|about)\b", "info"),
 ]
 
@@ -183,12 +194,26 @@ def parse_prompt(prompt: str) -> ParsedQuery:
             # Normalize to match data store format: "3 mm", "1.5 mm"
             ca = f"{value} mm"
 
-    # Service
+    # Service — try the keyword patterns first (which normalize to the
+    # canonical label, e.g. "hydrocarbon" → "Hydrocarbon Service"). If
+    # nothing matches but the prompt is a structured `Service: X` form
+    # from a chip click, take X verbatim — that's how the picker
+    # surfaces free-text entries that don't hit any keyword pattern.
     service: str | None = None
     for pat, label in _SERVICE_PATTERNS:
         if re.search(pat, low, re.IGNORECASE):
             service = label
             break
+    if not service:
+        m = re.search(
+            r"\bservice\s*[:=]\s*(.+?)\s*$",
+            raw,
+            re.IGNORECASE,
+        )
+        if m:
+            val = m.group(1).strip().rstrip(".,;")
+            if val and val.lower() not in ("", "skip", "none"):
+                service = val
 
     # Design pressure
     design_pressure_barg: float | None = None
@@ -340,6 +365,13 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
     # on all three. This is the common "user finished slot-picking" path
     # and we don't want to dump 8 near-misses; 1 precise answer is what
     # the user asked for.
+    #
+    # Two-phase material matching:
+    #   1. Exact (case-insensitive). Handles full catalogue values like
+    #      "CS", "SS316L NACE", etc. picked directly from the picker.
+    #   2. Fuzzy (_material_matches). Only runs if phase 1 returned
+    #      nothing — handles short labels like "GRE" (from the regex
+    #      parser) matching catalogue rows like "GRE (Valve: NAB)".
     if q.rating and q.material and q.corrosion_allowance:
         exact: list[dict] = []
         qr = q.rating.replace(" ", "")
@@ -351,6 +383,39 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
             ec = (e.get("corrosion_allowance") or "").strip().upper()
             if er == qr and em == qm and ec == qc:
                 exact.append(e)
+        if not exact:
+            # Fall back to fuzzy material match — lets "GRE" hit the
+            # catalogue's "GRE (Valve: NAB)" entries (A50/A51/A52).
+            for e in all_entries:
+                er = (e.get("rating") or "").replace(" ", "")
+                ec = (e.get("corrosion_allowance") or "").strip().upper()
+                if (
+                    er == qr
+                    and _material_matches(e.get("material", ""), q.material)
+                    and ec == qc
+                ):
+                    exact.append(e)
+
+        # Further narrow by service when the user specified a
+        # non-broad service (e.g. "Hypochlorite"). The catalogue
+        # service field is a comma-joined list, so substring-match
+        # case-insensitively. Broad services like "General" are
+        # treated as wildcards and don't filter — the curated roster
+        # uses them for picker UX only.
+        if q.service and exact:
+            s_needle = q.service.strip().lower()
+            if s_needle and s_needle not in _BROAD_SERVICES:
+                refined = [
+                    e for e in exact
+                    if s_needle in (e.get("service") or "").lower()
+                ]
+                if refined:
+                    exact = refined
+                # else: keep the broader exact list so the user sees
+                # classes for their rating/material/CA rather than a
+                # dead-end on a service typo. The reply can hint that
+                # no class explicitly targets this service.
+
         rows = exact if limit is None else exact[:limit]
         return [
             ClassMatch(
@@ -433,6 +498,7 @@ _FIELD_LABELS = {
     "rating": "Pressure Rating",
     "material": "Material",
     "corrosion_allowance": "Corrosion Allowance",
+    "service": "Service Description",
 }
 
 
@@ -446,6 +512,7 @@ def _compose_gated_reply(slots: SlotState) -> str:
     if slots.material: filled.append(f"Material = **{slots.material}**")
     if slots.corrosion_allowance:
         filled.append(f"Corrosion Allowance = **{slots.corrosion_allowance}**")
+    if slots.service: filled.append(f"Service = **{slots.service}**")
 
     missing_labels = [_FIELD_LABELS[f] for f in slots.missing]
 
@@ -467,11 +534,12 @@ def _compose_gated_reply(slots: SlotState) -> str:
             "in one message."
         )
     return (
-        f"{lead}To generate a PMS I need three things:\n"
+        f"{lead}To generate a PMS I need four things:\n"
         f"  1. **Pressure Rating** (e.g. 150#, 300#, 600# …)\n"
         f"  2. **Material** (e.g. CS, SS316L, DSS …)\n"
         f"  3. **Corrosion Allowance** (NIL, 1.5 mm, 3 mm, or 6 mm)\n"
-        "Service Description is optional — skip it if you like."
+        f"  4. **Service Description** (General, Hydrocarbon, Sour / H2S, …)\n"
+        "Pick from the chips below or send them in one message."
     )
 
 
@@ -495,16 +563,146 @@ def _build_action(q: ParsedQuery, matches: list[ClassMatch]) -> AgentAction:
 
 # ── Slot-filling helpers ────────────────────────────────────────────
 
-def _available_values() -> dict[str, list[str]]:
-    """Return the canonical valid values for each required field, derived from
-    the pipe-class catalogue. Used both for the agent's system prompt and for
-    the /api/pms-agent/chat response so the frontend can render autocomplete
-    chips."""
+# Services that are effectively wildcards — the user picked a broad
+# category and doesn't want it used as a filter. We still accept them
+# as a slot value (so slot-fill can complete) but won't narrow results.
+_BROAD_SERVICES = {"general", "none", "n/a", "na", ""}
+
+
+def _available_values(parsed: ParsedQuery | None = None) -> dict[str, list[str]]:
+    """Return catalogue-valid values for each required field, optionally
+    FILTERED by the slots the user has already locked in.
+
+    When `parsed` is None (or all slots empty) → returns every value
+    that exists in the catalogue. That's what the first-turn picker
+    shows before the user has committed to anything.
+
+    When `parsed` carries, say, material="GRE" → the returned `rating`,
+    `corrosion_allowance` AND `service` lists are narrowed to only those
+    values that co-occur with GRE in a real catalogue row. Prevents the
+    "user picked GRE, then 150# + 3 mm, ended up with no matches" loop.
+
+    The field being picked is intentionally NOT self-filtered — we need
+    to show every option for it. Only the OTHER slots act as filters.
+
+    Service values come from the catalogue itself: each class's service
+    field is a comma-separated list of service names (e.g.
+    "Cooling Media, Heating Media, Diesel, …"). We split those and
+    collect uniques so the picker offers exactly the services real
+    classes are flagged for — including class-specific ones like
+    "Hypochlorite" that a curated list would miss. A short fallback
+    roster is merged in so early-turn pickers (no slots yet) still
+    show broad categories like "General".
+    """
     data = data_service.get_all_entries()
-    ratings = sorted({e.get("rating", "") for e in data if e.get("rating") and e.get("rating") != "-"})
-    materials = sorted({e.get("material", "") for e in data if e.get("material")})
-    cas = sorted({e.get("corrosion_allowance", "") for e in data if e.get("corrosion_allowance")})
-    return {"rating": ratings, "material": materials, "corrosion_allowance": cas}
+
+    # Short curated list shown when the picker has nothing specific
+    # from the catalogue (or to guarantee common categories are always
+    # present regardless of what's cached).
+    curated_services = {
+        "General",
+        "Hydrocarbon Service",
+        "Sour / H2S Service (NACE)",
+        "Cooling Water / Seawater",
+        "Fire Water",
+        "Steam",
+        "Low Temperature Service",
+        "Utility / Instrument",
+        "Hydrogen Service",
+    }
+
+    if parsed is None:
+        parsed = ParsedQuery()
+
+    def _norm_rating(r: str | None) -> str:
+        return (r or "").replace(" ", "").strip()
+
+    def _apply_other_filters(exclude: str) -> list[dict]:
+        """Return catalogue rows filtered by every filled slot EXCEPT
+        the one we're listing values for."""
+        rows = data
+        if exclude != "material" and parsed.material:
+            q_mat = parsed.material
+            rows = [
+                e for e in rows
+                if _material_matches(e.get("material", ""), q_mat)
+            ]
+        if exclude != "rating" and parsed.rating:
+            qr = _norm_rating(parsed.rating)
+            rows = [e for e in rows if _norm_rating(e.get("rating")) == qr]
+        if exclude != "corrosion_allowance" and parsed.corrosion_allowance:
+            qc = (parsed.corrosion_allowance or "").strip().upper()
+            rows = [
+                e for e in rows
+                if (e.get("corrosion_allowance") or "").strip().upper() == qc
+            ]
+        if exclude != "service" and parsed.service:
+            sn = parsed.service.strip().lower()
+            if sn and sn not in _BROAD_SERVICES:
+                # Soft filter: only apply service narrowing if at least
+                # one row still matches. If the catalogue doesn't have
+                # the service populated for this combo (or the user
+                # typed a service no row mentions), keep the rows
+                # unfiltered — the picker staying populated matters
+                # more than strict service narrowing. `find_matches`
+                # does its own strict service filter when the user
+                # actually asks for results, so nothing leaks through
+                # to the final answer.
+                filtered = [
+                    e for e in rows
+                    if sn in (e.get("service") or "").lower()
+                ]
+                if filtered:
+                    rows = filtered
+        return rows
+
+    rating_rows = _apply_other_filters("rating")
+    material_rows = _apply_other_filters("material")
+    ca_rows = _apply_other_filters("corrosion_allowance")
+    service_rows = _apply_other_filters("service")
+
+    ratings = sorted({
+        e.get("rating", "") for e in rating_rows
+        if e.get("rating") and e.get("rating") != "-"
+    })
+    materials = sorted({
+        e.get("material", "") for e in material_rows if e.get("material")
+    })
+    cas = sorted({
+        e.get("corrosion_allowance", "") for e in ca_rows
+        if e.get("corrosion_allowance")
+    })
+
+    # Services: split each class's comma-joined service field into
+    # individual terms. A class like A1 with
+    # "Cooling Media, Heating Media, Diesel, Steam, …" becomes five
+    # separate pickable options.
+    catalogue_services: set[str] = set()
+    for e in service_rows:
+        raw_svc = e.get("service") or ""
+        for part in raw_svc.split(","):
+            token = part.strip()
+            if token:
+                catalogue_services.add(token)
+
+    # When the user has narrowed by material/rating/CA, show ONLY the
+    # catalogue services for that intersection — no padding with
+    # generic curated options that may not apply. When nothing's
+    # narrowed yet, merge the curated roster in so the first-turn
+    # picker still has the common broad categories.
+    if (
+        parsed.material or parsed.rating or parsed.corrosion_allowance
+    ) and catalogue_services:
+        services = sorted(catalogue_services)
+    else:
+        services = sorted(catalogue_services | curated_services)
+
+    return {
+        "rating": ratings,
+        "material": materials,
+        "corrosion_allowance": cas,
+        "service": services,
+    }
 
 
 def _similarity(a: str, b: str) -> float:
@@ -523,10 +721,20 @@ def _similarity(a: str, b: str) -> float:
     return len(set_a & set_b) / len(set_a | set_b)
 
 
-def _suggest_values(provided: str, field: str, top: int = 5) -> list[str]:
-    """Return up to `top` valid values for `field` ranked by similarity to
-    `provided`. Empty list if `provided` already matches exactly."""
-    options = _available_values().get(field, [])
+def _suggest_values(
+    provided: str,
+    field: str,
+    top: int = 5,
+    pool: list[str] | None = None,
+) -> list[str]:
+    """Return up to `top` valid values for `field` ranked by similarity
+    to `provided`. Empty list if `provided` already matches exactly.
+
+    `pool` optionally overrides the candidate list — used by
+    `_build_field_suggestions` to suggest only values that co-occur
+    with the user's already-filled slots (so we never recommend a
+    rating that has no class for the chosen material)."""
+    options = pool if pool is not None else _available_values().get(field, [])
     ranked = sorted(options, key=lambda v: -_similarity(provided, v))
     # Filter to meaningful matches (similarity > 0.2) to avoid random noise
     return [v for v in ranked if _similarity(provided, v) > 0.2][:top]
@@ -590,15 +798,49 @@ def _merge_slots_from_history(
     return parsed
 
 
+def _auto_fill_unique_slots(parsed: ParsedQuery) -> ParsedQuery:
+    """Catalogue-driven auto-fill: when a slot is empty but the available
+    values (given the slots that ARE filled) narrow to exactly one,
+    fill it automatically. Typical trigger: user picks a niche
+    material like GRE which has only one rating (150#) and one CA
+    (NIL) in the catalogue — no point making them click through
+    pickers with a single option each.
+
+    Runs in up to 3 passes because each fill can narrow the others
+    further. Service is NOT auto-filled — it's descriptive user input
+    that changes the generated PMS document, so the user must declare
+    it explicitly even if only one class matches.
+    """
+    for _ in range(3):
+        values = _available_values(parsed)
+        changed = False
+        if not parsed.rating and len(values.get("rating", [])) == 1:
+            parsed.rating = values["rating"][0]
+            changed = True
+        if not parsed.material and len(values.get("material", [])) == 1:
+            parsed.material = values["material"][0]
+            changed = True
+        if (
+            not parsed.corrosion_allowance
+            and len(values.get("corrosion_allowance", [])) == 1
+        ):
+            parsed.corrosion_allowance = values["corrosion_allowance"][0]
+            changed = True
+        if not changed:
+            break
+    return parsed
+
+
 def _should_gate_matches(parsed: ParsedQuery, slots: SlotState) -> bool:
     """Return True when we must HIDE matched_classes and push the user to
     finish slot-filling first. Rule:
 
       • An explicit "list/show/find" query → never gate.
       • A direct class-code lookup (e.g. "A1") → never gate.
-      • All three required slots filled (Rating + Material + CA) → never gate.
-      • Otherwise → gate, so the reply nudges for missing fields instead of
-        dumping dozens of partial matches.
+      • All four required slots filled (Rating + Material + CA + Service)
+        → never gate.
+      • Otherwise → gate, so the reply nudges for missing fields instead
+        of dumping dozens of partial matches.
     """
     if parsed.intent == "list":
         return False
@@ -610,13 +852,21 @@ def _should_gate_matches(parsed: ParsedQuery, slots: SlotState) -> bool:
 
 
 def _build_slot_state(parsed: ParsedQuery, matches: list[ClassMatch]) -> SlotState:
-    """Compute slot-filling state. When the user hasn't typed a specific class
-    code (e.g. 'generate PMS' with no parameters), the three required fields
-    are Rating + Material + CA. If the user already referenced a class code
-    directly (e.g. 'A1'), slots are auto-filled from the matching entry."""
+    """Compute slot-filling state. When the user hasn't typed a specific
+    class code (e.g. 'generate PMS' with no parameters), the four
+    required fields are Rating + Material + CA + Service. If the user
+    already referenced a class code directly (e.g. 'A1'), slots are
+    auto-filled from the matching entry.
+
+    Service is required to prevent the generated PMS from silently
+    defaulting to "General" — if the user has a specific service in
+    mind they should declare it; if they genuinely mean general, they
+    pick "General" from the chip list.
+    """
     rating = parsed.rating
     material = parsed.material
     ca = parsed.corrosion_allowance
+    service = parsed.service
 
     # If the user pointed at a specific class, we can fill slots from the match
     if parsed.piping_class and matches and matches[0].score >= 0.95:
@@ -624,8 +874,10 @@ def _build_slot_state(parsed: ParsedQuery, matches: list[ClassMatch]) -> SlotSta
         rating = rating or m.rating
         material = material or m.material
         ca = ca or m.corrosion_allowance
+        # Note: ClassMatch doesn't carry service — we don't auto-fill it
+        # from the class, so the user still gets prompted if they only
+        # gave a class code.
 
-    # Normalize CA (parser returns '3 mm' but catalogue uses '3 mm', '6 mm', 'NIL', '1.5 mm')
     missing = []
     if not rating:
         missing.append("rating")
@@ -633,51 +885,75 @@ def _build_slot_state(parsed: ParsedQuery, matches: list[ClassMatch]) -> SlotSta
         missing.append("material")
     if not ca:
         missing.append("corrosion_allowance")
+    if not service:
+        missing.append("service")
     return SlotState(
         rating=rating,
         material=material,
         corrosion_allowance=ca,
+        service=service,
         missing=missing,
         complete=not missing,
     )
 
 
 def _build_field_suggestions(parsed: ParsedQuery, raw_prompt: str) -> list[FieldSuggestion]:
-    """For any field the parser extracted that doesn't match a valid catalogue
-    value, return suggestions. Also flag unrecognized material/rating tokens
-    that failed to parse at all (best-effort substring match on the raw prompt)."""
+    """For any field the parser extracted that doesn't match a valid
+    catalogue value, return suggestions. The suggestion universe is
+    narrowed by whatever OTHER slots are already filled — so if the
+    user picked GRE + typed a bad rating, the 'did you mean…' chips
+    only offer ratings that actually have a GRE class."""
     suggestions: list[FieldSuggestion] = []
-    values = _available_values()
+    # Unfiltered values — used for basic 'is this token valid in the
+    # catalogue at all?' check. Filtered values (narrowed by other
+    # slots) are what we surface as suggestions so the user is pushed
+    # toward a combination that will actually match.
+    values_all = _available_values()
+    values_filtered = _available_values(parsed)
 
     # Check parsed material
     if parsed.material:
-        mats = [m.upper() for m in values["material"]]
-        if parsed.material.upper() not in mats and not any(parsed.material.upper() in m for m in mats):
+        mats = [m.upper() for m in values_all["material"]]
+        if parsed.material.upper() not in mats and not any(
+            parsed.material.upper() in m for m in mats
+        ):
             suggestions.append(FieldSuggestion(
                 field="material",
                 provided=parsed.material,
-                suggestions=_suggest_values(parsed.material, "material"),
+                suggestions=_suggest_values(
+                    parsed.material, "material", pool=values_filtered["material"],
+                ),
             ))
 
     # Check parsed rating
     if parsed.rating:
-        ratings_norm = [r.replace(" ", "") for r in values["rating"]]
+        ratings_norm = [r.replace(" ", "") for r in values_all["rating"]]
         if parsed.rating.replace(" ", "") not in ratings_norm:
             suggestions.append(FieldSuggestion(
                 field="rating",
                 provided=parsed.rating,
-                suggestions=_suggest_values(parsed.rating, "rating"),
+                suggestions=_suggest_values(
+                    parsed.rating, "rating", pool=values_filtered["rating"],
+                ),
             ))
 
     # Check parsed CA
     if parsed.corrosion_allowance:
-        cas = [c.upper() for c in values["corrosion_allowance"]]
+        cas = [c.upper() for c in values_all["corrosion_allowance"]]
         if parsed.corrosion_allowance.upper() not in cas:
             suggestions.append(FieldSuggestion(
                 field="corrosion_allowance",
                 provided=parsed.corrosion_allowance,
-                suggestions=_suggest_values(parsed.corrosion_allowance, "corrosion_allowance"),
+                suggestions=_suggest_values(
+                    parsed.corrosion_allowance,
+                    "corrosion_allowance",
+                    pool=values_filtered["corrosion_allowance"],
+                ),
             ))
+
+    # Service doesn't have a catalogue constraint (free-text), so no
+    # did-you-mean list — user-typed strings are always accepted. The
+    # service picker still shows common options via available_values.
 
     return suggestions
 
@@ -697,13 +973,23 @@ Class code structure: [Rating letter][Material number][Suffix]
             30=CuNi | 40=Copper | 50-52=GRE | 60=CPVC | 70=Titanium
   Suffix:  N=NACE (sour) | L=Low Temp | LN=LT+NACE
 
-TO GENERATE A PMS EXCEL REPORT, the user MUST provide three fields:
+TO GENERATE A PMS EXCEL REPORT, the user MUST provide four fields:
   1. Pressure Rating  (required) — e.g. 150#, 300#, 600#, 900#, 1500#, 2500#, or EEMUA 20 bar for CuNi
   2. Material         (required) — CS, CS NACE, LTCS, LTCS NACE, SS316L, SS316L NACE, DSS, DSS NACE, SDSS, SDSS NACE, CS GALV, CS - Epoxy Lined, CuNi, Copper, GRE, CPVC, Titanium, 6 MO Tubing, SS 316/316L (Tubing)
   3. Corrosion Allowance (required) — NIL, 1.5 mm, 3 mm, or 6 mm
+  4. Service Description (required) — General, Hydrocarbon Service, Sour / H2S Service (NACE), Cooling Water / Seawater, Fire Water, Steam, Low Temperature Service, Utility / Instrument, Hydrogen Service (or any free-text service the user describes)
 
-Service Description is OPTIONAL — the user can skip it, and you should
-NEVER ask for it as a blocking requirement.
+Every one of the four is blocking. If the user says "generate PMS"
+without Service, ask for it just like you'd ask for a missing Rating
+— don't silently default to General, because that ends up in the
+generated Excel sheet and is confusing.
+
+IMPORTANT: The available-values lists given below are already filtered
+to values that EXIST for the slots the user has already picked. If a
+list looks short (e.g. Rating only has two options after the user
+picked GRE material), that's because only those ratings have a class
+in the catalogue for the chosen material. Don't invent other values —
+the user picked a material that just doesn't have all rating options.
 
 GATING RULE (very important):
 When the backend tells you MATCHED PIPING CLASSES = NONE AND the slot
@@ -808,7 +1094,8 @@ async def _compose_ai_reply(
         f"  Rating: {slots.rating or '❓ MISSING'}",
         f"  Material: {slots.material or '❓ MISSING'}",
         f"  Corrosion Allowance: {slots.corrosion_allowance or '❓ MISSING'}",
-        f"  Complete (all 3 filled): {slots.complete}",
+        f"  Service Description: {slots.service or '❓ MISSING'}",
+        f"  Complete (all 4 filled): {slots.complete}",
     ]
     slot_block = "\n".join(slot_lines)
 
@@ -892,6 +1179,12 @@ async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
     # and slot-filling never converges.
     parsed = _merge_slots_from_history(parsed, req.history)
 
+    # Catalogue-driven auto-fill: if the combo of filled slots narrows
+    # a remaining slot to a single catalogue value (e.g. material=GRE
+    # → rating=150# and CA=NIL are the only options), fill it silently
+    # so the user doesn't see a picker with just one chip.
+    parsed = _auto_fill_unique_slots(parsed)
+
     matches = find_matches(parsed)
     slots = _build_slot_state(parsed, matches)
     field_suggestions = _build_field_suggestions(parsed, req.prompt)
@@ -913,6 +1206,10 @@ async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
         reply = _compose_reply(parsed, matches) if not gated else _compose_gated_reply(slots)
 
     action = _build_action(parsed, matches) if not gated else AgentAction(type="none")
+    # Pass the merged `parsed` into available_values so the frontend
+    # pickers only show combinations that actually exist in the
+    # catalogue — e.g. if user already picked GRE, rating and CA
+    # pickers are narrowed to values that co-occur with GRE.
     return PMSAgentResponse(
         reply=reply,
         interpreted=parsed,
@@ -920,6 +1217,6 @@ async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
         suggested_action=action,
         slots=slots,
         field_suggestions=field_suggestions,
-        available_values=_available_values(),
+        available_values=_available_values(parsed),
         allow_bulk_download=len(matches) > 0,
     )
