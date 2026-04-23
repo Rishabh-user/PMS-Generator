@@ -110,6 +110,44 @@ _INTENT_PATTERNS = [
 ]
 
 
+def _match_catalogue_material(prompt_upper: str) -> str | None:
+    """Return the longest catalogue material name that appears verbatim in
+    the prompt (case-insensitive). This runs BEFORE the regex patterns so
+    compound names like "CS NACE", "LTCS NACE", "CS - Epoxy Lined",
+    "GRE (Valve: NAB)" resolve to their exact canonical string instead of
+    getting swallowed by the shorter "CS" / "LTCS" / "GRE" pattern.
+
+    We sort by length descending so "CS NACE" wins over "CS" when both
+    would technically match. That's why the NarrowDownPicker chips (which
+    send "Material: CS NACE") correctly narrow to CS NACE only.
+    """
+    try:
+        catalogue = _available_values().get("material", [])
+    except Exception:
+        return None
+    # Longest name first so compound variants beat their base form
+    for name in sorted(catalogue, key=lambda s: -len(s)):
+        n = name.upper().strip()
+        if not n:
+            continue
+        # Whole-token match — avoids "CS" matching inside "ACES" etc.
+        # We look for the uppercased name preceded/followed by a non-word
+        # boundary. Parentheses in names ("(Valve: NAB)") aren't word
+        # chars so a plain substring search is safer than \b here.
+        if n in prompt_upper:
+            # Require a separator (start/end/whitespace/punct) on both sides
+            idx = prompt_upper.index(n)
+            before = prompt_upper[idx - 1] if idx > 0 else " "
+            after = (
+                prompt_upper[idx + len(n)]
+                if idx + len(n) < len(prompt_upper)
+                else " "
+            )
+            if not before.isalnum() and not after.isalnum():
+                return name  # return the catalogue-cased version
+    return None
+
+
 def parse_prompt(prompt: str) -> ParsedQuery:
     """Extract structured parameters from a free-text PMS query."""
     raw = prompt.strip()
@@ -124,12 +162,15 @@ def parse_prompt(prompt: str) -> ParsedQuery:
     rating_match = _RATING_PATTERN.search(low)
     rating = f"{rating_match.group(1)}#" if rating_match else None
 
-    # Material
-    material: str | None = None
-    for code, pat in _MATERIAL_PATTERNS:
-        if re.search(pat, low, re.IGNORECASE):
-            material = code
-            break
+    # Material — try catalogue verbatim first (handles "CS NACE",
+    # "LTCS NACE", "GRE (Valve: NAB)", etc.), then fall back to regex
+    # patterns for informal phrasings like "carbon steel".
+    material: str | None = _match_catalogue_material(up)
+    if not material:
+        for code, pat in _MATERIAL_PATTERNS:
+            if re.search(pat, low, re.IGNORECASE):
+                material = code
+                break
 
     # Corrosion allowance
     ca: str | None = None
