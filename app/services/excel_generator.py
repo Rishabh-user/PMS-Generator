@@ -48,6 +48,28 @@ def _insert_logo(ws, anchor_cell: str = "A1", height_px: int = LOGO_TARGET_HEIGH
     except Exception as exc:
         logger.warning("Failed to insert logo from %s: %s", path, exc)
 
+
+def _get_sheet_no(piping_class: str) -> str:
+    """Best-effort sheet number for the header table.
+
+    If the catalogue ever stores an explicit sheet number, use it. Otherwise,
+    fall back to the 1-based position of the class in the catalogue list.
+    """
+    try:
+        from app.services import data_service
+
+        entries = data_service.get_all_entries()
+        target = (piping_class or "").strip().upper()
+        for idx, entry in enumerate(entries, start=1):
+            if entry.get("piping_class", "").strip().upper() == target:
+                explicit = entry.get("sheet_no")
+                if explicit:
+                    return str(explicit)
+                return str(idx)
+    except Exception:
+        pass
+    return ""
+
 # Style constants
 HEADER_FILL = PatternFill("solid", fgColor="FFFFFF")
 SECTION_FILL = PatternFill("solid", fgColor="D9D9D9")
@@ -424,7 +446,7 @@ def _write_pms_header(ws, pms: PMSResponse, total_cols: int) -> int:
     _value(3, material_start, material_end, pms.material or "")
     _value(3, ca_start, ca_end, pms.corrosion_allowance or "")
     _value(3, mill_start, mill_end, pms.mill_tolerance or "")
-    _value(3, sheet_start, rev_end, getattr(pms, "sheet_no", "") or "")
+    _value(3, sheet_start, rev_end, getattr(pms, "sheet_no", "") or _get_sheet_no(pms.piping_class))
 
     # Design / Service / Branch Chart rows (rows 4..6)
     label_end = min(piping_end, piping_start + 3)

@@ -454,6 +454,100 @@ async def api_delete_agent_session(
     return {"ok": True}
 
 
+# ── Admin: browse everything in the database ──────────────────────
+# Read-only views (+ row-level delete) over the two tables this
+# backend owns (`pms_cache` and `pms_agent_sessions`). Powers the
+# "PMS Database" page in the frontend. Not auth-protected yet — the
+# route group is prefixed `/admin/db/*` so it's easy to gate later
+# with middleware (e.g. require an admin role on X-User-Id).
+
+@router.get("/admin/db/stats")
+async def api_admin_db_stats():
+    """Row counts + DB connectivity summary for the database browser header."""
+    return await db_service.admin_get_stats()
+
+
+@router.get("/admin/db/pms-cache")
+async def api_admin_list_pms_cache(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: str = Query(default=""),
+):
+    """List pms_cache rows (newest first). `search` matches piping_class
+    / material / service case-insensitively. Response excludes the
+    response_json payload for speed; use the detail endpoint to fetch."""
+    if not db_service.is_available():
+        _service_unavailable()
+    return await db_service.admin_list_cache_entries(
+        limit=limit, offset=offset, search=search,
+    )
+
+
+@router.get("/admin/db/pms-cache/{piping_class}")
+async def api_admin_get_pms_cache_entry(piping_class: str):
+    """Fetch one pms_cache row INCLUDING the full response_json."""
+    if not db_service.is_available():
+        _service_unavailable()
+    entry = await db_service.admin_get_cache_entry(piping_class)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Cache entry not found")
+    return entry
+
+
+@router.delete("/admin/db/pms-cache/{piping_class}")
+async def api_admin_delete_pms_cache_entry(piping_class: str):
+    if not db_service.is_available():
+        _service_unavailable()
+    ok = await db_service.admin_delete_cache_entry(piping_class)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Cache entry not found")
+    return {"ok": True}
+
+
+@router.get("/admin/db/agent-sessions")
+async def api_admin_list_all_agent_sessions(
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: str = Query(default=""),
+):
+    """List pms_agent_sessions across ALL users. `search` matches
+    title / user_id case-insensitively."""
+    if not db_service.is_available():
+        _service_unavailable()
+    return await db_service.admin_list_all_agent_sessions(
+        limit=limit, offset=offset, search=search,
+    )
+
+
+@router.get("/admin/db/agent-sessions/{session_id}")
+async def api_admin_get_agent_session(
+    session_id: str,
+    user_id: str = Query(..., description="Session owner user_id"),
+):
+    """Fetch one session with its full blocks payload. user_id is
+    required as a query param because sessions are keyed by
+    (user_id, id) — without it we can't uniquely address the row."""
+    if not db_service.is_available():
+        _service_unavailable()
+    entry = await db_service.get_agent_session(user_id, session_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return entry
+
+
+@router.delete("/admin/db/agent-sessions/{session_id}")
+async def api_admin_delete_agent_session(
+    session_id: str,
+    user_id: str = Query(..., description="Session owner user_id"),
+):
+    if not db_service.is_available():
+        _service_unavailable()
+    ok = await db_service.admin_delete_any_agent_session(user_id, session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
+
+
 @router.post("/compute-thickness", response_model=ComputeThicknessResponse)
 async def api_compute_thickness(req: ComputeThicknessRequest):
     """

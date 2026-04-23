@@ -72,6 +72,14 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
+@app.get("/admin", response_class=HTMLResponse)
+async def admin(request: Request):
+    """Serve the admin database browser — renders tables from
+    `pms_cache` and `pms_agent_sessions`. Backed by the
+    `/api/admin/db/*` endpoints for data."""
+    return templates.TemplateResponse(request, "admin.html")
+
+
 @app.get("/health")
 async def health():
     return {

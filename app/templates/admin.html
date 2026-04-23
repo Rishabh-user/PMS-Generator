@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PMS Generator · Admin</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 13px;
+      color: #333;
+      background: #f5f6f8;
+    }
+    header {
+      background: linear-gradient(135deg, #1f4e79 0%, #2d3e50 100%);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      flex: 1;
+    }
+    header .subtitle {
+      font-size: 12px;
+      opacity: 0.85;
+    }
+    header button {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: white;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.15s;
+    }
+    header button:hover { background: rgba(255, 255, 255, 0.25); }
+
+    .stats-bar {
+      background: white;
+      padding: 12px 24px;
+      border-bottom: 1px solid #e0e3e8;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .stat-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border: 1px solid #e0e3e8;
+      border-radius: 6px;
+      background: #fafbfc;
+    }
+    .stat-pill .label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stat-pill .value {
+      font-weight: 600;
+      color: #1f2937;
+      font-size: 14px;
+    }
+
+    .banner {
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin: 12px 24px;
+      font-size: 12px;
+    }
+    .banner.warn {
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #fde68a;
+    }
+    .banner.err {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #e0e3e8;
+      background: white;
+      padding: 0 24px;
+    }
+    .tab {
+      padding: 12px 20px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      color: #6b7280;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .tab:hover { color: #1f4e79; }
+    .tab.active {
+      color: #1f4e79;
+      border-bottom-color: #1f4e79;
+    }
+
+    .content {
+      padding: 16px 24px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .toolbar input[type="search"] {
+      flex: 1;
+      max-width: 400px;
+      padding: 7px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .toolbar input[type="search"]:focus {
+      outline: none;
+      border-color: #1f4e79;
+      box-shadow: 0 0 0 3px rgba(31, 78, 121, 0.1);
+    }
+    .toolbar .row-count {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    table {
+      width: 100%;
+      background: white;
+      border-collapse: collapse;
+      border: 1px solid #e0e3e8;
+      border-radius: 6px;
+      overflow: hidden;
+      font-size: 12px;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th {
+      background: #f3f4f6;
+      font-weight: 600;
+      color: #374151;
+      border-bottom: 1px solid #e0e3e8;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    td { border-top: 1px solid #f0f1f4; }
+    tr:hover td { background: #f9fafb; cursor: pointer; }
+    tr.loading td, tr.empty td, tr.error td {
+      text-align: center;
+      color: #6b7280;
+      padding: 24px;
+      cursor: default;
+    }
+    tr.loading:hover td, tr.empty:hover td, tr.error:hover td {
+      background: white;
+    }
+    tr.error td { color: #991b1b; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      border-radius: 3px;
+      font-weight: 500;
+    }
+    .badge.mono { font-family: ui-monospace, monospace; }
+    .badge.class { background: #eff6ff; color: #1e3a8a; }
+    .badge.user { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+
+    .btn-delete {
+      background: transparent;
+      border: 1px solid transparent;
+      color: #dc2626;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+    .btn-delete:hover {
+      background: #fee2e2;
+      border-color: #fecaca;
+    }
+    .btn-delete:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Detail drawer */
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.3);
+      z-index: 100;
+      display: none;
+    }
+    .drawer-backdrop.open { display: flex; justify-content: flex-end; }
+    .drawer {
+      background: white;
+      width: 100%;
+      max-width: 680px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+    }
+    .drawer-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #e0e3e8;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .drawer-title {
+      font-weight: 600;
+      flex: 1;
+      font-size: 14px;
+    }
+    .drawer-subtitle {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+    }
+    .drawer-close {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 18px;
+      color: #6b7280;
+      padding: 4px 8px;
+    }
+    .drawer-close:hover { color: #111; }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid #f0f1f4;
+      font-size: 12px;
+    }
+    .kv .label { color: #6b7280; }
+    .kv .value { word-break: break-word; }
+    .kv .value.mono { font-family: ui-monospace, monospace; font-size: 11px; }
+
+    pre.json {
+      background: #f9fafb;
+      border: 1px solid #e0e3e8;
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
+      line-height: 1.5;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      overflow-x: auto;
+      margin: 0;
+    }
+    .json-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 11px;
+      color: #6b7280;
+    }
+    .json-header button {
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      padding: 3px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .json-header button:hover { background: #e5e7eb; }
+  </style>
+</head>
+<body>
+  <header>
+    <div style="flex:1">
+      <h1>PMS Generator · Admin</h1>
+      <div class="subtitle">Browse PostgreSQL tables: <code>pms_cache</code> and <code>pms_agent_sessions</code></div>
+    </div>
+    <button id="refresh-btn" title="Reload data">⟳ Refresh</button>
+  </header>
+
+  <div id="db-banner"></div>
+
+  <div class="stats-bar" id="stats-bar">
+    <div class="stat-pill"><span class="label">Cached PMS sheets</span><span class="value" id="stat-cache">…</span></div>
+    <div class="stat-pill"><span class="label">Agent sessions</span><span class="value" id="stat-sessions">…</span></div>
+    <div class="stat-pill"><span class="label">Distinct users</span><span class="value" id="stat-users">…</span></div>
+    <div class="stat-pill"><span class="label">DB</span><span class="value" id="stat-db">…</span></div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="cache">PMS Cache</div>
+    <div class="tab" data-tab="sessions">Agent Sessions</div>
+  </div>
+
+  <!-- Tab: PMS Cache -->
+  <div class="content" id="tab-cache">
+    <div class="toolbar">
+      <input type="search" id="search-cache" placeholder="Search class, material, or service…" />
+      <span class="row-count" id="count-cache"></span>
+    </div>
+    <table id="table-cache">
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th>Rev</th>
+          <th>Material</th>
+          <th>CA</th>
+          <th>Service</th>
+          <th>Size</th>
+          <th>Updated</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-cache">
+        <tr class="loading"><td colspan="8">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Tab: Agent Sessions -->
+  <div class="content" id="tab-sessions" style="display:none">
+    <div class="toolbar">
+      <input type="search" id="search-sessions" placeholder="Search title or user_id…" />
+      <span class="row-count" id="count-sessions"></span>
+    </div>
+    <table id="table-sessions">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>User</th>
+          <th>Turns</th>
+          <th>Size</th>
+          <th>Updated</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-sessions">
+        <tr class="loading"><td colspan="6">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Detail drawer -->
+  <div class="drawer-backdrop" id="drawer-backdrop">
+    <div class="drawer" onclick="event.stopPropagation()">
+      <div class="drawer-header">
+        <div style="flex:1; min-width:0">
+          <div class="drawer-title" id="drawer-title">—</div>
+          <div class="drawer-subtitle" id="drawer-subtitle"></div>
+        </div>
+        <button class="drawer-close" onclick="closeDrawer()">×</button>
+      </div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </div>
+  </div>
+
+  <script>
+    const API = "/api/admin/db";
+
+    // ─── Utilities ────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const fmtBytes = (n) => {
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    };
+    const fmtTime = (iso) => {
+      if (!iso) return "—";
+      try {
+        const d = new Date(iso);
+        const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+        if (diffMin < 1) return "just now";
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffHr = Math.round(diffMin / 60);
+        if (diffHr < 24) return `${diffHr}h ago`;
+        const diffDay = Math.round(diffHr / 24);
+        if (diffDay < 30) return `${diffDay}d ago`;
+        return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      } catch { return "—"; }
+    };
+    const fmtIso = (iso) => {
+      if (!iso) return "—";
+      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    };
+    const escapeHtml = (s) =>
+      String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+      );
+
+    // Simple debounce so search typing doesn't spam the backend
+    const debounce = (fn, ms = 300) => {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    };
+
+    // ─── API helpers ──────────────────────────────────────────────
+    async function api(path) {
+      const r = await fetch(`${API}${path}`);
+      if (r.status === 503) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail || "Database unavailable");
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+    async function apiDelete(path) {
+      const r = await fetch(`${API}${path}`, { method: "DELETE" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+
+    // ─── Stats + banner ───────────────────────────────────────────
+    async function loadStats() {
+      try {
+        const s = await api("/stats");
+        $("stat-cache").textContent = s.pms_cache_count;
+        $("stat-sessions").textContent = s.agent_sessions_count;
+        $("stat-users").textContent = s.distinct_users ?? "—";
+        $("stat-db").textContent = s.db_available ? "Connected" : "Off";
+        $("db-banner").innerHTML = "";
+        if (!s.db_available) {
+          $("db-banner").innerHTML = `
+            <div class="banner warn">
+              <strong>Database unavailable.</strong> Set <code>DATABASE_URL</code>
+              on the pms-generator service so rows are persisted and shown here.
+            </div>`;
+        }
+      } catch (e) {
+        $("db-banner").innerHTML = `
+          <div class="banner err">Failed to load stats: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // ─── PMS Cache tab ────────────────────────────────────────────
+    async function loadCache(search = "") {
+      const tb = $("tbody-cache");
+      tb.innerHTML = `<tr class="loading"><td colspan="8">Loading…</td></tr>`;
+      try {
+        const q = search ? `?search=${encodeURIComponent(search)}&limit=200` : "?limit=200";
+        const rows = await api(`/pms-cache${q}`);
+        $("count-cache").textContent = `${rows.length} row${rows.length === 1 ? "" : "s"}`;
+        if (rows.length === 0) {
+          tb.innerHTML = `<tr class="empty"><td colspan="8">No cached PMS entries${search ? " match that search." : " yet."}</td></tr>`;
+          return;
+        }
+        tb.innerHTML = rows.map(r => `
+          <tr data-key="${escapeHtml(r.piping_class)}">
+            <td><span class="badge mono class">${escapeHtml(r.piping_class)}</span></td>
+            <td><span class="badge mono" style="background:#eef2ff;color:#4338ca">${escapeHtml(r.version || "A0")}</span></td>
+            <td>${escapeHtml(r.material)}</td>
+            <td>${escapeHtml(r.corrosion_allowance)}</td>
+            <td title="${escapeHtml(r.service)}" style="max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.service || "—")}</td>
+            <td style="color:#6b7280">${fmtBytes(r.payload_bytes)}</td>
+            <td style="color:#6b7280">${fmtTime(r.updated_at)}</td>
+            <td style="text-align:right"><button class="btn-delete" data-action="delete-cache" data-key="${escapeHtml(r.piping_class)}">🗑 Delete</button></td>
+          </tr>`).join("");
+      } catch (e) {
+        tb.innerHTML = `<tr class="error"><td colspan="8">${escapeHtml(e.message)}</td></tr>`;
+        $("count-cache").textContent = "";
+      }
+    }
+
+    // ─── Agent Sessions tab ───────────────────────────────────────
+    async function loadSessions(search = "") {
+      const tb = $("tbody-sessions");
+      tb.innerHTML = `<tr class="loading"><td colspan="6">Loading…</td></tr>`;
+      try {
+        const q = search ? `?search=${encodeURIComponent(search)}&limit=300` : "?limit=300";
+        const rows = await api(`/agent-sessions${q}`);
+        const users = new Set(rows.map(r => r.user_id)).size;
+        $("count-sessions").textContent =
+          `${rows.length} session${rows.length === 1 ? "" : "s"} · ${users} user${users === 1 ? "" : "s"}`;
+        if (rows.length === 0) {
+          tb.innerHTML = `<tr class="empty"><td colspan="6">No agent sessions${search ? " match that search." : " yet."}</td></tr>`;
+          return;
+        }
+        tb.innerHTML = rows.map(r => `
+          <tr data-id="${escapeHtml(r.id)}" data-user="${escapeHtml(r.user_id)}">
+            <td title="${escapeHtml(r.title)}" style="max-width:30ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.title)}</td>
+            <td><span class="badge mono user">${escapeHtml(r.user_id)}</span></td>
+            <td>${r.message_count}</td>
+            <td style="color:#6b7280">${fmtBytes(r.blocks_bytes)}</td>
+            <td style="color:#6b7280">${fmtTime(r.updated_at)}</td>
+            <td style="text-align:right"><button class="btn-delete" data-action="delete-session" data-id="${escapeHtml(r.id)}" data-user="${escapeHtml(r.user_id)}">🗑 Delete</button></td>
+          </tr>`).join("");
+      } catch (e) {
+        tb.innerHTML = `<tr class="error"><td colspan="6">${escapeHtml(e.message)}</td></tr>`;
+        $("count-sessions").textContent = "";
+      }
+    }
+
+    // ─── Drawer ───────────────────────────────────────────────────
+    function openDrawer(title, subtitle, bodyHtml) {
+      $("drawer-title").textContent = title;
+      $("drawer-subtitle").textContent = subtitle || "";
+      $("drawer-body").innerHTML = bodyHtml;
+      $("drawer-backdrop").classList.add("open");
+    }
+    function closeDrawer() {
+      $("drawer-backdrop").classList.remove("open");
+    }
+    $("drawer-backdrop").addEventListener("click", closeDrawer);
+
+    async function openCacheDetail(pipingClass) {
+      openDrawer("Loading entry…", "", `<div style="padding:24px;text-align:center;color:#6b7280">…</div>`);
+      try {
+        const d = await api(`/pms-cache/${encodeURIComponent(pipingClass)}`);
+        const json = JSON.stringify(d.response_json, null, 2);
+        const bytes = new Blob([json]).size;
+        openDrawer(
+          `Cache entry — ${d.piping_class}`,
+          `Rev ${d.version || "A0"} · ${d.material} · CA ${d.corrosion_allowance}`,
+          `
+          <div class="kv"><span class="label">Class</span><span class="value mono">${escapeHtml(d.piping_class)}</span></div>
+          <div class="kv"><span class="label">Revision</span><span class="value mono">${escapeHtml(d.version || "A0")}</span></div>
+          <div class="kv"><span class="label">Material</span><span class="value">${escapeHtml(d.material)}</span></div>
+          <div class="kv"><span class="label">CA</span><span class="value">${escapeHtml(d.corrosion_allowance)}</span></div>
+          <div class="kv"><span class="label">Service</span><span class="value">${escapeHtml(d.service)}</span></div>
+          <div class="kv"><span class="label">Created</span><span class="value">${fmtIso(d.created_at)}</span></div>
+          <div class="kv"><span class="label">Updated</span><span class="value">${fmtIso(d.updated_at)}</span></div>
+          <div style="margin-top:18px">
+            <div class="json-header">
+              <span>Response JSON (${fmtBytes(bytes)})</span>
+              <button id="copy-json">Copy JSON</button>
+            </div>
+            <pre class="json">${escapeHtml(json)}</pre>
+          </div>`,
+        );
+        $("copy-json")?.addEventListener("click", async () => {
+          await navigator.clipboard.writeText(json);
+          $("copy-json").textContent = "✓ Copied";
+          setTimeout(() => { const btn = $("copy-json"); if (btn) btn.textContent = "Copy JSON"; }, 1500);
+        });
+      } catch (e) {
+        openDrawer("Error", "", `<div class="banner err">${escapeHtml(e.message)}</div>`);
+      }
+    }
+
+    function openSessionDetail(row) {
+      openDrawer(
+        `Session — ${row.title}`,
+        `User: ${row.user_id} · id: ${row.id}`,
+        `
+        <div class="kv"><span class="label">ID</span><span class="value mono">${escapeHtml(row.id)}</span></div>
+        <div class="kv"><span class="label">User ID</span><span class="value mono">${escapeHtml(row.user_id)}</span></div>
+        <div class="kv"><span class="label">Title</span><span class="value">${escapeHtml(row.title)}</span></div>
+        <div class="kv"><span class="label">Message count</span><span class="value">${row.message_count}</span></div>
+        <div class="kv"><span class="label">Blocks size</span><span class="value">${fmtBytes(row.blocks_bytes)}</span></div>
+        <div class="kv"><span class="label">Last preview</span><span class="value">${escapeHtml(row.last_message_preview || "—")}</span></div>
+        <div class="kv"><span class="label">Created</span><span class="value">${fmtIso(row.created_at)}</span></div>
+        <div class="kv"><span class="label">Updated</span><span class="value">${fmtIso(row.updated_at)}</span></div>
+        <div style="margin-top:14px;font-size:11px;color:#6b7280">
+          For the full conversation, open the PMS Agent page while signed in as this user.
+        </div>`,
+      );
+    }
+
+    // ─── Delete handlers ──────────────────────────────────────────
+    async function handleDeleteCache(pipingClass, btn) {
+      if (!confirm(`Delete cache entry for class ${pipingClass}?`)) return;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await apiDelete(`/pms-cache/${encodeURIComponent(pipingClass)}`);
+        btn.closest("tr").remove();
+        loadStats();
+      } catch (e) {
+        alert(`Delete failed: ${e.message}`);
+        btn.disabled = false;
+        btn.textContent = "🗑 Delete";
+      }
+    }
+    async function handleDeleteSession(id, userId, btn) {
+      if (!confirm(`Delete session "${id.slice(0, 12)}…" owned by ${userId}?`)) return;
+      btn.disabled = true;
+      btn.textContent = "⏳";
+      try {
+        await apiDelete(`/agent-sessions/${encodeURIComponent(id)}?user_id=${encodeURIComponent(userId)}`);
+        btn.closest("tr").remove();
+        loadStats();
+      } catch (e) {
+        alert(`Delete failed: ${e.message}`);
+        btn.disabled = false;
+        btn.textContent = "🗑 Delete";
+      }
+    }
+
+    // ─── Table click routing ──────────────────────────────────────
+    $("tbody-cache").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-action]");
+      if (btn) {
+        ev.stopPropagation();
+        if (btn.dataset.action === "delete-cache") handleDeleteCache(btn.dataset.key, btn);
+        return;
+      }
+      const tr = ev.target.closest("tr[data-key]");
+      if (tr) openCacheDetail(tr.dataset.key);
+    });
+    $("tbody-sessions").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-action]");
+      if (btn) {
+        ev.stopPropagation();
+        if (btn.dataset.action === "delete-session") handleDeleteSession(btn.dataset.id, btn.dataset.user, btn);
+        return;
+      }
+      const tr = ev.target.closest("tr[data-id]");
+      if (tr) {
+        // Pull the row object from the rendered DOM (just re-hit the list API
+        // with a tight filter would be overkill; reconstruct from cells)
+        const cells = tr.children;
+        openSessionDetail({
+          id: tr.dataset.id,
+          user_id: tr.dataset.user,
+          title: cells[0].getAttribute("title") || cells[0].textContent,
+          message_count: Number(cells[2].textContent),
+          blocks_bytes: 0,     // not needed beyond display
+          last_message_preview: "",
+          created_at: null,
+          updated_at: null,
+        });
+      }
+    });
+
+    // ─── Tabs ─────────────────────────────────────────────────────
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        tab.classList.add("active");
+        $("tab-cache").style.display = tab.dataset.tab === "cache" ? "" : "none";
+        $("tab-sessions").style.display = tab.dataset.tab === "sessions" ? "" : "none";
+      });
+    });
+
+    // ─── Search (debounced) ───────────────────────────────────────
+    $("search-cache").addEventListener("input", debounce((e) => loadCache(e.target.value.trim()), 250));
+    $("search-sessions").addEventListener("input", debounce((e) => loadSessions(e.target.value.trim()), 250));
+
+    // ─── Refresh ──────────────────────────────────────────────────
+    $("refresh-btn").addEventListener("click", () => {
+      loadStats();
+      loadCache($("search-cache").value.trim());
+      loadSessions($("search-sessions").value.trim());
+    });
+
+    // ─── Initial load ─────────────────────────────────────────────
+    loadStats();
+    loadCache();
+    loadSessions();
+  </script>
+</body>
+</html>

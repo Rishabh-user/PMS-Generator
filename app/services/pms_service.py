@@ -9,12 +9,8 @@ Flow:
   5. Store result in both DB and memory cache
   6. Regenerate endpoint bypasses cache and forces fresh AI call
 """
-import hashlib
 import logging
 
-from cachetools import TTLCache
-
-from app.config import settings
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
     PipeSize, FittingsData, FittingBySize, ExtraFittings, FlangeData,
@@ -30,12 +26,32 @@ from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PER
 
 logger = logging.getLogger(__name__)
 
-_pms_cache: TTLCache = TTLCache(maxsize=settings.cache_max_size, ttl=settings.cache_ttl)
+# L1 (in-memory) PMS cache — unbounded plain dict, NO TTL and NO size cap.
+# Rationale per the project owner's directive: an entry should only ever
+# change when the same (piping_class, material, CA, service) combination
+# is re-generated — in which case `_store_in_caches` overwrites the
+# existing key. It should NEVER silently disappear due to age or size
+# pressure. The L2 PostgreSQL cache already has no expiry either, so
+# both layers are permanent unless something explicitly deletes them
+# (the Admin UI trash button, or POST /api/clear-cache).
+#
+# Earlier versions used cachetools.TTLCache with a 1-hour TTL + 256-entry
+# cap, which is why users saw the in-memory cache appear to "empty
+# itself" over time. The DB entries were never lost — but once the L1
+# entry expired, the next request took the slower L2 path.
+_pms_cache: dict[str, PMSResponse] = {}
 
 
 def _cache_key(req: PMSRequest) -> str:
-    raw = f"{req.piping_class}|{req.material}|{req.corrosion_allowance}|{req.service}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    """Cache key is the normalized piping_class.
+
+    Previously this hashed (class, material, CA, service) into an MD5 so
+    the same class with a different `service` blurb created a second row.
+    The project owner explicitly wants one row per class with a bumped
+    version (A0 → A1 → A2 …) on regenerate, so the key collapses to the
+    uppercased, trimmed piping_class.
+    """
+    return req.piping_class.upper().strip()
 
 
 def _determine_class_type(piping_class: str) -> str:
@@ -317,25 +333,39 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
 
 
 async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
-    """Store PMS in both in-memory cache and PostgreSQL."""
-    _pms_cache[key] = pms
+    """Store PMS in both in-memory cache and PostgreSQL. The DB layer
+    upserts by piping_class and bumps `version` on each write, so the
+    L2 row for a class is overwritten in place rather than duplicated.
+    The returned version string is written back onto the PMSResponse
+    so the frontend + Excel header can show the current revision."""
     if db_service.is_available():
-        await db_service.store_pms(
-            cache_key=key,
-            piping_class=req.piping_class,
+        version = await db_service.store_pms(
+            piping_class=key,
             material=req.material,
             corrosion_allowance=req.corrosion_allowance,
             service=req.service,
             response=pms.model_dump(),
         )
+        if version:
+            pms.version = version
+    _pms_cache[key] = pms
 
 
 async def generate_pms(req: PMSRequest) -> PMSResponse:
     """
     Generate PMS with layered caching:
-      L1: In-memory TTLCache (fast, session-scoped)
-      L2: PostgreSQL (persistent across restarts)
+      L1: In-memory dict (fast, process-scoped, NO TTL or eviction)
+      L2: PostgreSQL (persistent across restarts, NO TTL)
       L3: Claude AI (expensive, only if not cached)
+
+    Both cache layers are write-through on regenerate — calling
+    regenerate_pms() overwrites the existing L1 entry for this class and
+    bumps the L2 `version` column (A0 → A1 → A2 …) via UPSERT, so the
+    table never holds two rows for the same piping_class. The only way
+    an entry "disappears" is:
+      * The Admin UI delete button / /api/admin/db/pms-cache/{piping_class}
+      * POST /api/clear-cache (nukes both L1 and L2)
+      * Manual SQL DELETE on the pms_cache table
     """
     key = _cache_key(req)
 

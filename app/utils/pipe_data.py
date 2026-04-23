@@ -75,6 +75,30 @@ def calculate_wall_thickness_mm(
         return None
 
 
+def _is_calc_schedule(schedule) -> bool:
+    """True when `schedule` indicates 'no schedule — calculate WT'.
+    Matches plain hyphens, em-dashes, and empty strings (the AI sometimes
+    omits the field entirely for calc-WT sizes)."""
+    s = str(schedule or "").strip()
+    return s in ("", "-", "--", "—", "— ")
+
+
+def _round2(x) -> float | None:
+    """Round a numeric value to 2 decimals. Returns None if x isn't a
+    finite number. Used as the final normalization so every od_mm /
+    wall_thickness_mm in the PMS response has consistent 2-decimal
+    precision regardless of origin (lookup table, B31.3 calc, AI
+    pass-through for non-ASME classes)."""
+    try:
+        val = float(x)
+    except (TypeError, ValueError):
+        return None
+    # NaN / inf guard
+    if val != val or val in (float("inf"), float("-inf")):
+        return None
+    return round(val, 2)
+
+
 def correct_pipe_data(
     pipe_data: list[dict],
     pipe_code: str | None = None,
@@ -104,6 +128,12 @@ def correct_pipe_data(
       3. Non-ASME pipe code (CuNi EEMUA 234, Copper ASTM B42, GRE
          manufacturer std, CPVC ASTM F441, Tubing ASTM A269): row is left
          untouched — the AI's emitted values stand.
+
+    FINAL PASS — every row has both od_mm and wall_thickness_mm rounded
+    to 2 decimal places before returning, regardless of source. This
+    guarantees clean engineering-spec output even when a value arrives
+    via the AI-pass-through path (non-ASME classes) or when the calc
+    path falls through due to missing context.
     """
     ca_mm = _parse_corrosion_allowance_mm(corrosion_allowance)
 
@@ -126,11 +156,10 @@ def correct_pipe_data(
         # Only runs when (a) we have an OD for this NPS (standard ASME size),
         # (b) schedule explicitly says "-", and (c) the caller gave us P/T/
         # material so we can evaluate Eq. 3a. If any piece is missing, fall
-        # through and leave the AI's value.
-        sched_str = str(schedule or "").strip()
-        is_calc_schedule = sched_str in ("-", "--", "— ", "—")
+        # through and leave the AI's value (still normalized to 2 decimals
+        # below).
         if (od is not None
-                and is_calc_schedule
+                and _is_calc_schedule(schedule)
                 and design_pressure_barg is not None
                 and design_temp_c is not None
                 and material):
@@ -144,5 +173,18 @@ def correct_pipe_data(
             )
             if computed is not None and computed > 0:
                 row["wall_thickness_mm"] = computed
+
+    # ── Final normalization: every numeric cell to 2 decimals ──
+    # Covers: AI-emitted values on non-ASME classes (CuNi/Copper/GRE/CPVC/
+    # Tubing), calc-path fallbacks when context was missing, and any stray
+    # float noise. Matches the Calculated-Thickness precision used by the
+    # /PMS_generator UI so downstream consumers see consistent output.
+    for row in pipe_data:
+        rounded_od = _round2(row.get("od_mm"))
+        if rounded_od is not None:
+            row["od_mm"] = rounded_od
+        rounded_wt = _round2(row.get("wall_thickness_mm"))
+        if rounded_wt is not None:
+            row["wall_thickness_mm"] = rounded_wt
 
     return pipe_data
