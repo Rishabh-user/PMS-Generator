@@ -160,6 +160,11 @@ class BranchChart(BaseModel):
 
 class PMSResponse(BaseModel):
     piping_class: str
+    # Revision letter-number, bumped every time the PMS for this class is
+    # regenerated — A0 on first generation, then A1, A2, … The DB holds
+    # the authoritative value in pms_cache.version and overwrites it back
+    # onto this field inside `_store_in_caches`.
+    version: str = "A0"
     rating: str = ""
     material: str
     corrosion_allowance: str

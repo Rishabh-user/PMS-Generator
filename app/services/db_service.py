@@ -20,9 +20,8 @@ _pool: asyncpg.Pool | None = None
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS pms_cache (
-    id            SERIAL PRIMARY KEY,
-    cache_key     VARCHAR(64) UNIQUE NOT NULL,
-    piping_class  VARCHAR(32) NOT NULL,
+    piping_class  VARCHAR(32) PRIMARY KEY,
+    version       VARCHAR(8)  NOT NULL DEFAULT 'A0',
     material      VARCHAR(128) NOT NULL DEFAULT '',
     corrosion_allowance VARCHAR(32) NOT NULL DEFAULT '',
     service       TEXT NOT NULL DEFAULT '',
@@ -33,7 +32,86 @@ CREATE TABLE IF NOT EXISTS pms_cache (
 """
 
 CREATE_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_pms_cache_piping_class ON pms_cache (piping_class);
+CREATE INDEX IF NOT EXISTS idx_pms_cache_updated ON pms_cache (updated_at DESC);
+"""
+
+# ── pms_cache schema migration ──────────────────────────────────────
+# The table was originally keyed by an MD5(cache_key) computed from
+# (class, material, CA, service) — meaning the same piping_class with
+# a different service string created a second row. The project owner
+# wants one row PER CLASS, overwritten on regenerate, with a bumped
+# `version` (A0 → A1 → A2 → …).
+#
+# This migration is idempotent — it detects the old schema and converts
+# it in a single transaction:
+#   1. Add `version` column if missing (default 'A0').
+#   2. Drop the old `id` serial PK and `cache_key` column.
+#   3. Dedupe: for each piping_class, keep the most-recently-updated
+#      row and delete the rest.
+#   4. Promote `piping_class` to the new PRIMARY KEY.
+# On a fresh database (no prior schema) it's a no-op — `CREATE TABLE
+# IF NOT EXISTS` above already produces the correct shape.
+
+MIGRATION_SQL = """
+DO $$
+DECLARE
+    has_cache_key   BOOLEAN;
+    has_id_col      BOOLEAN;
+    has_version_col BOOLEAN;
+    pk_col          TEXT;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'pms_cache' AND column_name = 'cache_key'
+    ) INTO has_cache_key;
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'pms_cache' AND column_name = 'id'
+    ) INTO has_id_col;
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'pms_cache' AND column_name = 'version'
+    ) INTO has_version_col;
+
+    -- Step 1: add version column if missing
+    IF NOT has_version_col THEN
+        ALTER TABLE pms_cache ADD COLUMN version VARCHAR(8) NOT NULL DEFAULT 'A0';
+        RAISE NOTICE 'pms_cache: added version column';
+    END IF;
+
+    -- Step 2: dedupe — keep newest row per piping_class
+    DELETE FROM pms_cache a
+    USING pms_cache b
+    WHERE a.piping_class = b.piping_class
+      AND (a.updated_at, COALESCE(a.ctid::text, ''))
+          < (b.updated_at, COALESCE(b.ctid::text, ''));
+
+    -- Step 3: drop old cache_key and id columns if present
+    IF has_cache_key THEN
+        ALTER TABLE pms_cache DROP CONSTRAINT IF EXISTS pms_cache_cache_key_key;
+        ALTER TABLE pms_cache DROP COLUMN cache_key;
+        RAISE NOTICE 'pms_cache: dropped cache_key column';
+    END IF;
+    IF has_id_col THEN
+        ALTER TABLE pms_cache DROP CONSTRAINT IF EXISTS pms_cache_pkey;
+        ALTER TABLE pms_cache DROP COLUMN id;
+        RAISE NOTICE 'pms_cache: dropped id column';
+    END IF;
+
+    -- Step 4: promote piping_class to PRIMARY KEY if not already
+    SELECT a.attname INTO pk_col
+    FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    WHERE i.indrelid = 'pms_cache'::regclass AND i.indisprimary
+    LIMIT 1;
+    IF pk_col IS NULL OR pk_col <> 'piping_class' THEN
+        IF pk_col IS NOT NULL THEN
+            ALTER TABLE pms_cache DROP CONSTRAINT pms_cache_pkey;
+        END IF;
+        ALTER TABLE pms_cache ADD PRIMARY KEY (piping_class);
+        RAISE NOTICE 'pms_cache: piping_class is now the primary key';
+    END IF;
+END $$;
 """
 
 # ── pms_agent_sessions — saved PMS-Agent chats ─────────────────────
@@ -83,6 +161,7 @@ async def init_pool():
         )
         async with _pool.acquire() as conn:
             await conn.execute(CREATE_TABLE_SQL)
+            await conn.execute(MIGRATION_SQL)
             await conn.execute(CREATE_INDEX_SQL)
             await conn.execute(CREATE_AGENT_SESSIONS_SQL)
             await conn.execute(CREATE_AGENT_SESSIONS_INDEX_SQL)
@@ -103,15 +182,15 @@ async def close_pool():
         logger.info("PostgreSQL pool closed")
 
 
-async def get_cached_pms(cache_key: str) -> dict | None:
+async def get_cached_pms(piping_class: str) -> dict | None:
     """Fetch cached PMS response from DB. Returns parsed dict or None."""
     if not _pool:
         return None
     try:
         async with _pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT response_json FROM pms_cache WHERE cache_key = $1",
-                cache_key,
+                "SELECT response_json FROM pms_cache WHERE piping_class = $1",
+                piping_class,
             )
             if row:
                 data = row["response_json"]
@@ -120,51 +199,66 @@ async def get_cached_pms(cache_key: str) -> dict | None:
                     return json.loads(data)
                 return data
     except Exception as e:
-        logger.error("DB read error for key %s: %s", cache_key, e)
+        logger.error("DB read error for %s: %s", piping_class, e)
     return None
 
 
 async def store_pms(
-    cache_key: str,
     piping_class: str,
     material: str,
     corrosion_allowance: str,
     service: str,
     response: dict,
-) -> None:
-    """Store or update PMS response in DB (UPSERT)."""
+) -> str | None:
+    """Store or update PMS response in DB. On conflict, bumps the version
+    (A0 → A1 → A2 …) rather than creating a new row. Returns the version
+    string that was written so callers can surface it in the response."""
     if not _pool:
-        return
+        return None
     try:
         response_json = json.dumps(response, default=str)
         async with _pool.acquire() as conn:
-            await conn.execute(
+            version = await conn.fetchval(
                 """
-                INSERT INTO pms_cache (cache_key, piping_class, material, corrosion_allowance, service, response_json, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW())
-                ON CONFLICT (cache_key)
-                DO UPDATE SET response_json = $6::jsonb, updated_at = NOW()
+                INSERT INTO pms_cache
+                    (piping_class, version, material, corrosion_allowance,
+                     service, response_json, created_at, updated_at)
+                VALUES ($1, 'A0', $2, $3, $4, $5::jsonb, NOW(), NOW())
+                ON CONFLICT (piping_class)
+                DO UPDATE SET
+                    version             = 'A' ||
+                        ((SUBSTRING(pms_cache.version FROM 2))::int + 1)::text,
+                    material            = EXCLUDED.material,
+                    corrosion_allowance = EXCLUDED.corrosion_allowance,
+                    service             = EXCLUDED.service,
+                    response_json       = EXCLUDED.response_json,
+                    updated_at          = NOW()
+                RETURNING version
                 """,
-                cache_key, piping_class, material, corrosion_allowance, service, response_json,
+                piping_class, material, corrosion_allowance, service, response_json,
             )
-        logger.info("Stored PMS for %s in database (key=%s)", piping_class, cache_key[:8])
+        logger.info("Stored PMS for %s in database (version=%s)", piping_class, version)
+        return version
     except Exception as e:
         logger.error("DB write error for %s: %s", piping_class, e)
+        return None
 
 
-async def delete_cached_pms(cache_key: str) -> None:
+async def delete_cached_pms(piping_class: str) -> None:
     """Delete a single cached PMS entry."""
     if not _pool:
         return
     try:
         async with _pool.acquire() as conn:
-            await conn.execute("DELETE FROM pms_cache WHERE cache_key = $1", cache_key)
+            await conn.execute(
+                "DELETE FROM pms_cache WHERE piping_class = $1", piping_class,
+            )
     except Exception as e:
-        logger.error("DB delete error for key %s: %s", cache_key, e)
+        logger.error("DB delete error for %s: %s", piping_class, e)
 
 
 async def list_cached_classes() -> list[dict]:
-    """Return every cached PMS entry (one row per cache_key), newest first.
+    """Return every cached PMS entry (one row per piping_class), newest first.
 
     Used by the frontend's Piping Class Specification page to show a direct
     download button only for classes that have a stored result — so we can
@@ -176,15 +270,16 @@ async def list_cached_classes() -> list[dict]:
         async with _pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT DISTINCT ON (piping_class)
-                    piping_class, material, corrosion_allowance, service, updated_at
+                SELECT piping_class, version, material, corrosion_allowance,
+                       service, updated_at
                 FROM pms_cache
-                ORDER BY piping_class, updated_at DESC
+                ORDER BY updated_at DESC
                 """
             )
         return [
             {
                 "piping_class": r["piping_class"],
+                "version": r["version"],
                 "material": r["material"],
                 "corrosion_allowance": r["corrosion_allowance"],
                 "service": r["service"],
@@ -367,4 +462,210 @@ async def delete_agent_session(user_id: str, session_id: str) -> bool:
         return result.split()[-1] != "0"
     except Exception as e:
         logger.error("DB delete_agent_session error (%s/%s): %s", uid, session_id, e)
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────
+# Admin DB browser — list / inspect / delete entries across both
+# tables. These helpers power the "PMS Database" admin UI. Unlike the
+# user-scoped agent-session functions above, these read across ALL
+# users and skip user-id scoping.
+# ─────────────────────────────────────────────────────────────────
+
+async def admin_get_stats() -> dict:
+    """Return row counts + DB connectivity info for the admin UI header."""
+    if not _pool:
+        return {"db_available": False, "pms_cache_count": 0, "agent_sessions_count": 0}
+    try:
+        async with _pool.acquire() as conn:
+            cache_count = await conn.fetchval("SELECT COUNT(*) FROM pms_cache")
+            sess_count = await conn.fetchval("SELECT COUNT(*) FROM pms_agent_sessions")
+            distinct_users = await conn.fetchval(
+                "SELECT COUNT(DISTINCT user_id) FROM pms_agent_sessions"
+            )
+        return {
+            "db_available": True,
+            "pms_cache_count": cache_count or 0,
+            "agent_sessions_count": sess_count or 0,
+            "distinct_users": distinct_users or 0,
+        }
+    except Exception as e:
+        logger.error("DB admin_get_stats error: %s", e)
+        return {"db_available": False, "pms_cache_count": 0, "agent_sessions_count": 0}
+
+
+async def admin_list_cache_entries(
+    limit: int = 100, offset: int = 0, search: str = ""
+) -> list[dict]:
+    """List pms_cache rows for the admin browser — summary fields only
+    (no response_json payload, which can be 50+ KB per row). Newest
+    first. `search` matches substring against piping_class / material
+    (case-insensitive) so the UI can filter without an extra endpoint."""
+    if not _pool:
+        return []
+    try:
+        async with _pool.acquire() as conn:
+            if search.strip():
+                pat = f"%{search.strip().lower()}%"
+                rows = await conn.fetch(
+                    """
+                    SELECT piping_class, version, material, corrosion_allowance,
+                           service, created_at, updated_at,
+                           octet_length(response_json::text) AS payload_bytes
+                    FROM pms_cache
+                    WHERE LOWER(piping_class) LIKE $1
+                       OR LOWER(material) LIKE $1
+                       OR LOWER(service) LIKE $1
+                    ORDER BY updated_at DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    pat, limit, offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT piping_class, version, material, corrosion_allowance,
+                           service, created_at, updated_at,
+                           octet_length(response_json::text) AS payload_bytes
+                    FROM pms_cache
+                    ORDER BY updated_at DESC
+                    LIMIT $1 OFFSET $2
+                    """,
+                    limit, offset,
+                )
+        return [
+            {
+                "piping_class": r["piping_class"],
+                "version": r["version"],
+                "material": r["material"],
+                "corrosion_allowance": r["corrosion_allowance"],
+                "service": r["service"],
+                "payload_bytes": r["payload_bytes"] or 0,
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("DB admin_list_cache_entries error: %s", e)
+        return []
+
+
+async def admin_get_cache_entry(piping_class: str) -> dict | None:
+    """Fetch a full pms_cache row (including the response_json payload)
+    for the admin drawer detail view."""
+    if not _pool:
+        return None
+    try:
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT piping_class, version, material, corrosion_allowance,
+                       service, response_json, created_at, updated_at
+                FROM pms_cache WHERE piping_class = $1
+                """,
+                piping_class,
+            )
+        if not row:
+            return None
+        resp = row["response_json"]
+        if isinstance(resp, str):
+            resp = json.loads(resp)
+        return {
+            "piping_class": row["piping_class"],
+            "version": row["version"],
+            "material": row["material"],
+            "corrosion_allowance": row["corrosion_allowance"],
+            "service": row["service"],
+            "response_json": resp,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        }
+    except Exception as e:
+        logger.error("DB admin_get_cache_entry error (%s): %s", piping_class, e)
+        return None
+
+
+async def admin_delete_cache_entry(piping_class: str) -> bool:
+    """Remove one pms_cache row by piping_class. Returns True iff a row
+    was deleted (False means the class didn't exist)."""
+    if not _pool:
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM pms_cache WHERE piping_class = $1", piping_class,
+            )
+        return result.split()[-1] != "0"
+    except Exception as e:
+        logger.error("DB admin_delete_cache_entry error (%s): %s", piping_class, e)
+        return False
+
+
+async def admin_list_all_agent_sessions(
+    limit: int = 200, offset: int = 0, search: str = ""
+) -> list[dict]:
+    """List pms_agent_sessions across ALL users (admin view)."""
+    if not _pool:
+        return []
+    try:
+        async with _pool.acquire() as conn:
+            if search.strip():
+                pat = f"%{search.strip().lower()}%"
+                rows = await conn.fetch(
+                    """
+                    SELECT id, user_id, title, message_count, last_preview,
+                           created_at, updated_at,
+                           octet_length(blocks_json::text) AS blocks_bytes
+                    FROM pms_agent_sessions
+                    WHERE LOWER(title) LIKE $1 OR LOWER(user_id) LIKE $1
+                    ORDER BY updated_at DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    pat, limit, offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, user_id, title, message_count, last_preview,
+                           created_at, updated_at,
+                           octet_length(blocks_json::text) AS blocks_bytes
+                    FROM pms_agent_sessions
+                    ORDER BY updated_at DESC
+                    LIMIT $1 OFFSET $2
+                    """,
+                    limit, offset,
+                )
+        return [
+            {
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "title": r["title"],
+                "message_count": r["message_count"],
+                "last_message_preview": r["last_preview"],
+                "blocks_bytes": r["blocks_bytes"] or 0,
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("DB admin_list_all_agent_sessions error: %s", e)
+        return []
+
+
+async def admin_delete_any_agent_session(user_id: str, session_id: str) -> bool:
+    """Admin-level delete of an agent session — doesn't require the
+    caller to be the session owner."""
+    if not _pool:
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM pms_agent_sessions WHERE user_id = $1 AND id = $2",
+                user_id, session_id,
+            )
+        return result.split()[-1] != "0"
+    except Exception as e:
+        logger.error("DB admin_delete_any_agent_session error: %s", e)
         return False

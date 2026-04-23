@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     templates_dir: Path = BASE_DIR / "app" / "templates"
     static_dir: Path = BASE_DIR / "app" / "static"
 
-    cache_ttl: int = 3600
-    cache_max_size: int = 256
+    # NOTE: the former `cache_ttl` + `cache_max_size` settings have been
+    # removed — the L1 PMS cache no longer time-expires or size-caps.
+    # Entries live in the L1 dict for the process lifetime and in the L2
+    # PostgreSQL table forever. Regenerate-pms overwrites; the Admin UI
+    # trash button or /api/clear-cache is the only way to remove entries.
 
     database_url: str = ""  # PostgreSQL DSN, e.g. postgresql://user:pass@localhost:5432/pms_generator
 

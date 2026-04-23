@@ -34,7 +34,7 @@ from app.utils.engineering_constants import (
     Y_COEFFICIENT,
     get_allowable_stress,
 )
-from app.utils.pipe_data import _parse_corrosion_allowance_mm
+from app.utils.pipe_data import _is_calc_schedule, _parse_corrosion_allowance_mm
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +365,19 @@ async def compute_thickness(req: ComputeThicknessRequest) -> ComputeThicknessRes
             governs_label = f"Case {case_num}"
             governs_case = case_num
 
+        # Selected Thickness display:
+        #   - When a standard schedule is present (e.g. SCH 160, SCH XXS,
+        #     80S, STD, XS), show the nominal wall thickness from the PMS
+        #     as-is to 3 decimals — the authoritative value looked up from
+        #     the ASME B36.10M/B36.19M table.
+        #   - When schedule is "-" (or blank), there is no standard "selected"
+        #     thickness — the value IS the calculated thickness, so mirror
+        #     calc_thk rounded to 1 decimal per project convention.
+        if _is_calc_schedule(p.schedule):
+            sel_thk_display = round(calc_thk, 1)
+        else:
+            sel_thk_display = round(nominal, 3)
+
         per_size.append(
             PerSizeResult(
                 size_inch=p.size_inch,
@@ -375,7 +388,7 @@ async def compute_thickness(req: ComputeThicknessRequest) -> ComputeThicknessRes
                 t_m_mm=round(t_m, 3),
                 mill_tolerance_percent=MILL_TOLERANCE_PERCENT,
                 calc_thk_mm=round(calc_thk, 3),
-                sel_thk_mm=round(nominal, 3),
+                sel_thk_mm=sel_thk_display,
                 schedule=p.schedule,
                 status=status,
                 mawp_barg=round(mawp_barg, 1),

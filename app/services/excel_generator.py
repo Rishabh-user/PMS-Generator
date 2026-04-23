@@ -7,75 +7,12 @@ import logging
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.models.pms_models import PMSResponse
 
 logger = logging.getLogger(__name__)
-
-LOGO_URL = "https://www.shapoorjipallonjienergy.com/img/logo.png"
-LOGO_DISPLAY_HEIGHT_PX = 80
-LOGO_ROW_HEIGHT_POINTS = 70  # row height in Excel points (≈ px * 0.75)
-LOGO_FETCH_TIMEOUT = 10       # seconds
-
-# Prepared logo cached on disk so every workbook uses the same resized file.
-_PREPARED_LOGO_PATH: Path | None = None
-
-
-def _prepare_logo() -> Path | None:
-    """Fetch the logo from LOGO_URL, resize to display dimensions, cache on disk.
-
-    Re-uses the cached file across subsequent Excel downloads so the remote
-    fetch happens at most once per process. Returns a Path to the prepared PNG,
-    or None if the URL is unreachable or the image can't be decoded.
-    """
-    global _PREPARED_LOGO_PATH
-    if _PREPARED_LOGO_PATH and _PREPARED_LOGO_PATH.exists():
-        return _PREPARED_LOGO_PATH
-    try:
-        import tempfile
-        import requests
-        from PIL import Image as PILImage
-
-        resp = requests.get(LOGO_URL, timeout=LOGO_FETCH_TIMEOUT)
-        resp.raise_for_status()
-        src = PILImage.open(io.BytesIO(resp.content))
-
-        aspect = src.width / src.height
-        target_h = LOGO_DISPLAY_HEIGHT_PX
-        target_w = max(1, int(round(target_h * aspect)))
-        resized = src.resize((target_w, target_h), PILImage.LANCZOS)
-        if resized.mode in ("RGBA", "LA", "P"):
-            bg = PILImage.new("RGB", resized.size, (255, 255, 255))
-            src_rgba = resized.convert("RGBA")
-            bg.paste(src_rgba, mask=src_rgba.split()[3])
-            resized = bg
-        tmp = Path(tempfile.gettempdir()) / "pms_logo_prepared.png"
-        resized.save(tmp, format="PNG")
-        _PREPARED_LOGO_PATH = tmp
-        logger.info("Prepared logo from %s -> %s (%dx%d)", LOGO_URL, tmp, target_w, target_h)
-        return tmp
-    except Exception as exc:
-        logger.warning("Failed to fetch/prepare logo from %s: %s", LOGO_URL, exc)
-        return None
-
-
-def _insert_logo(ws, anchor_cell: str = "A1") -> None:
-    """Insert the prepared logo at the given cell and raise the anchor row's height.
-    Uses a cached resized PNG on disk for reliable embedding. No-op on any failure."""
-    prepared = _prepare_logo()
-    if not prepared:
-        return
-    try:
-        img = XLImage(str(prepared))
-        ws.add_image(img, anchor_cell)
-        anchor_row = int("".join(ch for ch in anchor_cell if ch.isdigit()))
-        ws.row_dimensions[anchor_row].height = LOGO_ROW_HEIGHT_POINTS
-        logger.info("Logo inserted at %s in sheet '%s'", anchor_cell, ws.title)
-    except Exception as exc:
-        logger.warning("Failed to insert logo: %s", exc)
 
 # Style constants
 HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
@@ -101,6 +38,190 @@ BOTTOM_BORDER = Border(bottom=Side(style="medium", color="1F4E79"))
 
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+
+def _get_sheet_no(piping_class: str) -> str:
+    """Return the sheet number shown in the header table.
+
+    Preference order:
+      1. `sheet_no` field on the catalogue entry (if curated there later).
+      2. 1-based position of the class in `pipe_classes.json`.
+      3. Empty string as a safe fallback.
+    """
+    try:
+        from app.services import data_service
+        entries = data_service.get_all_entries()
+        target = (piping_class or "").strip().upper()
+        for idx, e in enumerate(entries, start=1):
+            if e.get("piping_class", "").strip().upper() == target:
+                explicit = e.get("sheet_no")
+                if explicit:
+                    return str(explicit)
+                return str(idx)
+    except Exception:
+        pass
+    return ""
+
+
+def _write_pms_header(ws, pms: PMSResponse, total_cols: int) -> int:
+    """Write the compact 6-row header banner and return the next free row.
+
+    Layout (matches the reference PMS document):
+
+        ┌──────────────┬──────────────────────────────────────────┬──────────┐
+        │              │        PIPING MATERIAL SPECIFICATION      │  Rev: A0 │
+    Row1│              ├─────┬─────────┬──────┬─────────┬─────────┤          │
+        │     LOGO     │Piping Class   │Mat'l │   C.A   │Mill Tol │Sheet No. │
+    Row2│              ├──┬──┼─────────┼──────┼─────────┼─────────┼──────────┤
+        │              │A1│150#│   CS   │ 3 mm │ 12.5% │   27   │          │
+    Row3├──────────────┼──┴──┴─────────┴──────┴─────────┴─────────┴──────────┤
+    Row4│ Design Code: │              ASME B 31.3                              │
+    Row5│   Service:   │ Cooling Media, Heating Media, …                       │
+    Row6│ Branch Chart:│ Ref. APPENDIX-1, Chart 1                              │
+        └──────────────┴───────────────────────────────────────────────────────┘
+
+    Column map (the 'logo area' = cols 1-3, 'table area' = cols 4-10):
+      Col 1-3: Logo banner (rows 1-3) / label cells (rows 4-6, each merged)
+      Col 4  : Piping Class value (A1)
+      Col 5  : Rating value        (150#)
+      Col 6  : Material value      (CS)
+      Col 7  : C.A value           (3 mm)
+      Col 8  : Mill Tol value      (12.5%)
+      Col 9  : Sheet No. value     (27)
+      Col 10 : Rev cell            (A0)
+    Col 4-10 are merged for the rows 4-6 value cells.
+    """
+    # Column widths — narrow enough that the 6-cell data row reads naturally
+    # while the logo area on the left fits the ~330px wide PNG.
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 11
+    ws.column_dimensions["C"].width = 11
+    # Header table columns (compact):
+    for letter, w in [("D", 11), ("E", 9), ("F", 12), ("G", 10), ("H", 10), ("I", 11), ("J", 10)]:
+        ws.column_dimensions[letter].width = w
+    # Remaining pipe-data columns stay at 12 — set already by the caller
+    # where applicable.
+
+    LOGO_COL_END = 3      # logo banner spans cols 1-3
+    RIGHT_COL_START = 4   # header table starts here
+    TITLE_COL_END = 9     # "PIPING MATERIAL SPECIFICATION" ends here
+    REV_COL = 10          # "Rev: A0" sits here
+
+    # Row heights — sum to ~80pt so the 90px logo fits inside the 3-row banner.
+    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[3].height = 22
+
+    # ── Left banner area (cols 1-3, rows 1-3): blank ──
+    # Paint the 3×3 banner cells white with no border. The area is
+    # intentionally empty — no image, no header text. Keep the sizing
+    # intact so the right-side header table (cols D-J) still lines up
+    # the way a stakeholder used to the logo-present layout expects.
+    for r in (1, 2, 3):
+        for c in range(1, LOGO_COL_END + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.fill = DATA_FILL
+            cell.font = DATA_FONT
+            cell.alignment = CENTER
+
+    # ── Row 1: Title + Rev ──
+    ws.merge_cells(start_row=1, start_column=RIGHT_COL_START, end_row=1, end_column=TITLE_COL_END)
+    title_cell = _apply_style(
+        ws, 1, RIGHT_COL_START,
+        font=Font(name="Arial", bold=True, color="1F4E79", size=13),
+        fill=ALT_FILL, alignment=CENTER, border=THIN_BORDER,
+    )
+    title_cell.value = "PIPING MATERIAL SPECIFICATION"
+    # Border the merged range
+    for c in range(RIGHT_COL_START, TITLE_COL_END + 1):
+        _apply_style(ws, 1, c, font=DATA_FONT, fill=ALT_FILL, border=THIN_BORDER)
+    rev_cell = _apply_style(
+        ws, 1, REV_COL,
+        font=Font(name="Arial", bold=True, color="333333", size=9),
+        fill=ALT_FILL, alignment=CENTER, border=THIN_BORDER,
+    )
+    rev_cell.value = f"Rev: {pms.version or 'A0'}"
+
+    # ── Row 2: Column headers ──
+    # "Piping Class" spans 2 cells (cols 4-5) since the value row puts A1
+    # and 150# in those two cells.
+    ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
+    headers_row2 = [
+        (4, "Piping Class"),
+        (6, "Material"),
+        (7, "C.A"),
+        (8, "Mill Tol"),
+        (9, "Sheet No."),
+        (10, ""),   # empty under Rev column
+    ]
+    for col, text in headers_row2:
+        cell = _apply_style(
+            ws, 2, col, font=LABEL_FONT, fill=ALT_FILL,
+            alignment=CENTER, border=THIN_BORDER,
+        )
+        cell.value = text
+    # Border the merged Piping Class span
+    for c in (4, 5):
+        _apply_style(ws, 2, c, font=LABEL_FONT, fill=ALT_FILL, border=THIN_BORDER)
+
+    # ── Row 3: Values ──
+    values_row3 = [
+        (4, pms.piping_class),
+        (5, pms.rating),
+        (6, pms.material),
+        (7, pms.corrosion_allowance),
+        (8, pms.mill_tolerance),
+        (9, _get_sheet_no(pms.piping_class)),
+        (10, ""),
+    ]
+    for col, value in values_row3:
+        cell = _apply_style(
+            ws, 3, col, font=DATA_FONT, fill=DATA_FILL,
+            alignment=CENTER, border=THIN_BORDER,
+        )
+        cell.value = value
+
+    # ── Rows 4-6: Design Code / Service / Branch Chart (full-width) ──
+    # Both label cells (cols 1-3) and value cells (cols 4-end) use LEFT
+    # alignment per the reference PMS document. Order of style application
+    # matters: first style every cell in the range with LEFT alignment,
+    # THEN set the content on the top-left cell. Previously the second
+    # loop defaulted to CENTER which silently overrode the LEFT on the
+    # top-left cell of the merged range.
+    full_rows = [
+        ("Design Code:", pms.design_code or ""),
+        ("Service:", pms.service or ""),
+        ("Branch Chart:", pms.branch_chart or ""),
+    ]
+    value_end = max(total_cols, REV_COL)
+    for i, (label, value) in enumerate(full_rows):
+        r = 4 + i
+
+        # --- Label side (cols 1-3) ---
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=LOGO_COL_END)
+        for c in range(1, LOGO_COL_END + 1):
+            _apply_style(
+                ws, r, c, font=LABEL_FONT, fill=ALT_FILL,
+                alignment=LEFT, border=THIN_BORDER,
+            )
+        ws.cell(row=r, column=1).value = label
+
+        # --- Value side (cols 4..value_end), LEFT-aligned ---
+        ws.merge_cells(start_row=r, start_column=RIGHT_COL_START, end_row=r, end_column=value_end)
+        for c in range(RIGHT_COL_START, value_end + 1):
+            _apply_style(
+                ws, r, c, font=DATA_FONT, fill=DATA_FILL,
+                alignment=LEFT, border=THIN_BORDER,
+            )
+        ws.cell(row=r, column=RIGHT_COL_START).value = value
+
+        # Wrap long service strings onto multiple lines
+        if label == "Service:":
+            ws.row_dimensions[r].height = max(
+                (len(str(value)) // 60 + 1) * 14, 20
+            )
+
+    return 7  # next free row
 
 
 def _apply_style(ws, row, col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER, border=THIN_BORDER):
@@ -369,40 +490,15 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     total_cols = max(num_pipe_cols + 2, 19)  # Col 1 = label, col 2..N = data
     pipe_col_start = 2
 
-    # Column widths — col A = label, col B onwards = data columns
-    ws.column_dimensions["A"].width = 22  # label
-    ws.column_dimensions["B"].width = 13
-    for i in range(3, total_cols + 1):
+    # Per-pipe-size column widths (the new header helper sets its own widths
+    # for cols A-J; anything beyond J is left at 12 for uniform data rows).
+    for i in range(11, total_cols + 1):
         ws.column_dimensions[get_column_letter(i)].width = 12
 
-    # === LOGO (row 1) ===
-    _insert_logo(ws, anchor_cell="A1")
-    row = 2
+    # === HEADER BANNER (rows 1-6): compact spec table ===
+    row = _write_pms_header(ws, pms, total_cols)
 
-    # === TITLE ===
-    for c in range(1, total_cols + 1):
-        _apply_style(ws, row, c, font=HEADER_FONT, fill=HEADER_FILL)
-    ws.cell(row=row, column=1).value = "PIPING MATERIAL SPECIFICATION"
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-    ws.row_dimensions[row].height = 30
-    _apply_style(ws, row, 1, font=Font(name="Arial", bold=True, color="FFFFFF", size=14), fill=HEADER_FILL, alignment=CENTER)
-    row += 1
-
-    # === HEADER INFO ===
-    header_labels = [
-        ("Piping Class", pms.piping_class),
-        ("Rating", pms.rating),
-        ("Material", pms.material),
-        ("Corrosion Allowance", pms.corrosion_allowance),
-        ("Mill Tolerance", pms.mill_tolerance),
-        ("Design Code", pms.design_code),
-        ("Service", pms.service),
-        ("Branch Chart", pms.branch_chart),
-    ]
-    for label, value in header_labels:
-        _write_label_value_row(ws, row, label, value, col_end=total_cols)
-        row += 1
-
+    # Blank spacer before the P-T section
     row += 1
 
     # === PRESSURE-TEMPERATURE RATING ===
@@ -737,34 +833,13 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     pipe_col_start = 2
 
     from openpyxl.utils import get_column_letter as gcl
-    # Column widths — col A = label, col B onwards = data columns
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 13
-    for i in range(3, total_cols + 1):
+    for i in range(11, total_cols + 1):
         ws.column_dimensions[gcl(i)].width = 12
 
-    # Logo in row 1, title in row 2
-    _insert_logo(ws, anchor_cell="A1")
-    row = 2
+    # === HEADER BANNER (rows 1-6): compact spec table ===
+    row = _write_pms_header(ws, pms, total_cols)
 
-    # Title
-    for c in range(1, total_cols + 1):
-        _apply_style(ws, row, c, font=HEADER_FONT, fill=HEADER_FILL)
-    ws.cell(row=row, column=1).value = "PIPING MATERIAL SPECIFICATION"
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-    _apply_style(ws, row, 1, font=Font(name="Arial", bold=True, color="FFFFFF", size=14), fill=HEADER_FILL, alignment=CENTER)
-    ws.row_dimensions[row].height = 30
-    row += 1
-
-    header_labels = [
-        ("Piping Class", pms.piping_class), ("Rating", pms.rating),
-        ("Material", pms.material), ("Corrosion Allowance", pms.corrosion_allowance),
-        ("Mill Tolerance", pms.mill_tolerance), ("Design Code", pms.design_code),
-        ("Service", pms.service), ("Branch Chart", pms.branch_chart),
-    ]
-    for label, value in header_labels:
-        _write_label_value_row(ws, row, label, value, col_end=total_cols)
-        row += 1
+    # Blank spacer before the P-T section
     row += 1
 
     # P-T Rating
