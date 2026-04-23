@@ -15,89 +15,64 @@ from app.models.pms_models import PMSResponse
 
 logger = logging.getLogger(__name__)
 
-LOGO_URL = "https://www.shapoorjipallonjienergy.com/img/logo.png"
-LOGO_DISPLAY_HEIGHT_PX = 80
-LOGO_ROW_HEIGHT_POINTS = 70  # row height in Excel points (≈ px * 0.75)
-LOGO_FETCH_TIMEOUT = 10       # seconds
-
-# Prepared logo cached on disk so every workbook uses the same resized file.
-_PREPARED_LOGO_PATH: Path | None = None
+LOGO_TARGET_HEIGHT_PX = 85
+DEFAULT_REV = "A0"
 
 
-def _prepare_logo() -> Path | None:
-    """Fetch the logo from LOGO_URL, resize to display dimensions, cache on disk.
+def _logo_path() -> Path | None:
+    """Return a bundled logo path (preferred), falling back to None.
 
-    Re-uses the cached file across subsequent Excel downloads so the remote
-    fetch happens at most once per process. Returns a Path to the prepared PNG,
-    or None if the URL is unreachable or the image can't be decoded.
+    We intentionally avoid fetching logos from the network so Excel downloads
+    are deterministic and work offline.
     """
-    global _PREPARED_LOGO_PATH
-    if _PREPARED_LOGO_PATH and _PREPARED_LOGO_PATH.exists():
-        return _PREPARED_LOGO_PATH
-    try:
-        import tempfile
-        import requests
-        from PIL import Image as PILImage
-
-        resp = requests.get(LOGO_URL, timeout=LOGO_FETCH_TIMEOUT)
-        resp.raise_for_status()
-        src = PILImage.open(io.BytesIO(resp.content))
-
-        aspect = src.width / src.height
-        target_h = LOGO_DISPLAY_HEIGHT_PX
-        target_w = max(1, int(round(target_h * aspect)))
-        resized = src.resize((target_w, target_h), PILImage.LANCZOS)
-        if resized.mode in ("RGBA", "LA", "P"):
-            bg = PILImage.new("RGB", resized.size, (255, 255, 255))
-            src_rgba = resized.convert("RGBA")
-            bg.paste(src_rgba, mask=src_rgba.split()[3])
-            resized = bg
-        tmp = Path(tempfile.gettempdir()) / "pms_logo_prepared.png"
-        resized.save(tmp, format="PNG")
-        _PREPARED_LOGO_PATH = tmp
-        logger.info("Prepared logo from %s -> %s (%dx%d)", LOGO_URL, tmp, target_w, target_h)
-        return tmp
-    except Exception as exc:
-        logger.warning("Failed to fetch/prepare logo from %s: %s", LOGO_URL, exc)
-        return None
+    img_dir = Path(__file__).resolve().parents[1] / "static" / "images"
+    for name in ("excel-logo.png", "logo.png"):
+        candidate = img_dir / name
+        if candidate.exists():
+            return candidate
+    return None
 
 
-def _insert_logo(ws, anchor_cell: str = "A1") -> None:
-    """Insert the prepared logo at the given cell and raise the anchor row's height.
-    Uses a cached resized PNG on disk for reliable embedding. No-op on any failure."""
-    prepared = _prepare_logo()
-    if not prepared:
+def _insert_logo(ws, anchor_cell: str = "A1", height_px: int = LOGO_TARGET_HEIGHT_PX) -> None:
+    """Insert bundled logo at the given cell. No-op on any failure."""
+    path = _logo_path()
+    if not path:
         return
     try:
-        img = XLImage(str(prepared))
+        img = XLImage(str(path))
+        if height_px and getattr(img, "height", None):
+            aspect = (img.width / img.height) if img.height else 1
+            img.height = int(height_px)
+            img.width = int(round(height_px * aspect))
         ws.add_image(img, anchor_cell)
-        anchor_row = int("".join(ch for ch in anchor_cell if ch.isdigit()))
-        ws.row_dimensions[anchor_row].height = LOGO_ROW_HEIGHT_POINTS
-        logger.info("Logo inserted at %s in sheet '%s'", anchor_cell, ws.title)
     except Exception as exc:
-        logger.warning("Failed to insert logo: %s", exc)
+        logger.warning("Failed to insert logo from %s: %s", path, exc)
 
 # Style constants
-HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
-SECTION_FILL = PatternFill("solid", fgColor="D6E4F0")
+HEADER_FILL = PatternFill("solid", fgColor="FFFFFF")
+SECTION_FILL = PatternFill("solid", fgColor="D9D9D9")
 DATA_FILL = PatternFill("solid", fgColor="FFFFFF")
-ALT_FILL = PatternFill("solid", fgColor="F2F7FB")
-NOTES_FILL = PatternFill("solid", fgColor="FFF2CC")
+ALT_FILL = PatternFill("solid", fgColor="F2F2F2")
+NOTES_FILL = PatternFill("solid", fgColor="FFFFFF")
 
-HEADER_FONT = Font(name="Arial", bold=True, color="FFFFFF", size=11)
-TITLE_FONT = Font(name="Arial", bold=True, color="1F4E79", size=14)
-SECTION_FONT = Font(name="Arial", bold=True, color="1F4E79", size=10)
+HEADER_FONT = Font(name="Arial", bold=True, color="000000", size=11)
+TITLE_FONT = Font(name="Arial", bold=True, color="000000", size=14)
+SECTION_FONT = Font(name="Arial", bold=True, color="000000", size=10)
 LABEL_FONT = Font(name="Arial", bold=True, color="333333", size=9)
 DATA_FONT = Font(name="Arial", color="333333", size=9)
 NOTE_FONT = Font(name="Arial", italic=True, color="666666", size=8)
 
+BLACK = "000000"
+THIN_SIDE = Side(style="thin", color=BLACK)
+MEDIUM_SIDE = Side(style="medium", color=BLACK)
+
 THIN_BORDER = Border(
-    left=Side(style="thin", color="B0B0B0"),
-    right=Side(style="thin", color="B0B0B0"),
-    top=Side(style="thin", color="B0B0B0"),
-    bottom=Side(style="thin", color="B0B0B0"),
+    left=THIN_SIDE,
+    right=THIN_SIDE,
+    top=THIN_SIDE,
+    bottom=THIN_SIDE,
 )
-BOTTOM_BORDER = Border(bottom=Side(style="medium", color="1F4E79"))
+MEDIUM_BORDER = Border(left=MEDIUM_SIDE, right=MEDIUM_SIDE, top=MEDIUM_SIDE, bottom=MEDIUM_SIDE)
 
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -358,6 +333,134 @@ def _write_label_value_row(ws, row: int, label: str, value: str, col_start: int 
         _apply_style(ws, row, c, fill=DATA_FILL)
 
 
+def _style_range(ws, r1: int, c1: int, r2: int, c2: int, *, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER, border=THIN_BORDER) -> None:
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            _apply_style(ws, r, c, font=font, fill=fill, alignment=alignment, border=border)
+
+
+def _write_pms_header(ws, pms: PMSResponse, total_cols: int) -> int:
+    """Write the standard PMS header block and return the next row index."""
+    logo_end_col = min(4, total_cols)
+    main_start_col = min(logo_end_col + 1, total_cols)
+
+    # Reserve 2 columns on the far right for Rev / Sheet No.
+    sheet_cols = 2
+    sheet_start = max(main_start_col, total_cols - sheet_cols + 1)
+    rev_start = sheet_start
+    rev_end = total_cols
+
+    # Allocate the remaining header grid (left of Sheet No.) into groups.
+    piping_base = 4
+    material_cols = 3
+    ca_cols = 2
+    mill_cols = 2
+    fixed = piping_base + material_cols + ca_cols + mill_cols
+    available = max(0, (sheet_start - 1) - main_start_col + 1)
+    extra = max(0, available - fixed)
+    piping_cols = piping_base + extra
+
+    piping_start = main_start_col
+    piping_end = min(sheet_start - 1, piping_start + piping_cols - 1)
+    material_start = piping_end + 1
+    material_end = min(sheet_start - 1, material_start + material_cols - 1)
+    ca_start = material_end + 1
+    ca_end = min(sheet_start - 1, ca_start + ca_cols - 1)
+    mill_start = ca_end + 1
+    mill_end = min(sheet_start - 1, mill_start + mill_cols - 1)
+
+    header_top = 1
+    header_bottom = 6
+
+    # Base grid styling
+    _style_range(ws, header_top, 1, header_bottom, total_cols, fill=DATA_FILL, border=THIN_BORDER)
+
+    # Logo area (A..D, rows 1..6)
+    ws.merge_cells(start_row=header_top, start_column=1, end_row=header_bottom, end_column=logo_end_col)
+    _insert_logo(ws, anchor_cell="A1")
+    for r in range(header_top, header_bottom + 1):
+        ws.row_dimensions[r].height = 18
+    ws.row_dimensions[1].height = 24
+
+    # Title + Rev row
+    title_start = main_start_col
+    title_end = max(title_start, sheet_start - 1)
+    _style_range(ws, 1, title_start, 1, title_end, font=Font(name="Arial", bold=True, size=16), alignment=CENTER, border=THIN_BORDER)
+    ws.cell(row=1, column=title_start).value = "PIPING MATERIAL SPECIFICATION"
+    if title_end > title_start:
+        ws.merge_cells(start_row=1, start_column=title_start, end_row=1, end_column=title_end)
+
+    _style_range(ws, 1, rev_start, 1, rev_end, font=Font(name="Arial", bold=True, size=14), alignment=CENTER, border=THIN_BORDER)
+    ws.cell(row=1, column=rev_start).value = f"Rev : {getattr(pms, 'rev', '') or DEFAULT_REV}"
+    if rev_end > rev_start:
+        ws.merge_cells(start_row=1, start_column=rev_start, end_row=1, end_column=rev_end)
+
+    # Group label row (row 2)
+    def _label(row: int, c1: int, c2: int, text: str) -> None:
+        _style_range(ws, row, c1, row, c2, font=Font(name="Arial", bold=True, size=11), alignment=CENTER, border=THIN_BORDER)
+        ws.cell(row=row, column=c1).value = text
+        if c2 > c1:
+            ws.merge_cells(start_row=row, start_column=c1, end_row=row, end_column=c2)
+
+    def _value(row: int, c1: int, c2: int, text: str, *, align=CENTER) -> None:
+        _style_range(ws, row, c1, row, c2, font=Font(name="Arial", bold=True, size=11), alignment=align, border=THIN_BORDER)
+        ws.cell(row=row, column=c1).value = text
+        if c2 > c1:
+            ws.merge_cells(start_row=row, start_column=c1, end_row=row, end_column=c2)
+
+    _label(2, piping_start, piping_end, "Piping Class")
+    _label(2, material_start, material_end, "Material")
+    _label(2, ca_start, ca_end, "C.A")
+    _label(2, mill_start, mill_end, "Mill Tol")
+    _label(2, sheet_start, rev_end, "Sheet No.")
+
+    # Values row (row 3). Split Piping Class into class + rating halves.
+    piping_width = max(1, piping_end - piping_start + 1)
+    class_cols = max(2, piping_width // 2)
+    class_end = min(piping_end, piping_start + class_cols - 1)
+    rating_start = min(piping_end, class_end + 1)
+    _value(3, piping_start, class_end, pms.piping_class)
+    _value(3, rating_start, piping_end, pms.rating or "")
+    _value(3, material_start, material_end, pms.material or "")
+    _value(3, ca_start, ca_end, pms.corrosion_allowance or "")
+    _value(3, mill_start, mill_end, pms.mill_tolerance or "")
+    _value(3, sheet_start, rev_end, getattr(pms, "sheet_no", "") or "")
+
+    # Design / Service / Branch Chart rows (rows 4..6)
+    label_end = min(piping_end, piping_start + 3)
+    val_start = min(sheet_start, label_end + 1)
+    val_end = total_cols
+
+    def _lv(row: int, label: str, val: str) -> None:
+        _label(row, piping_start, label_end, label)
+        _value(row, val_start, val_end, val or "", align=LEFT)
+
+    _lv(4, "Design Code:", pms.design_code)
+    _lv(5, "Service:", pms.service)
+    _lv(6, "Branch Chart:", pms.branch_chart)
+
+    # Slightly thicker outline around the full header block.
+    for c in range(1, total_cols + 1):
+        ws.cell(row=1, column=c).border = Border(left=ws.cell(row=1, column=c).border.left,
+                                                 right=ws.cell(row=1, column=c).border.right,
+                                                 top=MEDIUM_SIDE, bottom=ws.cell(row=1, column=c).border.bottom)
+        ws.cell(row=header_bottom, column=c).border = Border(left=ws.cell(row=header_bottom, column=c).border.left,
+                                                            right=ws.cell(row=header_bottom, column=c).border.right,
+                                                            top=ws.cell(row=header_bottom, column=c).border.top,
+                                                            bottom=MEDIUM_SIDE)
+    for r in range(1, header_bottom + 1):
+        ws.cell(row=r, column=1).border = Border(left=MEDIUM_SIDE,
+                                                 right=ws.cell(row=r, column=1).border.right,
+                                                 top=ws.cell(row=r, column=1).border.top,
+                                                 bottom=ws.cell(row=r, column=1).border.bottom)
+        ws.cell(row=r, column=total_cols).border = Border(left=ws.cell(row=r, column=total_cols).border.left,
+                                                          right=MEDIUM_SIDE,
+                                                          top=ws.cell(row=r, column=total_cols).border.top,
+                                                          bottom=ws.cell(row=r, column=total_cols).border.bottom)
+
+    return header_bottom + 1
+
+
 def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     """Generate a formatted Excel PMS sheet."""
     wb = Workbook()
@@ -375,34 +478,8 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     for i in range(3, total_cols + 1):
         ws.column_dimensions[get_column_letter(i)].width = 12
 
-    # === LOGO (row 1) ===
-    _insert_logo(ws, anchor_cell="A1")
-    row = 2
-
-    # === TITLE ===
-    for c in range(1, total_cols + 1):
-        _apply_style(ws, row, c, font=HEADER_FONT, fill=HEADER_FILL)
-    ws.cell(row=row, column=1).value = "PIPING MATERIAL SPECIFICATION"
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-    ws.row_dimensions[row].height = 30
-    _apply_style(ws, row, 1, font=Font(name="Arial", bold=True, color="FFFFFF", size=14), fill=HEADER_FILL, alignment=CENTER)
-    row += 1
-
-    # === HEADER INFO ===
-    header_labels = [
-        ("Piping Class", pms.piping_class),
-        ("Rating", pms.rating),
-        ("Material", pms.material),
-        ("Corrosion Allowance", pms.corrosion_allowance),
-        ("Mill Tolerance", pms.mill_tolerance),
-        ("Design Code", pms.design_code),
-        ("Service", pms.service),
-        ("Branch Chart", pms.branch_chart),
-    ]
-    for label, value in header_labels:
-        _write_label_value_row(ws, row, label, value, col_end=total_cols)
-        row += 1
-
+    # === HEADER (matches reference PMS layout) ===
+    row = _write_pms_header(ws, pms, total_cols)
     row += 1
 
     # === PRESSURE-TEMPERATURE RATING ===
@@ -743,28 +820,8 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     for i in range(3, total_cols + 1):
         ws.column_dimensions[gcl(i)].width = 12
 
-    # Logo in row 1, title in row 2
-    _insert_logo(ws, anchor_cell="A1")
-    row = 2
-
-    # Title
-    for c in range(1, total_cols + 1):
-        _apply_style(ws, row, c, font=HEADER_FONT, fill=HEADER_FILL)
-    ws.cell(row=row, column=1).value = "PIPING MATERIAL SPECIFICATION"
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-    _apply_style(ws, row, 1, font=Font(name="Arial", bold=True, color="FFFFFF", size=14), fill=HEADER_FILL, alignment=CENTER)
-    ws.row_dimensions[row].height = 30
-    row += 1
-
-    header_labels = [
-        ("Piping Class", pms.piping_class), ("Rating", pms.rating),
-        ("Material", pms.material), ("Corrosion Allowance", pms.corrosion_allowance),
-        ("Mill Tolerance", pms.mill_tolerance), ("Design Code", pms.design_code),
-        ("Service", pms.service), ("Branch Chart", pms.branch_chart),
-    ]
-    for label, value in header_labels:
-        _write_label_value_row(ws, row, label, value, col_end=total_cols)
-        row += 1
+    # Header block
+    row = _write_pms_header(ws, pms, total_cols)
     row += 1
 
     # P-T Rating
