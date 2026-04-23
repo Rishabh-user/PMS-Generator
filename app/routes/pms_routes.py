@@ -314,6 +314,46 @@ async def api_sync_valvesheet_all():
     return result
 
 
+@router.post("/sync/valvesheet/{piping_class}")
+async def api_sync_valvesheet_one(piping_class: str):
+    """Manually push ONE cached class to the valvesheet API. Treated as
+    an UPDATE (PUT) because the row already exists in our cache —
+    matches the user's mental model of 'resync this specific one'.
+
+    Useful when the auto-sync failed (network blip, schema mismatch
+    that's since been fixed) and you want to retry a single row
+    without re-running a full bulk backfill."""
+    if not db_service.is_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL not configured.")
+    entry = await db_service.admin_get_cache_entry(piping_class)
+    if not entry:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cached PMS for class '{piping_class}'.",
+        )
+    # Reconstruct a minimal PMSResponse-compatible object for the sync.
+    # We reuse the row-based payload helper so the wire format is
+    # identical to what the auto-sync sends.
+    from app.services.valvesheet_sync_service import (
+        _payload_from_row, _is_configured, _send_one, _auth_headers,
+    )
+    if not _is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="EXTERNAL_VALVESHEET_API_URL is not configured on this server.",
+        )
+    import httpx
+    from app.config import settings as _settings
+    payload = _payload_from_row(entry)
+    async with httpx.AsyncClient(
+        timeout=_settings.external_valvesheet_timeout
+    ) as client:
+        ok, detail = await _send_one(client, "PUT", payload)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Valvesheet PUT failed: {detail}")
+    return {"ok": True, "piping_class": piping_class, "version": payload["version"]}
+
+
 @router.get("/cached-classes")
 async def api_list_cached_classes():
     """List piping classes that have a PMS result stored in the database.
