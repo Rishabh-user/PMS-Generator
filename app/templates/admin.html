@@ -44,6 +44,37 @@
       transition: background 0.15s;
     }
     header button:hover { background: rgba(255, 255, 255, 0.25); }
+    header button:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+    /* Primary-action variant — the valvesheet sync is the single most
+       impactful button on this page (writes to an external service),
+       so give it a solid green fill to distinguish it from Refresh. */
+    header button.btn-primary {
+      background: #16a34a;
+      border-color: #15803d;
+    }
+    header button.btn-primary:hover { background: #15803d; }
+
+    /* Toast for sync result — floats top-right, auto-dismisses. */
+    #sync-toast {
+      position: fixed;
+      top: 76px;
+      right: 24px;
+      max-width: 420px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+      font-size: 13px;
+      line-height: 1.4;
+      z-index: 1000;
+      display: none;
+    }
+    #sync-toast.success { background: #dcfce7; color: #14532d; border: 1px solid #86efac; }
+    #sync-toast.error   { background: #fee2e2; color: #7f1d1d; border: 1px solid #fca5a5; }
+    #sync-toast .toast-title { font-weight: 600; margin-bottom: 4px; }
+    #sync-toast .toast-detail { font-family: monospace; font-size: 11px; opacity: 0.85; }
 
     .stats-bar {
       background: white;
@@ -302,8 +333,18 @@
       <h1>PMS Generator · Admin</h1>
       <div class="subtitle">Browse PostgreSQL tables: <code>pms_cache</code> and <code>pms_agent_sessions</code></div>
     </div>
+    <button
+      id="sync-valvesheet-btn"
+      class="btn-primary"
+      title="Push every cached PMS row to the external Valvesheet backend (POST /api/sync/valvesheet)"
+    >⇪ Push to Valvesheet</button>
     <button id="refresh-btn" title="Reload data">⟳ Refresh</button>
   </header>
+
+  <!-- Floating toast for the valvesheet sync result. Hidden by default,
+       populated + shown by the click handler, auto-dismissed after ~6s
+       on success / kept open on failure so the user can read the error. -->
+  <div id="sync-toast" role="status" aria-live="polite"></div>
 
   <div id="db-banner"></div>
 
@@ -671,6 +712,88 @@
       loadCache($("search-cache").value.trim());
       loadSessions($("search-sessions").value.trim());
     });
+
+    // ─── Push to Valvesheet ───────────────────────────────────────
+    // Manual bulk sync: POST /api/sync/valvesheet → mirrors every row
+    // of pms_cache to the external SPE Valvesheet backend. The server
+    // tries an array POST first, falls back to per-row on rejection,
+    // and returns a {synced, failed, failures[]} report. We show that
+    // verbatim in a toast so the user sees exactly what happened.
+    (function () {
+      const btn = $("sync-valvesheet-btn");
+      const toast = $("sync-toast");
+
+      function showToast(kind, title, detail, autoDismiss) {
+        toast.className = kind;
+        toast.innerHTML = `
+          <div class="toast-title">${title}</div>
+          ${detail ? `<div class="toast-detail">${detail}</div>` : ""}
+        `;
+        toast.style.display = "block";
+        if (autoDismiss) {
+          setTimeout(() => { toast.style.display = "none"; }, 6000);
+        }
+      }
+
+      btn.addEventListener("click", async () => {
+        if (btn.disabled) return;
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "⇪ Syncing…";
+        toast.style.display = "none";
+        try {
+          const resp = await fetch("/api/sync/valvesheet", { method: "POST" });
+          const data = await resp.json().catch(() => ({}));
+
+          if (!resp.ok) {
+            // 503 from server usually means URL or DB not configured —
+            // `detail` carries the exact reason from the route handler.
+            const msg = data && data.detail
+              ? data.detail
+              : `HTTP ${resp.status} — request rejected`;
+            showToast("error", "Sync failed", msg, false);
+            return;
+          }
+
+          const synced = data.synced || 0;
+          const failed = data.failed || 0;
+          const mode = data.mode ? ` (${data.mode})` : "";
+
+          if (failed === 0 && synced > 0) {
+            showToast(
+              "success",
+              `✓ Synced ${synced} row${synced === 1 ? "" : "s"}${mode}`,
+              data.classes ? `Classes: ${data.classes.slice(0, 10).join(", ")}${data.classes.length > 10 ? ` …+${data.classes.length - 10} more` : ""}` : "",
+              true,
+            );
+          } else if (synced === 0 && failed === 0) {
+            showToast(
+              "success",
+              "Nothing to sync",
+              data.message || "The pms_cache table is empty.",
+              true,
+            );
+          } else {
+            // Partial failure — show both counts and the first error so
+            // the user knows what to look into without digging through logs.
+            const firstErr = (data.failures && data.failures[0])
+              ? `${data.failures[0].piping_class}: ${data.failures[0].error}`
+              : "See server logs for details.";
+            showToast(
+              "error",
+              `Synced ${synced}, failed ${failed}${mode}`,
+              `First error — ${firstErr}`,
+              false,
+            );
+          }
+        } catch (err) {
+          showToast("error", "Sync failed", String(err && err.message || err), false);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+        }
+      });
+    })();
 
     // ─── Initial load ─────────────────────────────────────────────
     loadStats();
