@@ -21,6 +21,7 @@ from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
 from app.services import db_service
+from app.services import valvesheet_sync_service
 from app.utils.pipe_data import correct_pipe_data
 from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PERCENT
 
@@ -337,18 +338,34 @@ async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
     upserts by piping_class and bumps `version` on each write, so the
     L2 row for a class is overwritten in place rather than duplicated.
     The returned version string is written back onto the PMSResponse
-    so the frontend + Excel header can show the current revision."""
+    so the frontend + Excel header can show the current revision.
+
+    After a successful DB write, mirror the payload to the external
+    SPE Valvesheet backend — POST for a new row (version A0), PUT for
+    a regeneration (A1+). The sync runs as a background task so the
+    user's response isn't delayed by the downstream HTTP call, and all
+    errors are swallowed+logged (a flaky mirror must not break local
+    generation)."""
+    synced_version: str | None = None
     if db_service.is_available():
-        version = await db_service.store_pms(
+        synced_version = await db_service.store_pms(
             piping_class=key,
             material=req.material,
             corrosion_allowance=req.corrosion_allowance,
             service=req.service,
             response=pms.model_dump(),
         )
-        if version:
-            pms.version = version
+        if synced_version:
+            pms.version = synced_version
     _pms_cache[key] = pms
+
+    # Mirror to the external valvesheet backend. Treat anything other
+    # than exactly "A0" as an update — the UPSERT returns A0 only on
+    # the very first insert, so this cleanly distinguishes POST vs PUT
+    # even when the caller (regenerate_pms) forced a bump.
+    if synced_version is not None:
+        is_regenerate = synced_version != "A0"
+        valvesheet_sync_service.sync_in_background(pms, is_regenerate=is_regenerate)
 
 
 async def generate_pms(req: PMSRequest) -> PMSResponse:

@@ -24,7 +24,7 @@ from app.services.thickness_service import compute_thickness
 from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.validation_service import validate as validate_pms
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
-from app.services import data_service, db_service
+from app.services import data_service, db_service, valvesheet_sync_service
 from app.utils.engineering import interpolate_pressure_at_temp
 from app.utils.engineering_constants import (
     HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
@@ -282,6 +282,36 @@ async def api_clear_cache():
     """Clear the PMS generation cache to force fresh AI re-generation."""
     await clear_cache()
     return {"status": "ok", "message": "Cache cleared. Next generation will use fresh AI data."}
+
+
+# ── External valvesheet sync ───────────────────────────────────────
+# Mirrors the local pms_cache to the SPE Valvesheet staging backend.
+# Auto-sync on generate/regenerate is wired inside pms_service; this
+# endpoint exists for one-shot backfills (e.g. when a deploy changes
+# the downstream schema and every row needs re-pushing) and for ops
+# visibility — the response reports how many rows synced vs failed so
+# the admin UI can surface it.
+
+@router.post("/sync/valvesheet")
+async def api_sync_valvesheet_all():
+    """POST every cached PMS row to the external valvesheet API.
+
+    Tries an array POST first (matches the stated contract: "send all
+    the JSON in an array"). Falls back to per-row POSTs if the external
+    endpoint rejects the array — so this works against either schema
+    without config changes.
+
+    Returns 503 when either:
+      • DATABASE_URL is not configured (nothing to sync), or
+      • EXTERNAL_VALVESHEET_API_URL is not configured (no destination).
+    """
+    result = await valvesheet_sync_service.push_all_cached()
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=503,
+            detail=result.get("error", "Valvesheet sync failed"),
+        )
+    return result
 
 
 @router.get("/cached-classes")
