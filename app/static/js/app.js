@@ -1282,6 +1282,16 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         const selColor = selOK === 'OK' ? '#16a34a' : '#b91c1c';
         const applColor = r.t_applicable === 'OK' ? '#16a34a' : '#b91c1c';
 
+        // Sel. Thk display rule:
+        //   • Schedule is a real code (XXS, 160, 80S, STD, …) → show the PMS
+        //     nominal WT (looked up from ASME B36.10M / B36.19M tables).
+        //   • Schedule is "-" or blank → there is no table selection; mirror
+        //     the Calc. Thk T column rounded to 2 decimals. Per the project
+        //     owner: no extra math, just round(Calc. Thk T).
+        const schRaw = String(r.schedule || '').trim();
+        const schIsCalc = schRaw === '' || schRaw === '-' || schRaw === '--' || schRaw === '\u2014';
+        const selThkDisplay = schIsCalc ? r.t_req.toFixed(2) : r.wt_nom;
+
         html += `<tr>
             <td><strong>${r.size}"</strong></td>
             <td>${r.od}</td>
@@ -1291,7 +1301,7 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
             <td>${r.tm.toFixed(3)}</td>
             <td>${millPct}%</td>
             <td><strong>${r.t_req.toFixed(3)}</strong></td>
-            <td>${r.wt_nom}</td>
+            <td>${selThkDisplay}</td>
             <td><strong>${r.schedule}</strong> ${tagHtml}</td>
             <td style="color:${selColor};font-weight:600">${selOK}</td>
             <td>${r.mawp.toFixed(1)}</td>

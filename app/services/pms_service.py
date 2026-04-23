@@ -371,20 +371,45 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
 
     # L1: In-memory cache
     if key in _pms_cache:
-        logger.info("L1 memory cache hit for %s", req.piping_class)
+        logger.info("L1 memory cache HIT for %s (key=%s)", req.piping_class, key)
         return _pms_cache[key]
 
     # L2: PostgreSQL cache
     if db_service.is_available():
         cached = await db_service.get_cached_pms(key)
         if cached:
-            logger.info("L2 database cache hit for %s", req.piping_class)
-            pms = PMSResponse(**cached)
-            _pms_cache[key] = pms  # Promote to L1
-            return pms
+            # A row exists for this class — honour the "don't regenerate
+            # unless user explicitly asks" contract. If the stored payload
+            # fails to deserialize against the current PMSResponse schema
+            # (rare — e.g. a required field was renamed after the row was
+            # written), log LOUDLY and fall through to AI rather than
+            # silently return a corrupt object. Regenerate will overwrite
+            # the row and self-heal.
+            try:
+                pms = PMSResponse(**cached)
+            except Exception as e:
+                logger.warning(
+                    "L2 DB row for %s failed to deserialize (%s) — falling "
+                    "back to AI. Row will be overwritten on next store.",
+                    req.piping_class, e,
+                )
+            else:
+                logger.info(
+                    "L2 database cache HIT for %s (key=%s, version=%s)",
+                    req.piping_class, key, cached.get("version", "?"),
+                )
+                _pms_cache[key] = pms  # Promote to L1
+                return pms
+        else:
+            logger.info(
+                "L2 database cache MISS for %s (key=%s) — no row found",
+                req.piping_class, key,
+            )
+    else:
+        logger.info("L2 database disabled — skipping cache check")
 
-    # L3: AI generation
-    logger.info("Cache miss for %s — generating via AI", req.piping_class)
+    # L3: AI generation (only reached when BOTH caches missed)
+    logger.info("Generating %s via AI (cache miss)", req.piping_class)
     pms = await _generate_from_ai(req)
     await _store_in_caches(key, req, pms)
     return pms
