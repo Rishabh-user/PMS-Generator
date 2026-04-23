@@ -70,7 +70,14 @@ _CA_PATTERN = re.compile(
     r"(\d+(?:\.\d+)?)\s*mm(?:\s*(?:ca|corrosion))?",
     re.IGNORECASE,
 )
-_NIL_CA_PATTERN = re.compile(r"\b(?:nil|no)\s*(?:ca|corrosion)\b", re.IGNORECASE)
+# Matches both "NIL CA" / "no corrosion" AND "CA: NIL" / "CA = nil"
+# The latter form is what the frontend sends when the user clicks a "NIL"
+# quick-pick chip, so the pattern has to be bidirectional.
+_NIL_CA_PATTERN = re.compile(
+    r"\b(?:nil|no)\s*(?:ca|corrosion)\b"
+    r"|\b(?:ca|corrosion(?:\s*allowance)?)\s*[:=]?\s*nil\b",
+    re.IGNORECASE,
+)
 
 # Service keywords → canonical service string
 _SERVICE_PATTERNS = [
@@ -253,8 +260,24 @@ def _score_match(entry: dict, q: ParsedQuery) -> float:
     return score / checks if checks else 0.0
 
 
-def find_matches(q: ParsedQuery, limit: int = 8) -> list[ClassMatch]:
-    """Return the best matching pipe classes for the parsed query."""
+def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
+    """Return the best matching pipe classes for the parsed query.
+
+    Result shape depends on how much the user has pinned down:
+
+      • Direct class-code hit ("A1") → that one class, exact.
+      • All three slots filled (Rating + Material + CA) → only ENTRIES
+        that match all three EXACTLY. Typically 1 row. No partial/fuzzy
+        matches — the user has already been explicit, so we don't show
+        "close" results (A1 CS vs A1N CS NACE) as noise.
+      • Partial filters (exploratory / list queries) → every fuzzy-scored
+        hit, sorted best-first.
+
+    `limit` is an optional safety cap. Pass None (the default) to return
+    every match — the chat UI wants the full list so users can browse
+    without hidden rows. Callers that want a top-N cut (e.g. an
+    autocomplete dropdown) can still pass an integer.
+    """
     all_entries = data_service.get_all_entries()
 
     # Direct class-code hit always wins and short-circuits
@@ -272,7 +295,35 @@ def find_matches(q: ParsedQuery, limit: int = 8) -> list[ClassMatch]:
                     )
                 ]
 
-    # Otherwise score every entry and keep the best
+    # Strict path: all three required slots filled → require exact match
+    # on all three. This is the common "user finished slot-picking" path
+    # and we don't want to dump 8 near-misses; 1 precise answer is what
+    # the user asked for.
+    if q.rating and q.material and q.corrosion_allowance:
+        exact: list[dict] = []
+        qr = q.rating.replace(" ", "")
+        qm = q.material.strip().upper()
+        qc = q.corrosion_allowance.strip().upper()
+        for e in all_entries:
+            er = (e.get("rating") or "").replace(" ", "")
+            em = (e.get("material") or "").strip().upper()
+            ec = (e.get("corrosion_allowance") or "").strip().upper()
+            if er == qr and em == qm and ec == qc:
+                exact.append(e)
+        rows = exact if limit is None else exact[:limit]
+        return [
+            ClassMatch(
+                piping_class=e["piping_class"],
+                rating=e.get("rating", ""),
+                material=e.get("material", ""),
+                corrosion_allowance=e.get("corrosion_allowance", ""),
+                pt_preview=_build_pt_preview(e),
+                score=1.0,
+            )
+            for e in rows
+        ]
+
+    # Fuzzy path: partial filters — score every entry and keep the best
     scored: list[tuple[float, dict]] = []
     any_filter = any([q.rating, q.material, q.corrosion_allowance])
     for e in all_entries:
@@ -282,7 +333,7 @@ def find_matches(q: ParsedQuery, limit: int = 8) -> list[ClassMatch]:
                 scored.append((s, e))
         # If no filters provided, don't return every class — caller handles that
     scored.sort(key=lambda x: -x[0])
-    top = scored[:limit]
+    top = scored if limit is None else scored[:limit]
     return [
         ClassMatch(
             piping_class=e["piping_class"],
@@ -334,6 +385,52 @@ def _compose_reply(q: ParsedQuery, matches: list[ClassMatch]) -> str:
     return (
         f"Found **{len(matches)} matching** piping class"
         f"{'es' if len(matches) > 1 else ''}. Pick one to open it in the generator."
+    )
+
+
+_FIELD_LABELS = {
+    "rating": "Pressure Rating",
+    "material": "Material",
+    "corrosion_allowance": "Corrosion Allowance",
+}
+
+
+def _compose_gated_reply(slots: SlotState) -> str:
+    """Deterministic fallback reply when slot-filling is blocking results.
+    Used only when Anthropic is unavailable — the AI reply usually phrases
+    the ask more naturally. Kept short and structured so the user sees
+    EXACTLY which fields are still missing."""
+    filled = []
+    if slots.rating: filled.append(f"Rating = **{slots.rating}**")
+    if slots.material: filled.append(f"Material = **{slots.material}**")
+    if slots.corrosion_allowance:
+        filled.append(f"Corrosion Allowance = **{slots.corrosion_allowance}**")
+
+    missing_labels = [_FIELD_LABELS[f] for f in slots.missing]
+
+    lead = (
+        f"Got it — so far I have {', '.join(filled)}. "
+        if filled
+        else "Happy to generate a PMS sheet! "
+    )
+    if len(missing_labels) == 1:
+        return (
+            f"{lead}I still need the **{missing_labels[0]}** before I can pull "
+            "the matching piping classes. Pick a value from the chips below or "
+            "type it in."
+        )
+    if len(missing_labels) == 2:
+        return (
+            f"{lead}I still need **{missing_labels[0]}** and "
+            f"**{missing_labels[1]}**. Pick from the chips below or send them "
+            "in one message."
+        )
+    return (
+        f"{lead}To generate a PMS I need three things:\n"
+        f"  1. **Pressure Rating** (e.g. 150#, 300#, 600# …)\n"
+        f"  2. **Material** (e.g. CS, SS316L, DSS …)\n"
+        f"  3. **Corrosion Allowance** (NIL, 1.5 mm, 3 mm, or 6 mm)\n"
+        "Service Description is optional — skip it if you like."
     )
 
 
@@ -392,6 +489,83 @@ def _suggest_values(provided: str, field: str, top: int = 5) -> list[str]:
     ranked = sorted(options, key=lambda v: -_similarity(provided, v))
     # Filter to meaningful matches (similarity > 0.2) to avoid random noise
     return [v for v in ranked if _similarity(provided, v) > 0.2][:top]
+
+
+def _merge_slots_from_history(
+    parsed: ParsedQuery, history: list[AgentHistoryTurn]
+) -> ParsedQuery:
+    """Carry forward slot values from earlier user turns in the conversation.
+
+    The current turn always wins — history only fills GAPS. This is what
+    makes multi-turn slot-filling work: turn 1 "rating 150", turn 2 "CS",
+    turn 3 "3mm" should collapse to (rating=150#, material=CS, CA=3 mm)
+    by the third turn, without the client having to re-send the whole
+    prompt each time.
+
+    Assistant turns are ignored — only user-supplied values count as slots.
+
+    ── Fresh-request guard ────────────────────────────────────────────
+    Any turn whose intent is "generate" is treated as a NEW PMS request
+    and DOES NOT inherit slots from earlier turns. The reasoning:
+
+      • "Generate a PMS for rating 150" is the user explicitly starting
+        a fresh spec. If we silently borrow Material/CA from whatever
+        they said two chats ago, they get results without being asked —
+        exactly the behaviour the gate exists to prevent.
+
+      • "Generate PMS" with nothing else is an empty request. Better to
+        ask for all three fields than to auto-restore stale picks.
+
+    Pure follow-ups (intent=unknown / "list" / "info", or bare slot-pick
+    turns like "Material: CS") still merge from history — that's how the
+    chat converges across multiple picks. The quick-pick chip flow
+    sends intent=unknown prompts, so multi-turn slot filling works as
+    expected.
+    """
+    if not history:
+        return parsed
+
+    if parsed.intent == "generate":
+        return parsed
+
+    for turn in history:
+        if turn.role != "user":
+            continue
+        prior = parse_prompt(turn.content)
+        if not parsed.piping_class and prior.piping_class:
+            parsed.piping_class = prior.piping_class
+        if not parsed.rating and prior.rating:
+            parsed.rating = prior.rating
+        if not parsed.material and prior.material:
+            parsed.material = prior.material
+        if not parsed.corrosion_allowance and prior.corrosion_allowance:
+            parsed.corrosion_allowance = prior.corrosion_allowance
+        if not parsed.service and prior.service:
+            parsed.service = prior.service
+        if parsed.design_pressure_barg is None and prior.design_pressure_barg is not None:
+            parsed.design_pressure_barg = prior.design_pressure_barg
+        if parsed.design_temp_c is None and prior.design_temp_c is not None:
+            parsed.design_temp_c = prior.design_temp_c
+    return parsed
+
+
+def _should_gate_matches(parsed: ParsedQuery, slots: SlotState) -> bool:
+    """Return True when we must HIDE matched_classes and push the user to
+    finish slot-filling first. Rule:
+
+      • An explicit "list/show/find" query → never gate.
+      • A direct class-code lookup (e.g. "A1") → never gate.
+      • All three required slots filled (Rating + Material + CA) → never gate.
+      • Otherwise → gate, so the reply nudges for missing fields instead of
+        dumping dozens of partial matches.
+    """
+    if parsed.intent == "list":
+        return False
+    if parsed.piping_class:
+        return False
+    if slots.complete:
+        return False
+    return True
 
 
 def _build_slot_state(parsed: ParsedQuery, matches: list[ClassMatch]) -> SlotState:
@@ -486,6 +660,18 @@ TO GENERATE A PMS EXCEL REPORT, the user MUST provide three fields:
   1. Pressure Rating  (required) — e.g. 150#, 300#, 600#, 900#, 1500#, 2500#, or EEMUA 20 bar for CuNi
   2. Material         (required) — CS, CS NACE, LTCS, LTCS NACE, SS316L, SS316L NACE, DSS, DSS NACE, SDSS, SDSS NACE, CS GALV, CS - Epoxy Lined, CuNi, Copper, GRE, CPVC, Titanium, 6 MO Tubing, SS 316/316L (Tubing)
   3. Corrosion Allowance (required) — NIL, 1.5 mm, 3 mm, or 6 mm
+
+Service Description is OPTIONAL — the user can skip it, and you should
+NEVER ask for it as a blocking requirement.
+
+GATING RULE (very important):
+When the backend tells you MATCHED PIPING CLASSES = NONE AND the slot
+state is not Complete, the user has NOT given you enough to pull real
+results yet. In this case you MUST NOT invent or speculate class codes.
+Your only job is to ask for the remaining required field(s) clearly. The
+frontend renders picker chips for each missing field separately — you
+don't need to list every possible value yourself; just name the fields
+and maybe give a couple of examples.
 
 SLOT-FILLING BEHAVIOUR:
 
@@ -658,18 +844,34 @@ async def chat(req: PMSAgentRequest) -> PMSAgentResponse:
          the multi-select download UI.
     """
     parsed = parse_prompt(req.prompt)
+
+    # Merge slot values carried over from earlier user turns BEFORE matching —
+    # so turn 2 of a multi-turn conversation benefits from what the user
+    # already said in turn 1. Without this, each turn parses in isolation
+    # and slot-filling never converges.
+    parsed = _merge_slots_from_history(parsed, req.history)
+
     matches = find_matches(parsed)
     slots = _build_slot_state(parsed, matches)
     field_suggestions = _build_field_suggestions(parsed, req.prompt)
+
+    # Gate: if the user hasn't given us enough to pin down a class
+    # (and isn't explicitly browsing / naming a class), suppress the
+    # match list so the reply focuses on asking for missing slots. Without
+    # this the backend would happily return every 150# class the moment
+    # the user types "rating 150" — which defeats the slot-filling UX.
+    gated = _should_gate_matches(parsed, slots)
+    if gated:
+        matches = []
 
     # Prefer the AI-generated reply; fall back to the deterministic one.
     reply = await _compose_ai_reply(
         req.prompt, parsed, matches, req.history, slots, field_suggestions,
     )
     if not reply:
-        reply = _compose_reply(parsed, matches)
+        reply = _compose_reply(parsed, matches) if not gated else _compose_gated_reply(slots)
 
-    action = _build_action(parsed, matches)
+    action = _build_action(parsed, matches) if not gated else AgentAction(type="none")
     return PMSAgentResponse(
         reply=reply,
         interpreted=parsed,
