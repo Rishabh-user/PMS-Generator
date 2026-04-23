@@ -8,6 +8,7 @@ import re
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from app.config import settings
 from app.models.pms_models import PMSRequest, PMSResponse, BulkDownloadRequest
 from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
 from app.models.pms_agent_models import (
@@ -292,24 +293,65 @@ async def api_clear_cache():
 # visibility — the response reports how many rows synced vs failed so
 # the admin UI can surface it.
 
+@router.get("/sync/valvesheet/payload")
+async def api_sync_valvesheet_payload():
+    """Return the ready-to-POST bulk payload for the frontend's "Push
+    to Valvesheet" button. Shape:
+
+      {
+        "count": 12,
+        "target_url": "https://...",
+        "payload": {
+          "A1": { "pressure_rating": "150#", ...full spec... },
+          "A1N": { ... },
+          ...
+        }
+      }
+
+    The browser then POSTs `payload` as-is to the external valvesheet
+    URL. The valvesheet API iterates top-level keys and treats each as
+    a separate spec_code, so one POST covers every cached row.
+    """
+    if not db_service.is_available():
+        raise HTTPException(status_code=503, detail="DATABASE_URL not configured.")
+    from app.services.valvesheet_sync_service import _spec_value_from_row
+    summaries = await db_service.admin_list_cache_entries(limit=500, offset=0)
+    payload: dict[str, dict] = {}
+    for s in summaries:
+        row = await db_service.admin_get_cache_entry(s["piping_class"])
+        if row and row.get("piping_class"):
+            payload[row["piping_class"]] = _spec_value_from_row(row)
+    return {
+        "count": len(payload),
+        "target_url": settings.external_valvesheet_api_url or None,
+        "payload": payload,
+    }
+
+
 @router.post("/sync/valvesheet")
 async def api_sync_valvesheet_all():
-    """POST every cached PMS row to the external valvesheet API.
-
-    Tries an array POST first (matches the stated contract: "send all
-    the JSON in an array"). Falls back to per-row POSTs if the external
-    endpoint rejects the array — so this works against either schema
-    without config changes.
+    """POST every cached PMS row to the external valvesheet API, one
+    spec per request. The external API rejects array payloads, so we
+    send N single-key `{code: spec}` dicts and aggregate the results.
 
     Returns 503 when either:
       • DATABASE_URL is not configured (nothing to sync), or
-      • EXTERNAL_VALVESHEET_API_URL is not configured (no destination).
+      • EXTERNAL_VALVESHEET_API_URL is not configured (no destination), or
+      • Every row failed (HTTP or DB-level) — so the caller knows nothing
+        persisted on the valvesheet side.
+
+    Returns 200 with `{synced, failed, failures[]}` when at least some
+    rows went through. A partial-success response lets the caller
+    decide whether to retry the failed subset.
     """
     result = await valvesheet_sync_service.push_all_cached()
-    if not result.get("ok"):
+    # Distinguish pre-flight failures (missing config, DB down) from
+    # per-spec failures. The former deserves a 503 with the error;
+    # the latter is a normal partial-success report.
+    if "error" in result:
         raise HTTPException(
             status_code=503,
-            detail=result.get("error", "Valvesheet sync failed"),
+            detail=result["error"],
         )
     return result
 
@@ -322,7 +364,9 @@ async def api_sync_valvesheet_one(piping_class: str):
 
     Useful when the auto-sync failed (network blip, schema mismatch
     that's since been fixed) and you want to retry a single row
-    without re-running a full bulk backfill."""
+    without re-running a full bulk backfill. Returns both HTTP-level
+    success and the valvesheet DB-level outcome so the caller can tell
+    whether the sheet actually persisted."""
     if not db_service.is_available():
         raise HTTPException(status_code=503, detail="DATABASE_URL not configured.")
     entry = await db_service.admin_get_cache_entry(piping_class)
@@ -331,11 +375,11 @@ async def api_sync_valvesheet_one(piping_class: str):
             status_code=404,
             detail=f"No cached PMS for class '{piping_class}'.",
         )
-    # Reconstruct a minimal PMSResponse-compatible object for the sync.
-    # We reuse the row-based payload helper so the wire format is
-    # identical to what the auto-sync sends.
+    # Reuse the same helpers the auto-sync path uses — guarantees the
+    # wire format stays identical regardless of which endpoint fires it.
     from app.services.valvesheet_sync_service import (
-        _payload_from_row, _is_configured, _send_one, _auth_headers,
+        _payload_from_row, _is_configured, _send_one,
+        _parse_valvesheet_response,
     )
     if not _is_configured():
         raise HTTPException(
@@ -348,10 +392,23 @@ async def api_sync_valvesheet_one(piping_class: str):
     async with httpx.AsyncClient(
         timeout=_settings.external_valvesheet_timeout
     ) as client:
-        ok, detail = await _send_one(client, "PUT", payload)
-    if not ok:
-        raise HTTPException(status_code=502, detail=f"Valvesheet PUT failed: {detail}")
-    return {"ok": True, "piping_class": piping_class, "version": payload["version"]}
+        http_ok, body = await _send_one(client, "PUT", payload)
+    if not http_ok:
+        raise HTTPException(status_code=502, detail=f"Valvesheet PUT failed: {body}")
+    # HTTP succeeded — check the valvesheet response body to confirm
+    # the sheet actually landed in their DB. HTTP 200 with a db_failed
+    # entry for this spec counts as a functional failure.
+    db_ok, detail = _parse_valvesheet_response(body, piping_class)
+    if not db_ok:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Valvesheet accepted the request but DB insert failed: {detail}",
+        )
+    return {
+        "ok": True,
+        "piping_class": piping_class,
+        "version": entry.get("version") or "A0",  # read from DB row, not payload
+    }
 
 
 @router.get("/cached-classes")

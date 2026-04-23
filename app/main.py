@@ -68,8 +68,16 @@ async def shutdown():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Serve the main UI."""
-    return templates.TemplateResponse(request, "index.html")
+    """Serve the main UI. The valvesheet sync URL from .env is passed
+    through to the template so the "Push to Valvesheet" button can
+    POST directly to it without any hardcoded URL in the JS."""
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "valvesheet_api_url": settings.external_valvesheet_api_url or "",
+        },
+    )
 
 
 @app.get("/admin", response_class=HTMLResponse)
