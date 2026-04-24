@@ -120,6 +120,36 @@ class ParsedQuery(BaseModel):
     design_temp_c: Optional[float] = None
     design_pressure_barg: Optional[float] = None
     intent: Literal["generate", "list", "info", "unknown"] = "unknown"
+    exclude_nace: bool = Field(
+        default=False,
+        description="True when the user asked for NON-NACE classes "
+                    "(e.g. 'no NACE', 'non-NACE', 'without NACE'). "
+                    "Flips find_matches' NACE filter from 'include only' "
+                    "to 'exclude'. Kept as a separate flag instead of "
+                    "encoding it in `service` so the service slot can "
+                    "remain None / whatever the user actually wants.",
+    )
+    prefer_corrosion_resistant: bool = Field(
+        default=False,
+        description="True when the user asked for corrosion-resistant "
+                    "materials (e.g. 'material must be corrosion-resistant', "
+                    "'CRA', 'stainless only', 'non-corrosive material'). "
+                    "Filters out every carbon-steel family (CS, CS NACE, "
+                    "LTCS, LTCS NACE, CS GALV, CS - Epoxy Lined) and keeps "
+                    "only the corrosion-resistant alloys / non-metals "
+                    "(SS316L, DSS, SDSS, CuNi, Titanium, GRE, CPVC, etc.).",
+    )
+    strict_material: bool = Field(
+        default=False,
+        description="True when the user explicitly restricted results to "
+                    "the named material with no variants — phrasings like "
+                    "'LTCS only', 'just CS', 'exactly SS316L', 'pure DSS', "
+                    "'no other material'. Swaps the fuzzy material match "
+                    "(which treats 'LTCS' as matching 'LTCS NACE' too) for "
+                    "case-insensitive exact equality, so 'LTCS only' returns "
+                    "the 6 pure-LTCS classes instead of all 18 LTCS + LTCS "
+                    "NACE variants.",
+    )
 
 
 class AgentAction(BaseModel):

@@ -54,7 +54,14 @@ _MATERIAL_PATTERNS = [
     ("SS304L", r"\b(ss\s*304\s*l|304\s*l|astm\s*a\s*312\s*tp\s*304\s*l)\b"),
     ("SS316", r"\b(ss\s*316|tp\s*316|astm\s*a\s*312\s*tp\s*316)\b"),
     ("SS304", r"\b(ss\s*304|tp\s*304)\b"),
-    ("LTCS", r"\b(ltcs|low[\s-]?temp(?:erature)?\s*cs|a333)\b"),
+    # LTCS — accepts "ltcs", "low-temp cs", "low temperature cs",
+    # "low-temperature carbon steel", "low temperature carbon steel",
+    # and "a333". Critical: the "carbon steel" variant must be here
+    # (not just in the CS pattern below) because LTCS is listed
+    # BEFORE CS — otherwise a prompt like "low temperature carbon
+    # steel" falls through to the plain CS pattern and the LTCS
+    # intent is lost.
+    ("LTCS", r"\b(ltcs|low[\s-]?temp(?:erature)?\s*(?:cs|carbon[\s-]?steel)|a333)\b"),
     ("CUNI", r"\b(cuni|cu[\s-]?ni|copper[\s-]?nickel|c70600|90[\s/]?10|b\s*466)\b"),
     ("TITANIUM", r"\b(titanium|\bti\b|b861)\b"),
     ("COPPER", r"\b(copper|c12200|dhp|b\s*42)\b"),
@@ -119,6 +126,42 @@ _INTENT_PATTERNS = [
     # Info / describe verbs (never gated)
     (r"\b(tell|describe|info|details|explain|about)\b", "info"),
 ]
+
+
+def _match_catalogue_service(prompt_upper: str) -> str | None:
+    """Return the first catalogue service name that appears verbatim in
+    the prompt (case-insensitive). Runs BEFORE the regex patterns so
+    catalogue services like "Glycol", "Hypochlorite", "Potable Water",
+    "Raw Sea Water" are matched correctly even when the user's prompt
+    doesn't hit any of the regex keywords.
+
+    Catalogue services come from `_available_values()["service"]`
+    which splits each class's comma-joined `service` field into its
+    individual terms (so "Cooling Media, Heating Media, Diesel" becomes
+    three separate pickable/matchable services).
+
+    Longest-match-first to prevent "Water" from swallowing a more
+    specific "Raw Sea Water" hit.
+    """
+    try:
+        catalogue = _available_values().get("service", [])
+    except Exception:
+        return None
+    for name in sorted(catalogue, key=lambda s: -len(s)):
+        n = name.upper().strip()
+        if not n or len(n) < 3:
+            continue  # skip tiny tokens (e.g. "FG") — too noisy
+        if n in prompt_upper:
+            idx = prompt_upper.index(n)
+            before = prompt_upper[idx - 1] if idx > 0 else " "
+            after = (
+                prompt_upper[idx + len(n)]
+                if idx + len(n) < len(prompt_upper)
+                else " "
+            )
+            if not before.isalnum() and not after.isalnum():
+                return name  # catalogue-cased form, picker-compatible
+    return None
 
 
 def _match_catalogue_material(prompt_upper: str) -> str | None:
@@ -194,16 +237,98 @@ def parse_prompt(prompt: str) -> ParsedQuery:
             # Normalize to match data store format: "3 mm", "1.5 mm"
             ca = f"{value} mm"
 
-    # Service — try the keyword patterns first (which normalize to the
-    # canonical label, e.g. "hydrocarbon" → "Hydrocarbon Service"). If
-    # nothing matches but the prompt is a structured `Service: X` form
-    # from a chip click, take X verbatim — that's how the picker
-    # surfaces free-text entries that don't hit any keyword pattern.
-    service: str | None = None
-    for pat, label in _SERVICE_PATTERNS:
-        if re.search(pat, low, re.IGNORECASE):
-            service = label
-            break
+    # Detect "only <material>" / "no other material" / "exactly" /
+    # "pure" / "just" phrasings that signal the user wants a STRICT
+    # material match — no variants, no NACE sub-types. Example:
+    # "LTCS only" should return only the 6 pure-LTCS classes, not the
+    # 18 LTCS-family classes that include LTCS NACE. Without this flag
+    # the fuzzy matcher treats "LTCS NACE" as a token-match hit for
+    # "LTCS" (correct in general, wrong when the user said "only").
+    strict_material = bool(
+        re.search(r"\b(?:only|exactly|pure|solely|strictly)\b", low)
+        or re.search(
+            r"\bno\s+other\s+(?:material|materials|type|types|variant|variants)\b",
+            low,
+        )
+        or re.search(
+            r"\bjust\s+(?:the\s+)?"
+            r"(?:cs|ltcs|ss316l?|ss304l?|dss|sdss|cuni|titanium|gre|cpvc|copper|carbon\s+steel)\b",
+            low,
+        )
+    )
+
+    # Detect "corrosion-resistant material" intent. Matches the common
+    # phrasings users reach for: "corrosion-resistant", "corrosion
+    # resistant", "CRA" (the oil-and-gas acronym for Corrosion-Resistant
+    # Alloy), "stainless only", "non-corrosive", "anti-corrosion",
+    # "corrosion proof". When true, find_matches filters out every
+    # carbon-steel family (CS, CS NACE, LTCS, LTCS NACE, CS GALV,
+    # CS - Epoxy Lined) and keeps only CRAs + non-metals.
+    prefer_corrosion_resistant = bool(
+        re.search(
+            r"\bcorrosion[\s\-]?(?:resistant|resisting|resist|proof)\b"
+            r"|\bcorrosion[\s\-]?resist",
+            low,
+        )
+        or re.search(r"\bnon[\s\-]?corrosive\b|\banti[\s\-]?corrosion\b", low)
+        or re.search(r"\bcra\b", low)
+        or re.search(r"\bstainless\s+only\b", low)
+    )
+
+    # Detect NACE negation BEFORE the service match — catches all of:
+    #   "no NACE", "non NACE", "non-NACE", "without NACE",
+    #   "exclude NACE", "excluding NACE", "not NACE".
+    # The separator between the negation word and "nace"/"sour"/"h2s"
+    # can be any mix of whitespace + hyphens (so "non-NACE" works too,
+    # not just "non NACE"). When negated, we flip to exclude-NACE mode
+    # AND suppress the NACE/sour/H2S service match — otherwise the
+    # user's "no NACE" would still get parsed as service=Sour/H2S
+    # because the service pattern matches "nace" regardless of the
+    # preceding negation.
+    exclude_nace = bool(re.search(
+        r"\b(?:no|non|not|without|exclude|excluding)[\s\-]+"
+        r"(?:nace|sour|h2s)\b",
+        low,
+    ))
+
+    # Detect "with NACE" / "including NACE" / "plus NACE" / "and NACE".
+    # Semantically this is FAMILY INCLUSION *only when paired with a
+    # specific material*: the user is saying "LTCS and its NACE
+    # variants" or "CS including NACE". Without a material slot the
+    # phrase is just a service filter ("Generate all 300# with NACE"
+    # really does want NACE-only classes), so we gate the flag on
+    # `material` being populated. Negation still takes precedence.
+    _has_with_nace_phrasing = bool(re.search(
+        r"\b(?:with|including|include|plus|and|also)\s+"
+        r"(?:the\s+)?(?:nace|sour|h2s)\b",
+        low,
+    ))
+    include_nace_variant = (
+        _has_with_nace_phrasing
+        and bool(material)
+        and not exclude_nace
+    )
+
+    # Service — detection chain:
+    #   1. Catalogue-verbatim hit (e.g. "Glycol", "Hypochlorite",
+    #      "Raw Sea Water") — wins even when the user types it
+    #      casually like "generate PMS for Service GLYCol". This is the
+    #      broadest check because the picker only offers values from
+    #      this list.
+    #   2. Regex keyword patterns — normalise informal words
+    #      (e.g. "hydrocarbon" → "Hydrocarbon Service", "nace" →
+    #      "Sour / H2S Service (NACE)"). These are broader than
+    #      catalogue values so they also cover phrasings that aren't
+    #      literal service names.
+    #   3. Structured fallback `Service: X` — the chip-click format
+    #      from the picker, takes X verbatim when it's not a known
+    #      catalogue term (e.g. a user-typed custom service).
+    service: str | None = _match_catalogue_service(up)
+    if not service:
+        for pat, label in _SERVICE_PATTERNS:
+            if re.search(pat, low, re.IGNORECASE):
+                service = label
+                break
     if not service:
         m = re.search(
             r"\bservice\s*[:=]\s*(.+?)\s*$",
@@ -214,6 +339,26 @@ def parse_prompt(prompt: str) -> ParsedQuery:
             val = m.group(1).strip().rstrip(".,;")
             if val and val.lower() not in ("", "skip", "none"):
                 service = val
+
+    # If NACE was negated, clear the matched NACE/sour service — the
+    # user is saying they DON'T want sour service, so the service
+    # slot shouldn't be filled with "Sour / H2S Service (NACE)".
+    if exclude_nace and service:
+        s_lc = service.lower()
+        if "nace" in s_lc or "sour" in s_lc or "h2s" in s_lc:
+            service = None
+
+    # If "with NACE" / "including NACE" was said, this is family
+    # inclusion (keep NACE variants in the fuzzy material match),
+    # NOT a service filter. Clearing the NACE/sour service here means
+    # the matcher won't narrow to NACE-only rows, and the fuzzy
+    # material match naturally returns the full family (both plain
+    # and NACE). Example: "LTCS with NACE" → material="LTCS", service
+    # cleared → 18 LTCS-family matches instead of 12 NACE-only.
+    if include_nace_variant and service:
+        s_lc = service.lower()
+        if "nace" in s_lc or "sour" in s_lc or "h2s" in s_lc:
+            service = None
 
     # Design pressure
     design_pressure_barg: float | None = None
@@ -253,6 +398,9 @@ def parse_prompt(prompt: str) -> ParsedQuery:
         material=material,
         corrosion_allowance=ca,
         service=service,
+        exclude_nace=exclude_nace,
+        prefer_corrosion_resistant=prefer_corrosion_resistant,
+        strict_material=strict_material,
         design_temp_c=design_temp_c,
         design_pressure_barg=design_pressure_barg,
         intent=intent,  # type: ignore[arg-type]
@@ -261,27 +409,64 @@ def parse_prompt(prompt: str) -> ParsedQuery:
 
 # ── Matching ────────────────────────────────────────────────────────
 
-def _material_matches(entry_material: str, query_material: str) -> bool:
-    """Fuzzy material match: query 'CS' should match entry 'CS' or 'Carbon Steel'."""
-    e = (entry_material or "").upper()
-    q = query_material.upper()
-    if q in e or e in q:
+def _material_matches(
+    entry_material: str, query_material: str, *, strict: bool = False,
+) -> bool:
+    """Fuzzy material match using whole-token (word-boundary) matching.
+
+    Why word boundaries matter: naive substring matching makes "CS"
+    match inside "LTCS" (the characters `CS` are a suffix), so a user
+    asking for LTCS would incorrectly pull in every plain-CS class too.
+    With \\b boundaries we require CS to be a standalone token — it
+    matches "CS" and "CS NACE" but not "LTCS".
+
+    Accepts query match both on the full material string and against
+    known aliases (e.g. "SS316L" ↔ "316L", "DSS" ↔ "DUPLEX"). Aliases
+    also use word-boundary matching.
+
+    `strict=True` disables every fuzzy mechanism — only case-insensitive
+    exact string equality counts. Used when the user said "LTCS only" /
+    "just CS" / "no other material" etc., so "LTCS" no longer matches
+    "LTCS NACE" and "CS" no longer matches "CS NACE" / "CS GALV".
+    """
+    e = (entry_material or "").upper().strip()
+    q = query_material.upper().strip()
+    if not e or not q:
+        return False
+
+    # Exact match — the only path that fires in strict mode
+    if e == q:
         return True
-    # Common synonyms
+    if strict:
+        return False
+
+    # Query appears as a whole token inside the entry material name
+    # (e.g. q="CS" matches e="CS NACE", q="GRE" matches
+    # e="GRE (VALVE: NAB)"). Uses \b which respects word boundaries
+    # so q="CS" does NOT match e="LTCS".
+    if re.search(rf"\b{re.escape(q)}\b", e):
+        return True
+
+    # Common synonyms — each alias is also matched as a whole token.
+    # Note: LTCS doesn't include "CS" as an alias (that was the old
+    # behaviour that caused the LTCS → CS bug).
     aliases = {
-        "CS": ("CS", "CARBON", "A106", "A333"),  # LTCS also is A333 carbon
-        "SS316L": ("316L", "SS316L"),
-        "SS316": ("316", "SS316"),
-        "SS304L": ("304L", "SS304L"),
-        "DSS": ("DSS", "DUPLEX", "S31803", "S32205"),
-        "SDSS": ("SDSS", "SUPER DUPLEX", "S32750"),
-        "CUNI": ("CUNI", "CU-NI", "COPPER NICKEL", "C70600", "90/10"),
-        "LTCS": ("LTCS", "LOW TEMP", "A333"),
-        "GALV": ("GALV",),
-        "TITANIUM": ("TITANIUM", "B861"),
+        "CS": ("CARBON", "A106"),
+        "SS316L": ("316L",),
+        "SS316": ("316",),
+        "SS304L": ("304L",),
+        "SS304": ("304",),
+        "DSS": ("DUPLEX", "S31803", "S32205"),
+        "SDSS": ("SUPER DUPLEX", "S32750"),
+        "CUNI": ("CU-NI", "COPPER NICKEL", "C70600", "90/10"),
+        "LTCS": ("LOW TEMP", "A333"),
+        "GALV": (),  # covered by q-as-token match
+        "TITANIUM": ("B861",),
     }
     if q in aliases:
-        return any(a in e for a in aliases[q])
+        for a in aliases[q]:
+            if re.search(rf"\b{re.escape(a)}\b", e):
+                return True
     return False
 
 
@@ -315,7 +500,9 @@ def _score_match(entry: dict, q: ParsedQuery) -> float:
 
     if q.material:
         checks += 1
-        if _material_matches(entry.get("material", ""), q.material):
+        if _material_matches(
+            entry.get("material", ""), q.material, strict=q.strict_material,
+        ):
             score += 1.0
 
     if q.corrosion_allowance:
@@ -324,6 +511,121 @@ def _score_match(entry: dict, q: ParsedQuery) -> float:
             score += 1.0
 
     return score / checks if checks else 0.0
+
+
+def _is_corrosion_resistant_material(material: str) -> bool:
+    """Return True when the material spec is a corrosion-resistant alloy
+    (CRA) or a non-metal, False when it's a carbon-steel family member.
+
+    CRAs / non-metals kept when user asks for "corrosion-resistant":
+      • Stainless: SS316L, SS316L NACE, SS316, SS304L, 316/316L Tubing,
+                   6 MO Tubing
+      • Duplex / super duplex: DSS, DSS NACE, SDSS, SDSS NACE
+      • Copper alloys: CuNi (good for seawater), Copper (for potable)
+      • Exotics: Titanium
+      • Non-metals: GRE, CPVC
+
+    Rejected (carbon-steel family — susceptible to corrosion even with
+    NACE / galvanized / epoxy-lined variants):
+      • CS, CS NACE, LTCS, LTCS NACE, CS GALV, CS GALV (Valve: SS),
+        CS - Epoxy Lined
+    """
+    m = (material or "").upper().strip()
+    if not m:
+        return False
+    # Any material whose token set includes CS / LTCS / GALV / EPOXY
+    # is carbon-steel family — reject.
+    cs_markers = ("CS NACE", "LTCS", "CS GALV", "CS - EPOXY", "EPOXY LINED")
+    for marker in cs_markers:
+        if marker in m:
+            return False
+    # Bare "CS" is also carbon steel. Check with word boundaries so
+    # "SS" (in SS316L) doesn't trip.
+    if re.search(r"\bCS\b", m):
+        return False
+    # Everything else (SS*, DSS*, SDSS*, CuNi, Copper, GRE, CPVC,
+    # Titanium, 6 MO, 316/316L Tubing) is corrosion-resistant.
+    return True
+
+
+def _apply_cra_filter(rows: list[dict]) -> list[dict]:
+    """Keep only rows whose material spec is a corrosion-resistant
+    alloy / non-metal. Invoked when `prefer_corrosion_resistant` is
+    set on the query. Uses `_is_corrosion_resistant_material` so the
+    classification is consistent wherever CRA is referenced."""
+    return [
+        e for e in rows
+        if _is_corrosion_resistant_material(e.get("material", ""))
+    ]
+
+
+def _apply_nace_exclusion(rows: list[dict]) -> list[dict]:
+    """Drop every row whose MATERIAL spec contains "NACE". Invoked when
+    the user said "no NACE" / "non-NACE" / "without NACE" etc. — the
+    opposite of the include-only NACE filter handled inside
+    `_filter_by_service`. Kept as a separate helper so it can also run
+    on list-intent queries where the user specifies no service at all
+    (`"all 300# non-NACE"` → no service slot, just the exclusion)."""
+    return [
+        e for e in rows
+        if "nace" not in (e.get("material") or "").lower()
+    ]
+
+
+def _filter_by_service(rows: list[dict], service: str | None) -> list[dict]:
+    """Narrow candidate rows based on the user-specified service.
+
+    Two-layer logic — catalogue services live in two different places:
+
+      1. NACE / sour / H2S service → filter by MATERIAL name containing
+         "NACE". The NACE compliance flag is part of the material spec
+         ("CS NACE", "SS316L NACE", "DSS NACE", "SDSS NACE", "LTCS NACE")
+         and is NOT mentioned in any row's service field. Without this
+         special case, "list all 300# NACE" returns both NACE and
+         non-NACE classes.
+
+      2. Any other non-broad service → substring-match against the row's
+         service field (a comma-joined list like "Cooling Media,
+         Heating Media, Diesel"). Broad labels like "General" are
+         treated as wildcards — see _BROAD_SERVICES.
+
+    Soft fallback: if the filter would eliminate every row, we return
+    the unfiltered input instead. The user's rating/material/CA
+    filters are stronger signals than an exact service-string match,
+    so we don't dead-end the list on a service typo.
+
+    NACE EXCLUSION (the opposite direction) is handled separately by
+    `_apply_nace_exclusion`, triggered by `parsed.exclude_nace` in
+    `find_matches` — the two can't both fire for the same query so
+    they're kept apart.
+    """
+    if not service:
+        return rows
+    s_needle = service.strip().lower()
+    if not s_needle or s_needle in _BROAD_SERVICES:
+        return rows
+
+    # NACE / sour / H2S — filter by material name
+    if "nace" in s_needle or "sour" in s_needle or "h2s" in s_needle:
+        refined = [
+            e for e in rows
+            if "nace" in (e.get("material") or "").lower()
+        ]
+        return refined if refined else rows
+
+    # Regular service — substring match against catalogue service field.
+    # Whitespace is normalised on BOTH sides because the catalogue is
+    # inconsistent about whether multi-word services are one word or
+    # two (e.g. "Seawater" in A5/A6 vs "Raw Sea Water" in A30/A50 —
+    # both should match a user typing "seawater"). Compressing
+    # whitespace-free also handles "firewater" vs "fire water",
+    # "Potable Water" vs "potablewater", etc.
+    s_needle_compact = re.sub(r"\s+", "", s_needle)
+    refined = [
+        e for e in rows
+        if s_needle_compact in re.sub(r"\s+", "", (e.get("service") or "").lower())
+    ]
+    return refined if refined else rows
 
 
 def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
@@ -383,9 +685,12 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
             ec = (e.get("corrosion_allowance") or "").strip().upper()
             if er == qr and em == qm and ec == qc:
                 exact.append(e)
-        if not exact:
+        if not exact and not q.strict_material:
             # Fall back to fuzzy material match — lets "GRE" hit the
             # catalogue's "GRE (Valve: NAB)" entries (A50/A51/A52).
+            # Skipped when strict_material is set: the user explicitly
+            # asked for the exact material and has accepted that there
+            # may be zero matches.
             for e in all_entries:
                 er = (e.get("rating") or "").replace(" ", "")
                 ec = (e.get("corrosion_allowance") or "").strip().upper()
@@ -396,25 +701,23 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
                 ):
                     exact.append(e)
 
-        # Further narrow by service when the user specified a
-        # non-broad service (e.g. "Hypochlorite"). The catalogue
-        # service field is a comma-joined list, so substring-match
-        # case-insensitively. Broad services like "General" are
-        # treated as wildcards and don't filter — the curated roster
-        # uses them for picker UX only.
-        if q.service and exact:
-            s_needle = q.service.strip().lower()
-            if s_needle and s_needle not in _BROAD_SERVICES:
-                refined = [
-                    e for e in exact
-                    if s_needle in (e.get("service") or "").lower()
-                ]
-                if refined:
-                    exact = refined
-                # else: keep the broader exact list so the user sees
-                # classes for their rating/material/CA rather than a
-                # dead-end on a service typo. The reply can hint that
-                # no class explicitly targets this service.
+        # Further narrow by service — handles both NACE (material-name
+        # filter) and regular catalogue services (service-field
+        # substring). See _filter_by_service for the logic.
+        exact = _filter_by_service(exact, q.service)
+
+        # NACE EXCLUSION — user said "no NACE" / "non-NACE": drop every
+        # row whose material spec contains "NACE" so the result set has
+        # only standard materials.
+        if q.exclude_nace:
+            exact = _apply_nace_exclusion(exact)
+
+        # CORROSION-RESISTANT filter — user asked for "corrosion-
+        # resistant material" / "CRA": keep only CRA + non-metal rows,
+        # drop every carbon-steel family (CS, CS NACE, LTCS, CS GALV,
+        # CS - Epoxy Lined).
+        if q.prefer_corrosion_resistant:
+            exact = _apply_cra_filter(exact)
 
         rows = exact if limit is None else exact[:limit]
         return [
@@ -429,15 +732,79 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
             for e in rows
         ]
 
-    # Fuzzy path: partial filters — score every entry and keep the best
+    # Fuzzy path: partial filters — score every entry and keep the best.
+    # `any_filter` must include service AND the exclude_nace flag —
+    # otherwise a pure-service query like "generate all PMS of
+    # Hydraulic Oil" sees no filters, returns zero matches, and the
+    # user gets gated despite intent=list. Service rows that don't
+    # match the other filters still score 0 via _score_match (no
+    # rating/material/CA to score against) and then get filtered in
+    # by `_filter_by_service` below.
     scored: list[tuple[float, dict]] = []
-    any_filter = any([q.rating, q.material, q.corrosion_allowance])
+    any_filter = any([
+        q.rating, q.material, q.corrosion_allowance,
+        q.service, q.exclude_nace, q.prefer_corrosion_resistant,
+    ])
+    # When only service / exclude_nace is specified (no rating /
+    # material / CA to score against), _score_match would divide by
+    # zero-checks; skip scoring and include every row at score 1.0 so
+    # the service filter below can narrow from the full catalogue.
+    score_by_fields = bool(q.rating or q.material or q.corrosion_allowance)
     for e in all_entries:
-        if any_filter:
+        if not any_filter:
+            continue
+        # Strict-material: HARD filter. When the user said "LTCS only"
+        # etc., a material mismatch must eliminate the row outright,
+        # not merely contribute 0 to the fuzzy score. Otherwise a row
+        # like B1 (300#, CS) would still score 0.5 on a query of
+        # "CS only at 150#" (rating mismatch = 0, material match = 1
+        # → 0.5) and slip through.
+        if q.strict_material and q.material:
+            if not _material_matches(
+                e.get("material", ""), q.material, strict=True,
+            ):
+                continue
+        if score_by_fields:
             s = _score_match(e, q)
             if s > 0:
                 scored.append((s, e))
-        # If no filters provided, don't return every class — caller handles that
+        else:
+            # Service-only / exclusion-only query — every row is a
+            # candidate; _filter_by_service and the exclusion step
+            # below do the actual narrowing.
+            scored.append((1.0, e))
+
+    # Service filter applies in the fuzzy/list path too — critical for
+    # queries like "list all 300# NACE" where the user expects only
+    # NACE-compliant classes, not the full 300# set. Same helper used
+    # by the strict path so the behaviour is consistent.
+    if q.service:
+        scored_rows = [e for _, e in scored]
+        filtered = _filter_by_service(scored_rows, q.service)
+        kept_ids = {id(e) for e in filtered}
+        scored = [(s, e) for s, e in scored if id(e) in kept_ids]
+
+    # NACE exclusion in the fuzzy/list path — mirrors the strict path.
+    # Example: "Generate all PMS of rating 300 with no NACE" → no
+    # service slot set, but every NACE-material row must still be
+    # dropped from the list.
+    if q.exclude_nace:
+        scored = [
+            (s, e) for s, e in scored
+            if "nace" not in (e.get("material") or "").lower()
+        ]
+
+    # CORROSION-RESISTANT filter in the fuzzy/list path. Drops every
+    # carbon-steel family row (CS, CS NACE, LTCS, CS GALV, CS - Epoxy
+    # Lined) so queries like "glycol service with corrosion-resistant
+    # material" return only SS / DSS / SDSS / CuNi / Titanium / GRE
+    # / CPVC classes.
+    if q.prefer_corrosion_resistant:
+        scored = [
+            (s, e) for s, e in scored
+            if _is_corrosion_resistant_material(e.get("material", ""))
+        ]
+
     scored.sort(key=lambda x: -x[0])
     top = scored if limit is None else scored[:limit]
     return [
@@ -558,7 +925,19 @@ def _build_action(q: ParsedQuery, matches: list[ClassMatch]) -> AgentAction:
             design_pressure_barg=q.design_pressure_barg,
             design_temp_c=q.design_temp_c,
         )
-    return AgentAction(type="list_only")
+    # list_only actions still need to carry the user-picked service
+    # (and design P/T) — otherwise Download Excel / View Details
+    # requests built from this action fall back to service="General"
+    # in the frontend, and the generated PMS shows "General" in its
+    # Service field instead of what the user picked. Bug was only
+    # visible in multi-match / chip-pick flows because those return
+    # list_only, never open_generator.
+    return AgentAction(
+        type="list_only",
+        service=q.service,
+        design_pressure_barg=q.design_pressure_barg,
+        design_temp_c=q.design_temp_c,
+    )
 
 
 # ── Slot-filling helpers ────────────────────────────────────────────
@@ -625,7 +1004,10 @@ def _available_values(parsed: ParsedQuery | None = None) -> dict[str, list[str]]
             q_mat = parsed.material
             rows = [
                 e for e in rows
-                if _material_matches(e.get("material", ""), q_mat)
+                if _material_matches(
+                    e.get("material", ""), q_mat,
+                    strict=parsed.strict_material,
+                )
             ]
         if exclude != "rating" and parsed.rating:
             qr = _norm_rating(parsed.rating)
@@ -648,12 +1030,30 @@ def _available_values(parsed: ParsedQuery | None = None) -> dict[str, list[str]]
                 # does its own strict service filter when the user
                 # actually asks for results, so nothing leaks through
                 # to the final answer.
+                sn_compact = re.sub(r"\s+", "", sn)
                 filtered = [
                     e for e in rows
-                    if sn in (e.get("service") or "").lower()
+                    if sn_compact in re.sub(
+                        r"\s+", "", (e.get("service") or "").lower()
+                    )
                 ]
                 if filtered:
                     rows = filtered
+        # Corrosion-resistant and NACE filters always apply regardless
+        # of `exclude`, since they constrain MATERIAL across all pickers.
+        # Without these, the Material picker would still offer carbon
+        # steel options even after the user asked for "corrosion-
+        # resistant" — exactly the bug we're fixing.
+        if parsed.prefer_corrosion_resistant:
+            rows = [
+                e for e in rows
+                if _is_corrosion_resistant_material(e.get("material", ""))
+            ]
+        if parsed.exclude_nace:
+            rows = [
+                e for e in rows
+                if "nace" not in (e.get("material") or "").lower()
+            ]
         return rows
 
     rating_rows = _apply_other_filters("rating")
