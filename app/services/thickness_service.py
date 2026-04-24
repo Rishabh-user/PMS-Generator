@@ -370,11 +370,11 @@ async def compute_thickness(req: ComputeThicknessRequest) -> ComputeThicknessRes
         #     80S, STD, XS), show the nominal wall thickness from the PMS
         #     as-is to 3 decimals — the authoritative value looked up from
         #     the ASME B36.10M/B36.19M table.
-        #   - When schedule is "-" (or blank), there is no table-based
-        #     selection — per the project owner, mirror the Calc. Thk T
-        #     value rounded to 2 decimals with NO additional math.
+        #   - When schedule is "-" (or blank), there is no standard "selected"
+        #     thickness — the value IS the calculated thickness, so mirror
+        #     calc_thk rounded to 1 decimal per project convention.
         if _is_calc_schedule(p.schedule):
-            sel_thk_display = round(calc_thk, 2)
+            sel_thk_display = round(calc_thk, 1)
         else:
             sel_thk_display = round(nominal, 3)
 

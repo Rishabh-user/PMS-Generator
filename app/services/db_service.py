@@ -79,15 +79,7 @@ BEGIN
         RAISE NOTICE 'pms_cache: added version column';
     END IF;
 
-    -- Step 2a: normalize piping_class casing / whitespace on every row.
-    -- The lookup path stores keys as UPPER(TRIM(piping_class)), so any
-    -- pre-existing row with "a1" or "A1 " would otherwise slip past a
-    -- case-sensitive WHERE clause and trigger a needless AI regeneration.
-    UPDATE pms_cache
-    SET piping_class = UPPER(TRIM(piping_class))
-    WHERE piping_class <> UPPER(TRIM(piping_class));
-
-    -- Step 2b: dedupe — keep newest row per (now-normalized) piping_class
+    -- Step 2: dedupe — keep newest row per piping_class
     DELETE FROM pms_cache a
     USING pms_cache b
     WHERE a.piping_class = b.piping_class
@@ -191,24 +183,14 @@ async def close_pool():
 
 
 async def get_cached_pms(piping_class: str) -> dict | None:
-    """Fetch cached PMS response from DB. Returns parsed dict or None.
-
-    The lookup is case- and whitespace-insensitive as a safety net —
-    even if a legacy row predating the migration still carries the
-    original casing, an "A1" request will still find an "a1" row and
-    avoid a pointless AI regeneration.
-    """
+    """Fetch cached PMS response from DB. Returns parsed dict or None."""
     if not _pool:
-        return None
-    key = (piping_class or "").upper().strip()
-    if not key:
         return None
     try:
         async with _pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT response_json FROM pms_cache "
-                "WHERE UPPER(TRIM(piping_class)) = $1",
-                key,
+                "SELECT response_json FROM pms_cache WHERE piping_class = $1",
+                piping_class,
             )
             if row:
                 data = row["response_json"]

@@ -21,7 +21,6 @@ from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services import data_service
 from app.services import db_service
-from app.services import valvesheet_sync_service
 from app.utils.pipe_data import correct_pipe_data
 from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PERCENT
 
@@ -338,34 +337,18 @@ async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
     upserts by piping_class and bumps `version` on each write, so the
     L2 row for a class is overwritten in place rather than duplicated.
     The returned version string is written back onto the PMSResponse
-    so the frontend + Excel header can show the current revision.
-
-    After a successful DB write, mirror the payload to the external
-    SPE Valvesheet backend — POST for a new row (version A0), PUT for
-    a regeneration (A1+). The sync runs as a background task so the
-    user's response isn't delayed by the downstream HTTP call, and all
-    errors are swallowed+logged (a flaky mirror must not break local
-    generation)."""
-    synced_version: str | None = None
+    so the frontend + Excel header can show the current revision."""
     if db_service.is_available():
-        synced_version = await db_service.store_pms(
+        version = await db_service.store_pms(
             piping_class=key,
             material=req.material,
             corrosion_allowance=req.corrosion_allowance,
             service=req.service,
             response=pms.model_dump(),
         )
-        if synced_version:
-            pms.version = synced_version
+        if version:
+            pms.version = version
     _pms_cache[key] = pms
-
-    # Mirror to the external valvesheet backend. Treat anything other
-    # than exactly "A0" as an update — the UPSERT returns A0 only on
-    # the very first insert, so this cleanly distinguishes POST vs PUT
-    # even when the caller (regenerate_pms) forced a bump.
-    if synced_version is not None:
-        is_regenerate = synced_version != "A0"
-        valvesheet_sync_service.sync_in_background(pms, is_regenerate=is_regenerate)
 
 
 async def generate_pms(req: PMSRequest) -> PMSResponse:
@@ -388,45 +371,20 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
 
     # L1: In-memory cache
     if key in _pms_cache:
-        logger.info("L1 memory cache HIT for %s (key=%s)", req.piping_class, key)
+        logger.info("L1 memory cache hit for %s", req.piping_class)
         return _pms_cache[key]
 
     # L2: PostgreSQL cache
     if db_service.is_available():
         cached = await db_service.get_cached_pms(key)
         if cached:
-            # A row exists for this class — honour the "don't regenerate
-            # unless user explicitly asks" contract. If the stored payload
-            # fails to deserialize against the current PMSResponse schema
-            # (rare — e.g. a required field was renamed after the row was
-            # written), log LOUDLY and fall through to AI rather than
-            # silently return a corrupt object. Regenerate will overwrite
-            # the row and self-heal.
-            try:
-                pms = PMSResponse(**cached)
-            except Exception as e:
-                logger.warning(
-                    "L2 DB row for %s failed to deserialize (%s) — falling "
-                    "back to AI. Row will be overwritten on next store.",
-                    req.piping_class, e,
-                )
-            else:
-                logger.info(
-                    "L2 database cache HIT for %s (key=%s, version=%s)",
-                    req.piping_class, key, cached.get("version", "?"),
-                )
-                _pms_cache[key] = pms  # Promote to L1
-                return pms
-        else:
-            logger.info(
-                "L2 database cache MISS for %s (key=%s) — no row found",
-                req.piping_class, key,
-            )
-    else:
-        logger.info("L2 database disabled — skipping cache check")
+            logger.info("L2 database cache hit for %s", req.piping_class)
+            pms = PMSResponse(**cached)
+            _pms_cache[key] = pms  # Promote to L1
+            return pms
 
-    # L3: AI generation (only reached when BOTH caches missed)
-    logger.info("Generating %s via AI (cache miss)", req.piping_class)
+    # L3: AI generation
+    logger.info("Cache miss for %s — generating via AI", req.piping_class)
     pms = await _generate_from_ai(req)
     await _store_in_caches(key, req, pms)
     return pms

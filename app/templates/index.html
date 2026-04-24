@@ -3,14 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- External valvesheet API URL — sourced from EXTERNAL_VALVESHEET_API_URL
-         in .env and rendered here by the backend. The "Push to Valvesheet"
-         button reads this via `document.querySelector('meta[name=valvesheet-api-url]').content`
-         so the target URL lives in exactly ONE place: .env. -->
-    <meta name="valvesheet-api-url" content="{{ valvesheet_api_url }}">
     <title>PMS Generator — Shapoorji Pallonji Energy</title>
     <link rel="icon" type="image/png" href="https://www.shapoorjipallonjienergy.com/spEnergy-Tag.png">
-    <link rel="stylesheet" href="/static/css/styles.css?v=12">
+    <link rel="stylesheet" href="/static/css/styles.css?v=11">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
@@ -32,16 +27,6 @@
             <a href="#" class="nav-tab" data-tab="browse">Browse Classes</a>
         </nav>
         <div class="nav-right">
-            <!-- Push every cached PMS row to the external SPE Valvesheet
-                 backend. Calls POST /api/sync/valvesheet which in turn
-                 forwards to https://spe-valvesheet-backend-staging.onrender.com/api/pms
-                 with the full payload (piping_class, version, rating,
-                 material, CA, service, data). Feedback appears via the
-                 existing toastContainer below. -->
-            <button class="nav-sync-btn" id="syncValvesheetBtn" title="Push every cached PMS to Valvesheet">
-                <span class="icon">&#8682;</span>
-                <span>Push to Valvesheet</span>
-            </button>
             <!-- Theme toggle hidden but kept for JS compatibility -->
             <button class="theme-toggle" id="themeToggle" title="Toggle Dark/Light Mode">
                 <span class="icon" id="themeIcon">&#9788;</span>
@@ -410,6 +395,6 @@
         &nbsp;&bull;&nbsp; PMS Generator
     </footer>
 
-    <script src="/static/js/app.js?v=18"></script>
+    <script src="/static/js/app.js?v=11"></script>
 </body>
 </html>

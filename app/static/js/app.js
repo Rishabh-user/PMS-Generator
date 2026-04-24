@@ -72,162 +72,11 @@ document.addEventListener('DOMContentLoaded', () => {
     initForm();
     initCascadingDropdowns();
     initDesignInputs();
-    initValvesheetSync();
     checkAPI();
     loadBrowseData();
     loadIndexData();
     loadEngineeringConstants();
 });
-
-// === Push to Valvesheet ===
-// Two-step flow that keeps the target URL as a single source of truth
-// in .env (EXTERNAL_VALVESHEET_API_URL):
-//
-//   1. GET  /api/sync/valvesheet/payload   — our backend returns a
-//      ready-to-POST array of all cached PMS rows.
-//   2. POST <valvesheet-api-url>           — the frontend sends that
-//      array directly to the external Valvesheet API. The URL comes
-//      from the meta tag injected by Jinja, which in turn reads .env.
-//
-// No URL is hardcoded in this file — to change targets, edit .env and
-// redeploy. The real outbound request is visible in the browser's
-// Network tab so you can see exactly what was sent and the response.
-function getValvesheetApiUrl() {
-    const meta = document.querySelector('meta[name="valvesheet-api-url"]');
-    return (meta && meta.content && meta.content.trim()) || '';
-}
-
-function initValvesheetSync() {
-    const btn = document.getElementById('syncValvesheetBtn');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-        if (btn.disabled) return;
-        const originalHTML = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="icon">&#8635;</span><span>Syncing…</span>';
-        try {
-            const targetUrl = getValvesheetApiUrl();
-            if (!targetUrl) {
-                showToast(
-                    'EXTERNAL_VALVESHEET_API_URL is not set in .env — nothing to push to.',
-                    'error',
-                );
-                return;
-            }
-
-            // ── Step 1: fetch the payload dict from our backend ──
-            //   { "A1": {notes, service, version}, "A1N": {...}, ... }
-            // We still fetch it as ONE dict but send it as N POSTs —
-            // one per spec — because the valvesheet API processes
-            // sheets individually and the per-request response gives
-            // cleaner per-spec success/fail reporting.
-            const payloadResp = await fetch('/api/sync/valvesheet/payload');
-            if (!payloadResp.ok) {
-                const body = await payloadResp.json().catch(() => ({}));
-                const msg = body.detail || `HTTP ${payloadResp.status}`;
-                showToast(`Could not build payload — ${msg}`, 'error');
-                return;
-            }
-            const bodyJson = await payloadResp.json();
-            const bulkPayload = bodyJson.payload || {};
-            const codes = Object.keys(bulkPayload);
-            const total = codes.length;
-            if (total === 0) {
-                showToast('Nothing to sync — pms_cache is empty.', 'info');
-                return;
-            }
-
-            // ── Step 2: one POST per spec, shape {"A1": {...}} ──
-            const CONCURRENCY = 4;
-            const successes = [];
-            const failures = [];
-
-            async function sendOne(code) {
-                const singlePayload = { [code]: bulkPayload[code] };
-                try {
-                    const r = await fetch(targetUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'accept': 'application/json',
-                        },
-                        body: JSON.stringify(singlePayload),
-                    });
-                    const text = await r.text();
-                    let parsed = null;
-                    try { parsed = JSON.parse(text); } catch { /* non-JSON */ }
-                    // HTTP 200 with db_failed for our spec is still a
-                    // failure — the valvesheet side saves the JSON to
-                    // disk (→ ok:true) but may still reject the DB
-                    // insert per-sheet. Reconcile both signals.
-                    let failedForCode = [];
-                    if (parsed && Array.isArray(parsed.db_failed)) {
-                        failedForCode = parsed.db_failed.filter(
-                            (f) => f && f.spec_code === code,
-                        );
-                    }
-                    if (r.ok && failedForCode.length === 0) {
-                        successes.push(code);
-                    } else {
-                        const err = failedForCode.length
-                            ? failedForCode[0].error
-                            : `HTTP ${r.status}: ${(text || '').slice(0, 150)}`;
-                        failures.push({ piping_class: code, error: String(err) });
-                    }
-                } catch (e) {
-                    failures.push({
-                        piping_class: code,
-                        error: (e && e.message) || String(e),
-                    });
-                }
-                const done = successes.length + failures.length;
-                btn.innerHTML =
-                    `<span class="icon">&#8635;</span><span>Syncing ${done}/${total}…</span>`;
-            }
-
-            const queue = [...codes];
-            const workers = Array.from(
-                { length: Math.min(CONCURRENCY, queue.length) },
-                async () => {
-                    while (queue.length) {
-                        const next = queue.shift();
-                        if (next) await sendOne(next);
-                    }
-                },
-            );
-            await Promise.all(workers);
-
-            if (failures.length === 0) {
-                showToast(
-                    `✓ Pushed ${successes.length} spec${successes.length === 1 ? '' : 's'} to Valvesheet`,
-                    'success',
-                );
-            } else if (successes.length === 0) {
-                showToast(
-                    `Valvesheet rejected all ${failures.length} — ${failures[0].piping_class}: ${failures[0].error}`,
-                    'error',
-                );
-            } else {
-                showToast(
-                    `Pushed ${successes.length}, failed ${failures.length} — ${failures[0].piping_class}: ${failures[0].error}`,
-                    'error',
-                );
-            }
-            console.log('[valvesheet] target:', targetUrl,
-                        'successes:', successes,
-                        'failures:', failures);
-        } catch (err) {
-            // Network errors (CORS, DNS, offline) land here. The error
-            // message tells you which — e.g. "Failed to fetch" is CORS
-            // or network; "NetworkError" is DNS/offline.
-            showToast(`Sync failed — ${err && err.message || err}`, 'error');
-            console.error('[valvesheet] sync error:', err);
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = originalHTML;
-        }
-    });
-}
 
 // === Theme Toggle ===
 function initTheme() {
@@ -1433,16 +1282,6 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         const selColor = selOK === 'OK' ? '#16a34a' : '#b91c1c';
         const applColor = r.t_applicable === 'OK' ? '#16a34a' : '#b91c1c';
 
-        // Sel. Thk display rule:
-        //   • Schedule is a real code (XXS, 160, 80S, STD, …) → show the PMS
-        //     nominal WT (looked up from ASME B36.10M / B36.19M tables).
-        //   • Schedule is "-" or blank → there is no table selection; mirror
-        //     the Calc. Thk T column rounded to 2 decimals. Per the project
-        //     owner: no extra math, just round(Calc. Thk T).
-        const schRaw = String(r.schedule || '').trim();
-        const schIsCalc = schRaw === '' || schRaw === '-' || schRaw === '--' || schRaw === '\u2014';
-        const selThkDisplay = schIsCalc ? r.t_req.toFixed(2) : r.wt_nom;
-
         html += `<tr>
             <td><strong>${r.size}"</strong></td>
             <td>${r.od}</td>
@@ -1452,7 +1291,7 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
             <td>${r.tm.toFixed(3)}</td>
             <td>${millPct}%</td>
             <td><strong>${r.t_req.toFixed(3)}</strong></td>
-            <td>${selThkDisplay}</td>
+            <td>${r.wt_nom}</td>
             <td><strong>${r.schedule}</strong> ${tagHtml}</td>
             <td style="color:${selColor};font-weight:600">${selOK}</td>
             <td>${r.mawp.toFixed(1)}</td>

@@ -68,16 +68,8 @@ async def shutdown():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Serve the main UI. The valvesheet sync URL from .env is passed
-    through to the template so the "Push to Valvesheet" button can
-    POST directly to it without any hardcoded URL in the JS."""
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "valvesheet_api_url": settings.external_valvesheet_api_url or "",
-        },
-    )
+    """Serve the main UI."""
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -90,10 +82,6 @@ async def admin(request: Request):
 
 @app.get("/health")
 async def health():
-    # Valvesheet sync diagnostics — the most common "auto-sync isn't
-    # firing" cause is the env var being blank on Render. Surface the
-    # config state so you can confirm without tailing logs.
-    vs_url = (settings.external_valvesheet_api_url or "").strip()
     return {
         "status": "ok",
         "version": settings.app_version,
@@ -101,8 +89,4 @@ async def health():
         "api_key_length": len(settings.anthropic_api_key),
         "api_key_prefix": settings.anthropic_api_key[:12] + "..." if settings.anthropic_api_key else "EMPTY",
         "model": settings.anthropic_model,
-        "valvesheet_sync_enabled": bool(vs_url),
-        "valvesheet_url": vs_url or "(not configured)",
-        "valvesheet_auth_set": bool((settings.external_valvesheet_auth or "").strip()),
-        "database_configured": bool((settings.database_url or "").strip()),
     }
