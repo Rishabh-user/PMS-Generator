@@ -76,7 +76,7 @@ class ClassMatch(BaseModel):
 class FieldSuggestion(BaseModel):
     """When a user-provided value doesn't match any valid option, the agent
     returns this so the frontend can render 'did you mean …?' chips."""
-    field: Literal["rating", "material", "corrosion_allowance"]
+    field: Literal["rating", "material", "corrosion_allowance", "service"]
     provided: str = Field(..., description="What the user actually typed")
     suggestions: list[str] = Field(
         default_factory=list,
@@ -85,20 +85,28 @@ class FieldSuggestion(BaseModel):
 
 
 class SlotState(BaseModel):
-    """Snapshot of the three required fields for generating a PMS.
-    The frontend uses this to render progress pills (Rating ✓ · Material ?
-    · CA ?) and to decide whether a Download flow can start."""
+    """Snapshot of the four slot-filling fields for generating a PMS.
+    The frontend uses this to render progress pills and to decide
+    whether a Download flow can start.
+
+    Required: rating, material, corrosion_allowance, service.
+    All four must be filled before matches are released — previously
+    service was optional and silently defaulted to "General" which was
+    confusing in the generated PMS. Making it explicit forces the
+    agent to ask and the user to pick.
+    """
     rating: Optional[str] = None
     material: Optional[str] = None
     corrosion_allowance: Optional[str] = None
+    service: Optional[str] = None
     missing: list[str] = Field(
         default_factory=list,
         description="Required fields the user hasn't supplied yet (subset of "
-                    "['rating','material','corrosion_allowance']).",
+                    "['rating','material','corrosion_allowance','service']).",
     )
     complete: bool = Field(
         default=False,
-        description="True when all three required fields are filled.",
+        description="True when all four required fields are filled.",
     )
 
 

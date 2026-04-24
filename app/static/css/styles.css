@@ -154,6 +154,33 @@ body {
     display: none;
 }
 
+/* Push-to-Valvesheet button — green primary-action styling so it
+   stands out from the API badge and signals "this does something
+   external". Lives inline in the top-nav's nav-right. */
+.nav-sync-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #fff;
+    background: #16a34a;
+    border: 1px solid #15803d;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+    font-family: inherit;
+}
+.nav-sync-btn:hover { background: #15803d; }
+.nav-sync-btn:active { transform: translateY(1px); }
+.nav-sync-btn:disabled {
+    background: #86efac;
+    border-color: #86efac;
+    cursor: wait;
+}
+.nav-sync-btn .icon { font-size: 0.9rem; line-height: 1; }
+
 .api-badge {
     display: flex; align-items: center; gap: 6px;
     font-size: 0.75rem; font-weight: 600; color: #94a3b8;

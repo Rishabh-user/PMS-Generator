@@ -32,7 +32,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Cooling Media, Heating Media, Diesel, Steam, Water Injection, Hydro Carbon Water Injection with low CO2 and H2S, Fresh Water, Hydraulic Oil, Nitrogen, Exhaust, Fuel Oil, Tank Air Vent"
   },
   {
     "piping_class": "B1",
@@ -67,7 +68,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Cooling Media, Heating Media, Diesel, Water Injection, Hydro Carbon Water Injection with low CO2 and H2S, Steam, Hydraulic Oil"
   },
   {
     "piping_class": "D1",
@@ -102,7 +104,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Cooling Media, Heating Media, Diesel, Water Injection, Hydro Carbon Water Injection with low CO2 and H2S, Steam, Hydraulic Oil"
   },
   {
     "piping_class": "E1",
@@ -137,7 +140,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Diesel, Water Injection, Hydro Carbon Water Injection with low CO2 and H2S, Steam, Hydraulic Oil"
   },
   {
     "piping_class": "F1",
@@ -172,7 +176,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Diesel, Water Injection, Hydro Carbon Water Injection with low CO2 and H2S, Steam, Hydraulic Oil"
   },
   {
     "piping_class": "G1",
@@ -207,7 +212,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Hydro Carbon Water Injection with low CO2 and H2S, Steam, Hydraulic Oil"
   },
   {
     "piping_class": "A1N",
@@ -242,7 +248,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Glycol, FG, Hydro Carbon service"
   },
   {
     "piping_class": "B1N",
@@ -277,7 +284,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Glycol, FG, Hydro Carbon service"
   },
   {
     "piping_class": "D1N",
@@ -312,7 +320,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Glycol, FG, Hydro Carbon service"
   },
   {
     "piping_class": "E1N",
@@ -347,7 +356,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Glycol, FG, Hydro Carbon service"
   },
   {
     "piping_class": "F1N",
@@ -382,7 +392,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Glycol, FG, Hydro Carbon service"
   },
   {
     "piping_class": "G1N",
@@ -417,7 +428,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Glycol, FG, Hydro Carbon service"
   },
   {
     "piping_class": "A2N",
@@ -452,7 +464,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "B2N",
@@ -487,7 +500,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "D2N",
@@ -522,7 +536,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "E2N",
@@ -557,7 +572,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "F2N",
@@ -592,7 +608,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "G2N",
@@ -627,7 +644,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "A1L",
@@ -662,7 +680,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Flare, Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "B1L",
@@ -697,7 +716,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Flare, Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "D1L",
@@ -732,7 +752,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "E1L",
@@ -767,7 +788,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Gas Lift, Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "F1L",
@@ -802,7 +824,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Gas Lift, Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "G1L",
@@ -837,7 +860,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Gas Lift, Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "A1LN",
@@ -872,7 +896,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Flare, Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "B1LN",
@@ -907,7 +932,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Flare, Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "D1LN",
@@ -942,7 +968,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "E1LN",
@@ -977,7 +1004,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "F1LN",
@@ -1012,7 +1040,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "G1LN",
@@ -1047,7 +1076,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Gas Lift, Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "A2LN",
@@ -1082,7 +1112,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "B2LN",
@@ -1117,7 +1148,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "D2LN",
@@ -1152,7 +1184,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "E2LN",
@@ -1187,7 +1220,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "F2LN",
@@ -1222,7 +1256,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "G2LN",
@@ -1257,7 +1292,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service (Low Temp)"
   },
   {
     "piping_class": "A3",
@@ -1289,7 +1325,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Utility Water"
   },
   {
     "piping_class": "A4",
@@ -1321,7 +1358,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Bilge, Drain, Sewage, Produced Water, CO2 Gas"
   },
   {
     "piping_class": "B4",
@@ -1353,7 +1391,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Bilge, Drain, Sewage, Produced Water, CO2 Gas"
   },
   {
     "piping_class": "D4",
@@ -1385,7 +1424,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Bilge, Drain, Sewage, Produced Water, CO2 Gas"
   },
   {
     "piping_class": "A5",
@@ -1417,7 +1457,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Chemical (penetration), Firewater (penetration), Seawater (penetration), Ballast, Inert Gas, COW/Tank Cleaning, Slop, Stripping, Seawater"
   },
   {
     "piping_class": "A6",
@@ -1449,7 +1490,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Ballast, Inert Gas, COW/Tank Cleaning, Slop, Seawater, Firewater"
   },
   {
     "piping_class": "A10",
@@ -1481,7 +1523,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Air, Nitrogen, Lube oil, Chemical, Foam, Hydraulic Oil, Instrument Air, Diesel Fuel"
   },
   {
     "piping_class": "B10",
@@ -1513,7 +1556,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Air, Nitrogen, Lube oil, Chemical, Foam, Hydraulic Oil, Instrument Air, Diesel Fuel"
   },
   {
     "piping_class": "D10",
@@ -1545,7 +1589,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Air, Nitrogen, Lube oil, Chemical, Hydraulic Oil"
   },
   {
     "piping_class": "E10",
@@ -1577,7 +1622,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Air, Nitrogen, Lube oil, Chemical, Hydraulic Oil"
   },
   {
     "piping_class": "F10",
@@ -1609,7 +1655,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Air, Nitrogen, Lube oil, Chemical, Hydraulic Oil"
   },
   {
     "piping_class": "G10",
@@ -1641,7 +1688,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Air, Nitrogen, Lube oil, Chemical, Hydraulic Oil"
   },
   {
     "piping_class": "A10N",
@@ -1673,7 +1721,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Glycol, Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "B10N",
@@ -1705,7 +1754,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Glycol, Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "D10N",
@@ -1737,7 +1787,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Glycol, Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "E10N",
@@ -1769,7 +1820,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Glycol, Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "F10N",
@@ -1801,7 +1853,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Glycol, Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "G10N",
@@ -1833,7 +1886,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Glycol, Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "A20",
@@ -1865,7 +1919,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "B20",
@@ -1897,7 +1952,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "D20",
@@ -1929,7 +1985,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "E20",
@@ -1961,7 +2018,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "F20",
@@ -1993,7 +2051,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "G20",
@@ -2025,7 +2084,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "A20N",
@@ -2057,7 +2117,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "B20N",
@@ -2089,7 +2150,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "D20N",
@@ -2121,7 +2183,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "E20N",
@@ -2153,7 +2216,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "F20N",
@@ -2185,7 +2249,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "G20N",
@@ -2217,7 +2282,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "A25",
@@ -2249,7 +2315,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Firewater, Raw Seawater and Topsides Seawater"
   },
   {
     "piping_class": "B25",
@@ -2281,7 +2348,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Firewater, Raw Seawater and Topsides Seawater"
   },
   {
     "piping_class": "D25",
@@ -2313,7 +2381,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Topside Seawater and Water Injection"
   },
   {
     "piping_class": "E25",
@@ -2345,7 +2414,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Topside Seawater and Water Injection"
   },
   {
     "piping_class": "F25",
@@ -2377,7 +2447,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Topside Seawater and Water Injection"
   },
   {
     "piping_class": "G25",
@@ -2409,7 +2480,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Topside Seawater and Water Injection"
   },
   {
     "piping_class": "A25N",
@@ -2441,7 +2513,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "B25N",
@@ -2473,7 +2546,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "D25N",
@@ -2505,7 +2579,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "E25N",
@@ -2537,7 +2612,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "F25N",
@@ -2569,7 +2645,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "G25N",
@@ -2601,7 +2678,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Corrosive Hydro Carbon service"
   },
   {
     "piping_class": "A30",
@@ -2627,7 +2705,8 @@
         "100",
         "150"
       ]
-    }
+    },
+    "service": "Raw Sea Water, Fire Water"
   },
   {
     "piping_class": "A40",
@@ -2650,7 +2729,8 @@
         "50",
         "100"
       ]
-    }
+    },
+    "service": "Potable Water"
   },
   {
     "piping_class": "A50",
@@ -2673,7 +2753,8 @@
         "50",
         "100"
       ]
-    }
+    },
+    "service": "Raw Sea Water"
   },
   {
     "piping_class": "A51",
@@ -2696,7 +2777,8 @@
         "50",
         "100"
       ]
-    }
+    },
+    "service": "Hypochlorite"
   },
   {
     "piping_class": "A52",
@@ -2719,7 +2801,8 @@
         "50",
         "100"
       ]
-    }
+    },
+    "service": "For Special Services"
   },
   {
     "piping_class": "A60",
@@ -2754,7 +2837,8 @@
         "250",
         "300"
       ]
-    }
+    },
+    "service": "Sewage, Hypochlorite"
   },
   {
     "piping_class": "A70",
@@ -2786,7 +2870,8 @@
         "200",
         "250"
       ]
-    }
+    },
+    "service": "Chemical (Ferric chloride), Coagulant"
   },
   {
     "piping_class": "T80A",
@@ -2806,7 +2891,8 @@
         "0",
         "60"
       ]
-    }
+    },
+    "service": "Chemical Injection (Except Hypochlorite)"
   },
   {
     "piping_class": "T80B",
@@ -2826,7 +2912,8 @@
         "0",
         "60"
       ]
-    }
+    },
+    "service": "Chemical Injection (Except Hypochlorite)"
   },
   {
     "piping_class": "T80C",
@@ -2846,7 +2933,8 @@
         "0",
         "60"
       ]
-    }
+    },
+    "service": "Chemical Injection (Except Hypochlorite)"
   },
   {
     "piping_class": "T90A",
@@ -2866,7 +2954,8 @@
         "0",
         "60"
       ]
-    }
+    },
+    "service": "Chemical Injection (Except Hypochlorite)"
   },
   {
     "piping_class": "T90B",
@@ -2886,7 +2975,8 @@
         "0",
         "60"
       ]
-    }
+    },
+    "service": "Chemical Injection (Except Hypochlorite)"
   },
   {
     "piping_class": "T90C",
@@ -2906,6 +2996,7 @@
         "0",
         "60"
       ]
-    }
+    },
+    "service": "Chemical Injection (Except Hypochlorite)"
   }
 ]

@@ -28,6 +28,23 @@ class Settings(BaseSettings):
 
     database_url: str = ""  # PostgreSQL DSN, e.g. postgresql://user:pass@localhost:5432/pms_generator
 
+    # External SPE Valvesheet backend — when a new PMS is generated (POST) or
+    # regenerated (PUT), we mirror the data to this endpoint so the main
+    # Valvesheet project stays in sync. Defaults to the shared staging URL
+    # so local dev and production both sync without per-environment setup;
+    # override in .env only if you need to point at a different instance
+    # (or set it to an empty string to disable sync entirely).
+    external_valvesheet_api_url: str = (
+        "https://spe-valvesheet-backend-staging.onrender.com/api/pms"
+    )
+    # Optional auth header value (e.g. "Bearer xxx" or "ApiKey xxx"). Only
+    # sent when non-empty. The external API is currently open per the
+    # curl examples, but this hook is cheap insurance for when it isn't.
+    external_valvesheet_auth: str = ""
+    # HTTP timeout (seconds) for each sync request. Kept conservative so
+    # a slow external API can't stall PMS generation for long.
+    external_valvesheet_timeout: float = 20.0
+
     class Config:
         env_file = ".env"
         extra = "ignore"
