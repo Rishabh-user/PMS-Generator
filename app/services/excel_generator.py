@@ -8,15 +8,25 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
+from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
+from openpyxl.drawing.xdr import XDRPositiveSize2D
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.models.pms_models import PMSResponse
 
-# Logo target height in pixels — the banner area is rows 1-3 (~72 pt ≈ 96 px),
-# so 78 px leaves a small margin top + bottom. Width is scaled proportionally
-# from the source PNG's native aspect ratio.
-LOGO_TARGET_HEIGHT_PX = 78
+# Logo banner bounds (cols A:C × rows 1:3).
+#   Cols A=16, B=11, C=11 char widths ≈ 38 chars × ~7 px ≈ 266 px usable.
+#   Rows 1-3 are 28+22+22 = 72 pt ≈ 96 px usable.
+# Image is scaled UNIFORMLY by whichever dimension is binding so it fills
+# the banner without overflowing into column D / row 4. Original aspect
+# ratio is preserved, and the image is then centred horizontally and
+# vertically inside the banner via offset on a OneCellAnchor.
+LOGO_MAX_WIDTH_PX  = 250
+LOGO_MAX_HEIGHT_PX = 90
+BANNER_WIDTH_PX    = int((16 + 11 + 11) * 7)         # ≈ 266 px
+BANNER_HEIGHT_PX   = int((28 + 22 + 22) * 4 / 3)     # = 96  px
+PX_TO_EMU          = 9525                            # 1 px @ 96 DPI
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +56,21 @@ CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
 
-def _logo_path() -> Path | None:
-    """Return absolute path to the logo PNG, or None if missing.
+def _logo_bytes() -> bytes | None:
+    """Return the logo PNG bytes from app/static/images/.
 
-    Tries `excel-logo.png` first (purpose-built variant if curated later),
-    then falls back to the standard `logo.png` brand asset.
+    Tries `excel-logo.png` first (override slot for a purpose-built variant),
+    then falls back to the default `logo.png`. Returns None if neither file
+    exists — spec generation continues without branding rather than failing.
     """
     base = Path(__file__).resolve().parent.parent / "static" / "images"
     for name in ("excel-logo.png", "logo.png"):
         p = base / name
-        if p.exists():
-            return p
+        try:
+            if p.exists():
+                return p.read_bytes()
+        except OSError as e:
+            logger.warning("Logo path %s unreadable: %s", p, e)
     return None
 
 
@@ -65,23 +79,44 @@ def _insert_logo(ws, anchor_cell: str = "A1") -> None:
 
     Image is proportionally resized to LOGO_TARGET_HEIGHT_PX so the original
     aspect ratio is preserved and it fits the 3-row × 3-col banner cleanly.
-    Silently no-ops if the logo file is missing or openpyxl rejects it —
-    spec generation must keep working even without branding.
+    Silently no-ops if the logo bytes can't be obtained — spec generation
+    must keep working even without branding.
     """
-    p = _logo_path()
-    if p is None:
-        logger.info("Logo not found at app/static/images/{excel-logo.png,logo.png}; skipping.")
+    data = _logo_bytes()
+    if not data:
+        logger.warning("Logo bytes unavailable — skipping insertion")
         return
     try:
-        img = XLImage(str(p))
-        # img.height / img.width are the native pixel dimensions on first load
+        img = XLImage(io.BytesIO(data))
+        # Scale uniformly to fit the banner bounding box — whichever dimension
+        # is more constraining wins, so the image never overflows into the
+        # header table on the right or the rows below.
         if img.height and img.width:
-            scale = LOGO_TARGET_HEIGHT_PX / img.height
-            img.height = LOGO_TARGET_HEIGHT_PX
+            scale = min(LOGO_MAX_WIDTH_PX / img.width, LOGO_MAX_HEIGHT_PX / img.height)
             img.width = int(img.width * scale)
-        ws.add_image(img, anchor_cell)
+            img.height = int(img.height * scale)
+
+        # Centre horizontally + vertically inside the A1:C3 banner. We attach
+        # a custom OneCellAnchor whose colOff / rowOff push the image away
+        # from A1's top-left corner by half the leftover banner space.
+        x_off_px = max(0, (BANNER_WIDTH_PX  - img.width)  // 2)
+        y_off_px = max(0, (BANNER_HEIGHT_PX - img.height) // 2)
+        marker = AnchorMarker(
+            col=0, colOff=x_off_px * PX_TO_EMU,
+            row=0, rowOff=y_off_px * PX_TO_EMU,
+        )
+        ext = XDRPositiveSize2D(
+            cx=img.width  * PX_TO_EMU,
+            cy=img.height * PX_TO_EMU,
+        )
+        img.anchor = OneCellAnchor(_from=marker, ext=ext)
+        ws.add_image(img)
+        logger.info(
+            "Logo centred at A1 (offset %d×%d px, size %d×%d px, banner %d×%d)",
+            x_off_px, y_off_px, img.width, img.height, BANNER_WIDTH_PX, BANNER_HEIGHT_PX,
+        )
     except Exception as e:
-        logger.warning("Failed to insert logo (%s): %s", p, e)
+        logger.warning("Failed to insert logo: %s", e)
 
 
 def _get_sheet_no(piping_class: str) -> str:
@@ -284,6 +319,30 @@ def _write_section_header(ws, row: int, text: str, col_start: int = 1, col_end: 
     ws.merge_cells(start_row=row, start_column=col_start, end_row=row, end_column=col_end)
 
 
+def _valve_row_has_data(fallback: str, by_size, pipe_sizes: list) -> bool:
+    """Decide whether a valve row should render in the Excel sheet.
+
+    Returns True if the row has SOMETHING to show, namely either:
+      • the class-level fallback string is non-blank, OR
+      • the per-size list has at least one entry whose code is non-blank
+        AND whose size_inch matches one of the pipe sizes the class supports
+        (so a stale entry for an unused size doesn't keep an otherwise
+        empty row visible).
+
+    Used to suppress Butterfly / DBB / DBB (Inst) rows on classes / sizes
+    where those valves aren't applicable, instead of showing an empty band.
+    """
+    if (fallback or "").strip():
+        return True
+    sizes_str = {str(s) for s in (pipe_sizes or [])}
+    for entry in (by_size or []):
+        code = (getattr(entry, "code", "") or "").strip()
+        sz = str(getattr(entry, "size_inch", "") or "")
+        if code and (not sizes_str or sz in sizes_str):
+            return True
+    return False
+
+
 def _lvcf_by_size(by_size, pipe_sizes: list) -> list:
     """Last-Value-Carried-Forward: expand a sparse `{size: code}` list from
     the AI (e.g. only boundary sizes given) to a full list aligned with
@@ -371,7 +430,13 @@ def _write_merged_data_row(ws, row: int, label: str, values: list, col_start: in
 
 
 def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 2, total_cols: int = 20):
-    """Write a size header row: col 1 = 'Size (in)', col_start..total_cols = size values."""
+    """Write a size header row: col 1 = 'Size (in)', col_start..total_cols = size values.
+
+    The row is HIDDEN by default — only Pipe Data shows the size labels
+    visually. All other sections (Fittings, Flange, Spectacle Blind, Bolts /
+    Nuts / Gaskets, Valves) keep the column-to-size mapping for layout
+    correctness but suppress the redundant header so the spec reads cleaner.
+    """
     _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
     for i, size in enumerate(sizes):
         col = col_start + i
@@ -379,6 +444,7 @@ def _write_size_header_row(ws, row: int, sizes: list, col_start: int = 2, total_
             _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = size
     for c in range(col_start + len(sizes), total_cols + 1):
         _apply_style(ws, row, c, fill=ALT_FILL)
+    ws.row_dimensions[row].hidden = True
 
 
 def _write_label_offset_value_row(ws, row: int, label: str, value: str, value_start_col: int, col_end: int, fill=DATA_FILL):
@@ -634,7 +700,8 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     _write_section_header(ws, row, "Fittings — Butt Weld (SCH to match pipe)", col_end=total_cols)
     row += 1
 
-    # Size columns header
+    # Size columns header — written for column-mapping correctness, then
+    # hidden because per spec only Pipe Data shows the size labels visually.
     _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
     for i, fitting in enumerate(pms.fittings_by_size):
         col = pipe_col_start + i
@@ -642,6 +709,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
             _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = fitting.size_inch
     for c in range(pipe_col_start + len(pms.fittings_by_size), total_cols + 1):
         _apply_style(ws, row, c, fill=ALT_FILL)
+    ws.row_dimensions[row].hidden = True
     row += 1
 
     # Type row — full descriptive text from AI (e.g. "Butt Weld (SCH to match pipe), Seamless")
@@ -816,7 +884,10 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         ("DBB", pms.valves.dbb, pms.valves.dbb_by_size),
     ]
     for i, (label, fallback, by_size) in enumerate(valve_types):
-        if not fallback and not by_size:
+        # Skip rows with no real data so empty Butterfly / DBB / DBB (Inst)
+        # bands aren't rendered for classes / sizes where they don't apply.
+        # The "Rating" row (no by_size) still renders via fallback.
+        if not _valve_row_has_data(fallback, by_size, pipe_sizes):
             continue
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
@@ -966,7 +1037,8 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     _write_section_header(ws, row, "Fittings — Butt Weld (SCH to match pipe)", col_end=total_cols)
     row += 1
 
-    # Size columns header
+    # Size columns header — written for column-mapping correctness, then
+    # hidden because per spec only Pipe Data shows the size labels visually.
     _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Size (in)"
     for i, fitting in enumerate(pms.fittings_by_size):
         col = pipe_col_start + i
@@ -974,6 +1046,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
             _apply_style(ws, row, col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = fitting.size_inch
     for c in range(pipe_col_start + len(pms.fittings_by_size), total_cols + 1):
         _apply_style(ws, row, c, fill=ALT_FILL)
+    ws.row_dimensions[row].hidden = True
     row += 1
 
     # Type row — full descriptive text from AI (e.g. "Butt Weld (SCH to match pipe), Seamless")
@@ -1134,7 +1207,8 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         ("DBB", pms.valves.dbb, pms.valves.dbb_by_size),
     ]
     for i, (lbl, fallback, by_size) in enumerate(valve_types):
-        if not fallback and not by_size:
+        # Skip rows with no real data — same logic as the primary renderer.
+        if not _valve_row_has_data(fallback, by_size, pipe_sizes):
             continue
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:

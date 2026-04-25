@@ -116,162 +116,368 @@ def _build_engineering_flags(
     req: ComputeThicknessRequest,
     per_size: list[PerSizeResult],
 ) -> list[EngineeringFlag]:
+    """Build the full engineering-flag list for a PMS spec.
+
+    Single source of truth — both the standalone HTML UI (via /api/compute-
+    thickness) and the Valvesheet frontend render whatever this function
+    returns. Order of flag categories mirrors the legacy JS layout so
+    review continuity is preserved:
+
+      1. NACE compliance (material-family specific)
+      2. Min schedule recommendation (CS NACE) / Schedule-per-design note (CRA NACE)
+      3. NACE bolting grades (Table 7)
+      4. Bolting coating recommendation (CS NACE only)
+      5. PWHT — conditional (CS) / not required (Duplex)
+      6. Steam / condensate — thermal fatigue
+      7. Corrosive / acid service — material-specific guidance
+      8. NDE 100% RT recommendation (sour)
+      9. LTCS impact testing
+     10. Hydrostatic test pressure
+     11. Hydrogen API 941 (Nelson curves)
+     12. Galvanised temperature limit
+     13. Y coefficient warning (high T)
+     14. Sub-standard wall alert (computed)
+    """
     flags: list[EngineeringFlag] = []
 
-    service_l = (req.service or "").lower()
-    material_l = (req.material or "").lower()
-    class_l = (req.piping_class or "").upper()
+    service_l  = (req.service or pms.service or "").lower()
+    material_u = (req.material or pms.material or "").upper()
+    material_l = material_u.lower()
+    class_u    = (req.piping_class or pms.piping_class or "").upper()
 
-    is_sour = any(k in service_l or k in material_l for k in ("sour", "h2s", "nace", "mr0175"))
-    is_steam = "steam" in service_l
-    is_hydrogen = bool(re.search(r"\bhydrogen\b|\bh2\b", service_l))
-    is_ltcs = "ltcs" in material_l or class_l.endswith("L") or class_l.endswith("LN")
-    is_galv = "galv" in material_l or "galv" in service_l
+    # Material family detection (mirrors the JS detector)
+    is_sdss = ("SDSS" in material_u) or ("SUPER DUPLEX" in material_u) or ("S32750" in material_u)
+    is_dss  = ("DSS"  in material_u) and not is_sdss
+    is_ss   = ("SS"   in material_u) or ("STAINLESS" in material_u)
+    is_cs   = ("CS"   in material_u) and not (is_sdss or is_dss or is_ss)
+    is_duplex_family = is_dss or is_sdss
+
+    is_nace      = (
+        class_u.endswith("N") or class_u.endswith("LN")
+        or any(k in service_l or k in material_l for k in ("sour", "h2s", "nace", "mr0175"))
+    )
+    is_ltcs      = ("ltcs" in material_l) or class_u.endswith("L") or class_u.endswith("LN")
+    is_steam     = ("steam" in service_l) or ("condensate" in service_l)
+    is_corrosive = ("corrosive" in service_l) or ("acid" in service_l) or ("chemical" in service_l)
+    is_hydrogen  = bool(re.search(r"\bhydrogen\b|\bh2\b", service_l))
+    is_galv      = ("galv" in material_l) or ("galv" in service_l)
     design_temp_c = req.design_temp_c
 
-    # NOTE: hydrostatic test pressure is intentionally not emitted as a flag here
-    # because it is already shown in the top-of-result badges and the Summary
-    # Statistics card — keeping it here would be redundant noise.
-
-    # Sour / NACE requirements
-    if is_sour:
-        flags.append(
-            EngineeringFlag(
-                kind="project-spec",
-                label="PROJECT SPEC",
-                title="NDE: 100% RT or UT — Commonly Specified for Sour Service",
+    # ── 1. NACE compliance (material-family specific) ────────────────
+    if is_nace:
+        if is_duplex_family:
+            mat_label = "Super Duplex (S32750)" if is_sdss else "Duplex (S31803)"
+            hardness  = "32 HRC (SDSS)"          if is_sdss else "28 HRC (DSS)"
+            pren      = "40 (SDSS)"              if is_sdss else "34 (DSS)"
+            flags.append(EngineeringFlag(
+                kind="mandatory", label="CRITICAL",
+                title="NACE MR0175 / ISO 15156-3 — Duplex Sour Service Compliance",
                 body=(
-                    "100% Radiographic (RT) or Ultrasonic (UT) examination of butt welds is typically "
-                    "required by client specifications for sour service (ExxonMobil GP 03-02-01, Shell "
-                    "DEP 31.38.01, Aramco SAES-L). ASME B31.3 itself does not mandate 100% RT for sour "
-                    "service — default per §341.4.1 is 5% random RT for Normal Fluid Service."
+                    f"All {mat_label} pipe, fittings, flanges, and welds must comply with "
+                    f"NACE MR0175 / ISO 15156-3 Annex A. Max hardness: {hardness}. "
+                    f"Solution annealing required. Ferrite content: 35–65%. PREN ≥ {pren}. "
+                    f"No PWHT required for DSS/SDSS (solution-annealed condition)."
                 ),
-            )
-        )
-        # Material-specific sour requirements
-        if "cs" in material_l and "ltcs" not in material_l:
-            flags.append(
-                EngineeringFlag(
-                    kind="project-spec",
-                    label="NACE — CS",
-                    title="CS NACE: Max hardness 22 HRC / 250 HBW · Sch 160/XS minimum · PWHT required",
-                    body=(
-                        "Per NACE MR0175 / ISO 15156-2: carbon-steel parent metal and welds shall meet "
-                        "22 HRC (250 HBW) maximum. Post-Weld Heat Treatment (PWHT) is required for most "
-                        "welds. Minimum schedule Sch 160 or XS for sizes ≤ 1½\"."
-                    ),
-                )
-            )
-        if "dss" in material_l and "sdss" not in material_l:
-            flags.append(
-                EngineeringFlag(
-                    kind="project-spec",
-                    label="NACE — DSS",
-                    title="DSS NACE: Max hardness 28 HRC · Ferrite 35–65% · PREN ≥ 34 · No PWHT",
-                    body=(
-                        "NACE MR0175 duplex requirements: max hardness 28 HRC; ferrite content 35–65% "
-                        "in weldments; PREN ≥ 34. PWHT is not permitted (risk of σ-phase precipitation)."
-                    ),
-                )
-            )
-        if "sdss" in material_l:
-            flags.append(
-                EngineeringFlag(
-                    kind="project-spec",
-                    label="NACE — SDSS",
-                    title="SDSS NACE: Max hardness 32 HRC · PREN ≥ 40 · No PWHT",
-                    body=(
-                        "Super duplex NACE: max hardness 32 HRC; PREN ≥ 40. No PWHT. "
-                        "Max service T ≤ 300 °C to avoid 475 °C embrittlement."
-                    ),
-                )
-            )
-
-    # LTCS — impact testing
-    if is_ltcs:
-        flags.append(
-            EngineeringFlag(
-                kind="project-spec",
-                label="LTCS",
-                title="Low-Temperature CS: Charpy impact testing required per ASME B31.3 §323.2.2",
+            ))
+        elif is_ss:
+            flags.append(EngineeringFlag(
+                kind="mandatory", label="CRITICAL",
+                title="NACE MR0175 / ISO 15156-3 — Austenitic SS Sour Service Compliance",
                 body=(
-                    "LTCS piping (typically ASTM A333 Gr. 6) requires Charpy V-notch impact testing "
-                    "when the design minimum temperature is below −29 °C per ASME B31.3 §323.2.2 and "
-                    "Table A-1/Figure 323.2.2A. Verify MDMT and qualification curve for each component."
+                    "All SS316L pipe, fittings, flanges, and welds must comply with NACE "
+                    "MR0175 / ISO 15156-3. Max hardness: 22 HRC (solution annealed). Cold "
+                    "work limit applies. No PWHT typically required for austenitic SS."
                 ),
-            )
-        )
+            ))
+        else:
+            flags.append(EngineeringFlag(
+                kind="mandatory", label="CRITICAL",
+                title="NACE MR0175 / ISO 15156 — Sour Service Compliance",
+                body=(
+                    "All pipe, fittings, flanges, and welds must comply with NACE MR0175 / "
+                    "ISO 15156. Max hardness: CS ≤ 22 HRC / 250 HBW (base metal, weld metal, "
+                    "HAZ). HIC testing per NACE TM0284 if H₂S partial pressure > 0.0003 MPa "
+                    "(0.05 psia). SSC testing per NACE TM0177 Method A may also be required."
+                ),
+            ))
 
-    # Steam — thermal fatigue / drainage
+        # ── 2. Min schedule (project-spec, CS only) / Schedule-per-design note ──
+        if is_cs:
+            flags.append(EngineeringFlag(
+                kind="project-spec", label="PROJECT SPEC",
+                title='Minimum Schedule Recommended — Sch 160 (≤ NPS 1½") / XS (≥ NPS 2")',
+                body=(
+                    "Common oil & gas project specs (Shell DEP 31.38.01, Aramco SAES-L, "
+                    "Total GS EP PVV) require minimum Sch 160 (NPS ≤ 1½\") / Extra Strong "
+                    "(NPS ≥ 2\") for CS sour service — for mechanical robustness and "
+                    "lifecycle margin. NOTE: NACE MR0175 itself does NOT mandate any "
+                    "minimum schedule; this is a project / company standard. Verify "
+                    "against your project's Piping Design Basis (PDS)."
+                ),
+            ))
+        elif is_duplex_family or is_ss:
+            mat_short = "Duplex" if is_duplex_family else "SS"
+            mat_long  = "Duplex/Super Duplex" if is_duplex_family else "Stainless Steel"
+            ca_mat    = "DSS/SDSS" if is_duplex_family else "SS"
+            flags.append(EngineeringFlag(
+                kind="note", label="NOTE",
+                title=f"Schedule per Design Calculation — {mat_short} NACE",
+                body=(
+                    f"For {mat_long} NACE service, schedule is governed by "
+                    f"pressure/mechanical design calculation — no project-standard "
+                    f"minimum schedule override (unlike CS sour). Corrosion allowance "
+                    f"is typically NIL for {ca_mat} in sour service."
+                ),
+            ))
+
+        # ── 3. NACE bolting grades ──
+        bng = getattr(pms, "bolts_nuts_gaskets", None)
+        stud = (getattr(bng, "stud_bolts", "") or "").strip() or "ASTM A320 Gr. L7M"
+        nut  = (getattr(bng, "hex_nuts",   "") or "").strip() or "ASTM A194 Gr. 7ML"
+        flags.append(EngineeringFlag(
+            kind="mandatory", label="NACE REQ",
+            title=f"NACE Bolting Grades — {stud} + {nut}",
+            body=(
+                f"Per NACE MR0175 Table 7: max hardness 22 HRC (studs) / 22 HRC (nuts) "
+                f"for sour service exposure. Studs: {stud}. Nuts: {nut}. Alternative "
+                f"grades (B7M + 2HM) also NACE-compliant."
+            ),
+        ))
+
+        # ── 4. Bolting coating (CS only, project-spec) ──
+        if is_cs:
+            flags.append(EngineeringFlag(
+                kind="project-spec", label="PROJECT SPEC",
+                title="Bolting Coating — XYLAR 2 + XYLAN 1070 (Project Optional)",
+                body=(
+                    "XYLAR 2 + XYLAN 1070 coating (min 50 µm combined) is a common "
+                    "offshore / splash-zone project spec for corrosion and galling "
+                    "protection. NOTE: NACE MR0175 does NOT mandate coatings. Uncoated "
+                    "B7M / 2HM bolts are fully NACE-compliant for onshore applications. "
+                    "Verify against your project's bolting spec."
+                ),
+            ))
+
+        # ── 5. PWHT — conditional (CS) / not required (Duplex) ──
+        if is_cs:
+            flags.append(EngineeringFlag(
+                kind="project-spec", label="CONDITIONAL",
+                title="PWHT — Required Based on Thickness / Hardness",
+                body=(
+                    "Per ASME B31.3 Table 331.1.1 (P-Number 1 / CS): PWHT required when "
+                    "nominal wall thickness > 19 mm (¾\"). For thinner sections, PWHT may "
+                    "be waived if HAZ hardness ≤ 250 HBW is demonstrated in PQR. Per NACE "
+                    "MR0175 §7.2.1.3, PWHT is NOT mandatory if hardness limits are met "
+                    "via: low-hydrogen electrodes + proper preheat + PQR hardness "
+                    "testing. WPS/PQR must include hardness survey regardless."
+                ),
+            ))
+        elif is_duplex_family:
+            mat_label = "Super Duplex (S32750)" if is_sdss else "Duplex (S31803)"
+            flags.append(EngineeringFlag(
+                kind="note", label="NOTE",
+                title="No PWHT Required — Duplex / Super Duplex",
+                body=(
+                    f"PWHT is NOT required for {mat_label}. Material is supplied in "
+                    f"solution-annealed condition. Ferrite/austenite balance must be "
+                    f"maintained in HAZ (35–65% ferrite)."
+                ),
+            ))
+
+    # ── 6. Steam / condensate — thermal fatigue ──
     if is_steam:
-        flags.append(
-            EngineeringFlag(
-                kind="note",
-                label="NOTE",
-                title="Steam / Condensate — Thermal Fatigue & Drainage",
-                body=(
-                    "Provide adequate drain points and thermal insulation. Check for water hammer "
-                    "and thermal cycling fatigue. For steam > 250 °C apply ASME B31.1 Power Piping "
-                    "if applicable. ERW pipe not recommended; specify seamless."
-                ),
-            )
-        )
+        flags.append(EngineeringFlag(
+            kind="note", label="NOTE",
+            title="Steam / Condensate — Thermal Fatigue & Drainage",
+            body=(
+                "Provide adequate drain points and thermal insulation. Check for water "
+                "hammer and thermal cycling fatigue. For steam > 250°C apply ASME B31.1 "
+                "Power Piping if applicable. ERW pipe not recommended; specify seamless."
+            ),
+        ))
 
-    # Hydrogen — API 941
+    # ── 7. Corrosive / acid service — material-specific guidance ──
+    if is_corrosive:
+        if is_sdss:
+            flags.append(EngineeringFlag(
+                kind="note", label="NOTE",
+                title="Corrosive / Acid Service — Super Duplex (PREN ≥ 40)",
+                body=(
+                    "SDSS (S32750) has PREN ≥ 40 — one of the highest corrosion-resistant "
+                    "CRAs. CA typically NIL. Suitable for chloride, sour, and dilute acid "
+                    "exposure. Limits: avoid sustained service above 300°C (475°C "
+                    "embrittlement risk). Monitor crevice corrosion at gaskets/flange "
+                    "faces. NDE: 100% RT or UT for butt welds; maintain ferrite 35–55% in HAZ."
+                ),
+            ))
+        elif is_dss:
+            flags.append(EngineeringFlag(
+                kind="note", label="NOTE",
+                title="Corrosive / Acid Service — Duplex (PREN ≥ 34)",
+                body=(
+                    "DSS (S31803) has PREN ≥ 34 — superior to SS 316L in chloride/sour "
+                    "environments. CA typically NIL. Avoid prolonged service above 300°C "
+                    "(475°C embrittlement). For highly aggressive acids (pH < 2) or "
+                    "high-chloride + high-temp combinations, consider SDSS or nickel "
+                    "alloys. NDE: 100% RT or UT for butt welds; maintain ferrite balance "
+                    "35–65% in HAZ."
+                ),
+            ))
+        elif is_ss:
+            flags.append(EngineeringFlag(
+                kind="project-spec", label="WARNING",
+                title="Corrosive / Acid Service — SS (Chloride SCC Risk)",
+                body=(
+                    "SS 316L is susceptible to chloride stress corrosion cracking (SCC) "
+                    "above ~60°C or when Cl⁻ > 50 ppm. Consider upgrading to DSS/SDSS "
+                    "if: pH < 4, chloride > 50 ppm, or T > 60°C. Typical CA: 1–1.5 mm. "
+                    "100% RT or UT for all butt welds. Monitor crevice corrosion at "
+                    "flanges and dead-legs."
+                ),
+            ))
+        elif is_cs or is_ltcs:
+            if is_nace:
+                flags.append(EngineeringFlag(
+                    kind="note", label="NOTE",
+                    title="Corrosive Service — Verify CS NACE Application Limits",
+                    body=(
+                        f"CS NACE class ({pms.piping_class}) is already qualified for "
+                        f"sour service. Verify process chemistry is within CS operating "
+                        f"envelope: H₂S partial pressure, pH (typically > 4 for CS), "
+                        f"chloride, temperature. For very aggressive sour (pH < 4, "
+                        f"high H₂S, high Cl⁻, T > 60°C), consider switching to a CRA "
+                        f"class (DSS/SDSS) at material selection stage. Monitor "
+                        f"corrosion rate at turnarounds."
+                    ),
+                ))
+            else:
+                flags.append(EngineeringFlag(
+                    kind="project-spec", label="WARNING",
+                    title="Corrosive / Acid Service — CS May Be Insufficient",
+                    body=(
+                        "For aggressive corrosive service, consider upgrading to SS "
+                        "316L, DSS, or nickel alloy (especially if pH < 4, T > 60°C, "
+                        "or chloride-bearing). Minimum CA: 3.0 mm if CS is retained. "
+                        "100% RT or UT typically specified by project. Monitor "
+                        "corrosion rate; review CA at major turnarounds. For sour + "
+                        "corrosive combined, NACE MR0175-compliant class required."
+                    ),
+                ))
+        else:
+            flags.append(EngineeringFlag(
+                kind="note", label="NOTE",
+                title="Corrosive / Acid Service — Verify Material Compatibility",
+                body=(
+                    f"Verify that {pms.material} is compatible with the specific "
+                    f"process fluid, concentration, and temperature. Consult material "
+                    f"datasheet and corrosion tables. 100% RT or UT for butt welds "
+                    f"where applicable."
+                ),
+            ))
+
+    # ── 8. NDE 100% RT recommendation (sour service) ──
+    if is_nace:
+        flags.append(EngineeringFlag(
+            kind="project-spec", label="PROJECT SPEC",
+            title="NDE: 100% RT or UT — Commonly Specified for Sour Service",
+            body=(
+                "100% Radiographic (RT) or Ultrasonic (UT) examination of butt welds is "
+                "typically required by client specifications for sour service (e.g., "
+                "ExxonMobil GP 03-02-01, Shell DEP 31.38.01, Aramco SAES-L). NOTE: ASME "
+                "B31.3 does NOT mandate 100% RT for sour service — default per §341.4.1 "
+                "is 5% random RT for Normal Fluid Service. 100% RT is codified only "
+                "for: Category M (high-toxicity fluids, §M341.4), Severe Cyclic "
+                "(§341.4.3), or when specified by the owner. Verify against your "
+                "project's inspection test plan (ITP)."
+            ),
+        ))
+
+    # ── 9. LTCS — impact testing ──
+    if is_ltcs:
+        flags.append(EngineeringFlag(
+            kind="mandatory", label="MANDATORY",
+            title="Low Temperature Service — Impact Testing Required",
+            body=(
+                "Impact testing per ASME B31.3 §323.2 required for LTCS materials at "
+                "MDMT. Charpy V-notch test: minimum 27J (20 ft-lbs) at MDMT. Materials "
+                "must be A333 Gr.6 / A350 LF2 / A352 LCB or equivalent."
+            ),
+        ))
+
+    # ── 10. Hydrostatic test pressure ──
+    ht_barg = None
+    try:
+        if pms.hydrotest_pressure:
+            # hydrotest_pressure may be "29.4 barg" or just "29.4"
+            ht_barg = float(str(pms.hydrotest_pressure).split()[0])
+    except (ValueError, AttributeError, IndexError):
+        ht_barg = None
+    if ht_barg is None and req.design_pressure_barg > 0:
+        ht_barg = req.design_pressure_barg * HYDROTEST_FACTOR
+    if ht_barg is not None and ht_barg > 0:
+        ht_base = ht_barg / HYDROTEST_FACTOR
+        flags.append(EngineeringFlag(
+            kind="mandatory", label="MANDATORY",
+            title=(f"Hydrostatic Test Pressure: {ht_barg:.1f} barg "
+                   f"(≈ 1.5 × {ht_base:.1f} barg max rated pressure)"),
+            body=(
+                f"Shop test: {ht_barg:.1f} barg per ASME B31.3 §345.4.2. Base: max "
+                f"P-T rated pressure = {ht_base:.1f} barg (at ambient). Medium: "
+                f"potable water (deionised for SS; chloride ≤ 50 ppm). Duration: "
+                f"minimum 10 minutes. Verify all flanges rated ≥ {ht_barg:.1f} barg "
+                f"at test temperature. NOTE: Strict §345.4.2(b) formula is "
+                f"P_test = 1.5 × P_design × (S_T_ambient / S_T_design) — may yield "
+                f"higher pressure when design temperature significantly reduces "
+                f"allowable stress. This display uses the simplified 1.5 × rated "
+                f"pressure form as a conservative default."
+            ),
+        ))
+
+    # ── 11. Hydrogen — API 941 (preserved from existing Python rules) ──
     if is_hydrogen:
-        flags.append(
-            EngineeringFlag(
-                kind="project-spec",
-                label="HYDROGEN",
-                title="Hydrogen Service — check API 941 Nelson Curves",
-                body=(
-                    "For hydrogen partial pressures above the 2016 Nelson curve thresholds, Cr-Mo "
-                    "alloy steels may be required to prevent High-Temperature Hydrogen Attack (HTHA). "
-                    "Consult API RP 941 latest edition."
-                ),
-            )
-        )
+        flags.append(EngineeringFlag(
+            kind="project-spec", label="HYDROGEN",
+            title="Hydrogen Service — check API 941 Nelson Curves",
+            body=(
+                "For hydrogen partial pressures above the 2016 Nelson curve "
+                "thresholds, Cr-Mo alloy steels may be required to prevent "
+                "High-Temperature Hydrogen Attack (HTHA). Consult API RP 941 latest "
+                "edition."
+            ),
+        ))
 
-    # Galvanised
+    # ── 12. Galvanised — temperature limit (preserved) ──
     if is_galv:
-        flags.append(
-            EngineeringFlag(
-                kind="note",
-                label="NOTE",
-                title="Galvanised CS — temperature limit 200 °C",
-                body="Hot-dip galvanised pipe is not suitable above 200 °C (zinc embrittlement).",
-            )
-        )
+        flags.append(EngineeringFlag(
+            kind="note", label="NOTE",
+            title="Galvanised CS — temperature limit 200°C",
+            body="Hot-dip galvanised pipe is not suitable above 200°C (zinc embrittlement).",
+        ))
 
-    # Y coefficient warning if high temperature
+    # ── 13. Y coefficient warning (preserved) ──
     if design_temp_c >= 482:
-        flags.append(
-            EngineeringFlag(
-                kind="note",
-                label="Y COEFFICIENT",
-                title="Design T ≥ 482 °C — Y coefficient may need adjustment",
-                body=(
-                    "This calculation uses Y = 0.4 (ferritic at T < 482 °C). For T ≥ 482 °C use "
-                    "Y = 0.5; for T ≥ 510 °C use Y = 0.7 per ASME B31.3 Table 304.1.1."
-                ),
-            )
-        )
+        flags.append(EngineeringFlag(
+            kind="note", label="Y COEFFICIENT",
+            title="Design T ≥ 482°C — Y coefficient may need adjustment",
+            body=(
+                "This calculation uses Y = 0.4 (ferritic at T < 482°C). For "
+                "T ≥ 482°C use Y = 0.5; for T ≥ 510°C use Y = 0.7 per ASME B31.3 "
+                "Table 304.1.1."
+            ),
+        ))
 
-    # Sub-standard selection alert (if any size failed)
+    # ── 14. Sub-standard wall alert (computed from per_size) ──
     substd = [p.size_inch for p in per_size if p.status != "OK"]
     if substd:
-        flags.append(
-            EngineeringFlag(
-                kind="mandatory",
-                label="ACTION REQUIRED",
-                title=f"Selected schedule is SUB-STANDARD for: {', '.join(substd)}",
-                body=(
-                    "For these NPS sizes the selected (nominal) wall thickness is LESS than the "
-                    "calculated required thickness per Eq. 3a. Increase the schedule or consult the "
-                    "project piping specialist."
-                ),
-            )
-        )
+        flags.append(EngineeringFlag(
+            kind="mandatory", label="ACTION REQUIRED",
+            title=f"Selected schedule is SUB-STANDARD for: {', '.join(substd)}",
+            body=(
+                "For these NPS sizes the selected (nominal) wall thickness is LESS "
+                "than the calculated required thickness per Eq. 3a. Increase the "
+                "schedule or consult the project piping specialist."
+            ),
+        ))
 
     return flags
 

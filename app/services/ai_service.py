@@ -633,6 +633,230 @@ Material / construction rules the AI must respect:
   • Wafer-type valves: NOT allowed in flammable/combustible service
   • Full-bore ball required: PSV inlet/outlet, piggable lines
 
+=== VALVE SELECTION LOGIC (STANDARDIZED PER VALVE TYPE) ===
+Use this matrix to populate ball_by_size, gate_by_size, globe_by_size,
+check_by_size, butterfly_by_size, dbb_by_size, dbb_inst_by_size. Empty
+string ("") means the valve type is not applicable at that size / class /
+service. The rules below are the project default — class-specific
+overrides in "Special valve rules" further down take precedence.
+
+1. BALL (BL) — primary on/off valve
+   Governing std: ASME B16.34 (P-T), API 6D / ISO 17292 (≤24" ≤600#),
+                  API 6D (>600#); NACE MR-01-75 in sour service.
+   Size availability: ALL pipe sizes the class supports (0.5"-24").
+   Bore selection by size (boundary at 2"):
+     0.5"-2"   → Reduced bore only      (BLRT/BLRP/BLRM)
+     2.5"-24"  → Reduced AND Full bore  ("BLRT…, BLFT…" comma-joined)
+   Seat selection by class rating:
+     150#-600#  → PTFE (T)              codes BLRT / BLFT
+     900#-1500# → PEEK (P)              codes BLRP / BLFP
+     2500#      → PEEK + Metal (P + M)  codes BLRP, BLFP, BLFM, BLRM
+   Full-bore mandatory for: piggable lines, PSV inlet/outlet, sample lines.
+   Soft-seat (PTFE/PEEK) max temperature 250°C — beyond, switch to Metal.
+   Construction (cite in design_code / notes when relevant):
+     ≤ 2"  → Floating ball (single-seat carries pressure, simpler)
+     ≥ 2.5" → Trunnion-mounted (dual seats, bearing-supported stem,
+              MANDATORY for DBB and 900#+ class sizes)
+     Metal-seat: tungsten-carbide coated, min 1050 Vickers, 150-250 µm.
+     Anti-static device + fire-safe (API 6FA / API 607) required for HC.
+     Stem: blow-out proof per API 6D §4.13.
+
+2. GATE (GA) — clean service / large-bore on/off / small-bore high-pressure
+   Governing std: API 600 (≥2" cast), API 602 (≤4" forged),
+                  API 603 (CRA materials).
+   Size availability:
+     Clean / utility / steam / water / non-HC: ALL sizes (0.5"-24")
+     Hydrocarbon service (900#+ classes E/F/G): ≤ 1.5" ONLY (small-bore)
+     Hydrocarbon service (150#-600# classes A/B/D): permitted, typically
+       used as alternative to ball for clean HC duty.
+   Wedge type by size:
+     0.5"-1.5" → Solid wedge (forged, API 602)
+     2"-24"    → Flexible wedge (cast, API 600)
+   Seat: ALWAYS Metal (M) — no soft-seat gates in industrial practice.
+   Code: GAYM (Y-pattern, Metal).
+   Construction (cite in design_code / notes when relevant):
+     Bonnet design by class:
+       150#-600#  → Bolted bonnet (API 600)
+       900#-2500# → Pressure-sealed bonnet (PSB) per API 6D, OR
+                    Welded bonnet for 1500#+ HC service
+     Stem operation:
+       ≤ 1.5" forged (API 602) → Inside Screw and Yoke (INS&Y)
+       ≥ 2"   cast   (API 600) → Outside Screw and Yoke (OS&Y)
+                                  with rising stem
+     Stem packing: live-loaded for HC / sour / fugitive-emission service
+                   (per ISO 15848, API 622 low-emission test).
+     Trim hardness: NACE 22 HRC limit applies to wedge + body seat ring.
+
+3. GLOBE (GL) — throttling / flow regulation
+   Governing std: API 602 (≤4"), BS EN ISO 15761, BS 1873 (≥2").
+   Size availability: 0.5"-8" typically. Larger globes are rare; emit ""
+                      for sizes ≥ 10" unless project spec says otherwise.
+   Seat: ALWAYS Metal (M).
+   Code: GLYM (Y-pattern, Metal).
+   Use globe ONLY where throttling is required; for on/off use ball/gate.
+   Construction (cite in design_code / notes when relevant):
+     Trim type:
+       Plug-type        → general throttling (default)
+       Cage-trim        → high ΔP / cavitation-prone service
+       Needle-trim      → fine flow control (≤ 1")
+     Trim facing: Stellite-faced (CoCr-A) for HC / sour / steam service.
+     Body pattern: Y-pattern (GLY) standard; Angle (GLA) where the
+                   line geometry dictates change-of-direction throttling.
+     Stem: rising, OS&Y for ≥ 2"; live-loaded packing for fugitive-emission
+           compliance (API 622 / ISO 15848-1).
+     Bonnet: bolted standard; pressure-sealed for 900#+ rated globes.
+
+4. CHECK (CH) — backflow prevention (mandatory wherever flow may reverse)
+   Governing std: API 594 (wafer/lug), API 6D (pipeline),
+                  BS 1868 (swing), BS 5352 (small-bore), BS EN ISO 15761.
+   Size availability: ALL pipe sizes (0.5"-24").
+   Type selection by size (boundary at 3"-4"):
+     0.5"-3"   → Piston (CHPM)              — forged, small-bore
+     4"-24"    → Swing AND Dual-plate       ("CHSM…, CHDM…" comma-joined)
+                 Swing = default for general service
+                 Dual-plate = where short face-to-face needed
+   ### NACE / sour-service exception ###
+   For ANY class with N or LN suffix (A1N, B1N, D1N, E1N, F1N, F2LN,
+   G1N, G2LN, G10N, G20N, G25N, etc.) at sizes ≥ 4":
+     → emit Swing ONLY (e.g. "CHSMA1NR")
+     → DROP Dual-plate (CHDM*)
+   Reason: dual-plate hinge-pin fatigue + sulfide deposit accumulation
+   in H₂S service — banned by Shell DEP 31.40.10, ExxonMobil GP 03-12-01,
+   Aramco SAES-L-150, ADNOC. Small-bore Piston (CHPM) at ≤ 3" is
+   unaffected — forged construction is sour-tolerant.
+   Wafer (CHWM): AVOID — only when space constraints prevent the standard
+                 swing/dual-plate (per project Note 6). NEVER on NACE classes.
+   Seat: ALWAYS Metal (M).
+   Construction (cite in design_code / notes when relevant):
+     Installation orientation:
+       Swing (CHSM)        → HORIZONTAL flow only — disc swings on hinge
+       Piston (CHPM)       → either orientation (vertical or horizontal)
+       Dual-plate (CHDM)   → either orientation; spring-assisted plates
+       Wafer (CHWM)        → either orientation; short face-to-face
+     Spring-assisted swing: required for low-flow / low-ΔP service to
+                            ensure positive seating against pulsating flow.
+     Bolted cover; soft-seal eliminator on hinge pin where sour service
+     applies (NACE-classes use Inconel hinge-pin coating).
+
+5. BUTTERFLY (BF) — large-bore on/off, low-cost
+   Governing std: API 609 (concentric/double-offset/triple-offset),
+                  ISO 5752, BS 5155, API 6FA (fire-safe).
+   Size availability: ≥ 3" minimum, typically ≥ 6". Emit "" for sizes
+                      0.5"-2.5". Class-by-class boundary may move higher
+                      per project spec — verify in pipe_classes data.
+
+   ### HARD BAN — high-pressure classes (900#+) ###
+   For ANY piping class whose code starts with the letter E, F, or G
+   (E1, E1N, E1LN, E10, E10N, E20, E20N, E25, E25N, F1, F1N, F1LN, F2N,
+   F2LN, F10, F10N, F20, F20N, F25, F25N, G1, G1N, G1LN, G2N, G2LN,
+   G10, G10N, G20, G20N, G25, G25N, etc.) — butterfly is FORBIDDEN
+   entirely. Emit "" for every entry of butterfly_by_size, regardless
+   of size, service, or NACE status.
+   Reason: at 900#/1500#/2500# the trunnion-mounted ball is the
+   industry-standard isolation valve. Triple-offset butterflies exist
+   to 1500# (API 609) but are not used in oil & gas process piping per
+   Shell DEP 31.40.10, ExxonMobil GP 03-12-01, Aramco SAES-L-150, and
+   ADNOC standards. Use ball / gate / DBB instead.
+
+   ### HARD BAN — NACE / sour-service classes ###
+   For ANY piping class whose code ends in "N" or "LN" (e.g. A1N, A1LN,
+   B1N, D1N, E1N, F1N, F2LN, G1N, G2LN, G10N, G20N, G25N, …) — butterfly
+   is FORBIDDEN entirely. Emit "" for every entry of butterfly_by_size,
+   regardless of size or service.
+   Reason: sour service introduces sulfide-stress-cracking risk; major
+   operator specs (Shell DEP 31.40.10, ExxonMobil GP 03-12-01, Aramco
+   SAES-L-150, ADNOC) prohibit butterfly in sour HC service. Use ball /
+   gate / DBB for isolation on these classes. The empty-row helper in
+   the Excel writer will then hide the Butterfly row automatically.
+
+   ### Net butterfly availability ###
+   After the two hard bans above, butterfly is permitted ONLY on classes
+   starting with A, B, or D (150#-600#) AND not ending in N/LN. That
+   covers: A1, A2, A10, A20, A25, A30 (CuNi), A50/A51/A52 (GRE), A60
+   (CPVC), B1, B2, B10, B20, B25, D1, D2, D10, D20, D25, plus the GALV
+   variants (A3/A4/A5/A6/B4/D4) and Epoxy-lined (A6).
+
+   ### CRITICAL — service-based exclusion (read carefully) ###
+   The Service Description string is a comma-separated list of SERVICE
+   TOKENS (e.g. "Cooling Media, Diesel, Steam"). Scan EVERY token. If
+   ANY single token is flammable / combustible / hydrocarbon — including
+   but not limited to: hydrocarbon, HC, oil, diesel, gas, fuel, condensate,
+   crude, naphtha, gasoline, hydraulic oil, lubricating oil, fuel gas,
+   methanol, glycol (when carrying HC), sour, H2S, NACE — then WAFER
+   butterfly (BFWT / BFW*) is FORBIDDEN for the entire class. It does not
+   matter that other tokens in the same service string are water-like
+   (Cooling Media, Steam, Fresh Water). API 6FA fire-safe testing requires
+   the wafer body's lack of flange-bolt protection to be ruled out
+   altogether. ONE flammable token in the list = wafer NEVER allowed.
+
+   Type selection rules (apply in order):
+     a) Service contains ANY flammable token (per the list above):
+          → emit Triple-Offset only — code "BFTPCLASS_R" (PEEK) or
+            "BFTTCLASS_R" (PTFE, permitted in HM service per project
+            Note 9 on RF classes). Do NOT include BFWT.
+     b) Service is purely water / utility / non-flammable
+        (e.g. only Cooling Media, Steam, Fresh Water, Fire Water,
+         Potable Water, Raw Sea Water, Cooling Water / Seawater):
+          → emit Wafer + Triple-Offset — "BFWTCLASS_R, BFTPCLASS_R"
+     c) Service is empty / "General":
+          → conservative default: Triple-Offset only.
+
+   Class limits: Wafer common 150#-300#; Triple-offset OK to 600#+;
+                 ≥ 900# only triple-offset, and verify against API 609.
+
+6. DBB — Double Block & Bleed (positive isolation)
+   Governing std: API 6D §3, ISO 14313, operator overlays (Shell DEP,
+                  ExxonMobil GP, Aramco SAES). NACE for sour.
+   When required:
+     900#+ classes (E/F/G series): MANDATORY — populate dbb_by_size +
+                                   dbb_inst_by_size for ALL sizes.
+     150#-600# classes (A/B/D series): NOT used — emit "" for both
+                                       dbb_by_size and dbb_inst_by_size
+                                       (single ball valve is sufficient
+                                       for low-pressure isolation).
+   Size availability (within applicable classes): ALL sizes 0.5"-24".
+   Bore: Reduced (R) only — DBB is isolation, not flow.
+   Seat selection by class:
+     900#-1500# (E/F): PEEK (P)              code DBRP
+     2500# (G):        PEEK + Metal (P + M)  codes "DBRP…, DBRM…"
+   DBB Instrument variant (dbb_inst_by_size):
+     Soft-seat (PEEK) ONLY — append T to RTJ end suffix → e.g. DBRPE20NJT.
+     NEVER emit metal-seat instrument variant (no DBRM…JT).
+   Construction (cite in design_code / notes when relevant):
+     Body: ALWAYS Trunnion-mounted (single body holding two ball valves
+           with a bleed valve between — never floating).
+     Seats: Spring-loaded, self-relieving — auto-vents body cavity if
+            pressure exceeds set point (API 6D §4.13 / ISO 14313).
+     Bleed valve: needle valve, ¼" or ½" NPT female, isolated by upstream
+                  seat first then drained through downstream seat.
+     Stem: blow-out proof; anti-static device on each stem.
+     Fire-safe: API 6FA / API 607 certified for HC service.
+     For instrument variant (JT suffix): bleed connection ½" NPT female
+     for tubing tee-in — soft-seat (PEEK) only, never metal-seat.
+
+=== UNIVERSAL NACE / SOUR-SERVICE COMPLIANCE ===
+For ANY class with N or LN suffix in its code (A1N, A1LN, B1N, D1N, E1N,
+F1N, F2LN, G1N, G2LN, G10N, G20N, G25N, etc.), every valve emitted MUST
+use materials and trim hardness compliant with NACE MR-01-75 / ISO 15156:
+  • Carbon steel (CS) trim:           ≤ 22 HRC max hardness
+  • Stainless steel SS316L:           ≤ 22 HRC; full-anneal condition
+  • Duplex SS (DSS UNS S31803):       ≤ 28 HRC; ferrite 35-65%
+  • Super-duplex SS (SDSS UNS S32750): ≤ 32 HRC; PREN ≥ 40
+  • CuNi (UNS C70600 / C71500):       no specific HRC; alloy-grade compliant
+  • Titanium B861 Gr.2:               sour-tolerant by alloy chemistry
+The VDS letter codes do not change — compliance is enforced at the
+material spec level during procurement. Mention this in the design_code
+field for NACE classes and in the relevant note positions.
+
+Cross-cutting valve restrictions already encoded above:
+  • Butterfly: HARD BAN on (a) ALL 900#+ classes (E/F/G series, any
+    suffix), AND (b) ALL NACE classes (any rating, suffix N/LN).
+    Net effect: butterfly permitted ONLY on A/B/D classes without
+    N/LN suffix.
+  • Check valve dual-plate: BAN at sizes ≥ 4" on all NACE classes.
+  • Wafer-type valves (any kind): NEVER on NACE classes.
+  • DBB metal-seat instrument variant: NEVER (soft-seat PEEK only).
+
 Special valve rules:
   E-series (900#) Ball: 0.5"-1.5" → "USE GATE VALVE" (small-bore only); 2"+ → BLRP/BLFP codes (no ball valve between 2" and the spec boundary; the renderer caps "USE GATE VALVE" at 1.5" regardless)
   F-series (1500#) Ball: 0.5"-1.5" → "USE GATE VALVE"; 2"+ → BLRP/BLFP codes (soft-seat only)

@@ -1192,182 +1192,73 @@ function renderScheduleTab(pms) {
 }
 
 // === Engineering Flags ===
-function renderEngineeringFlags(pms, dpVal, isNACE, isLTCS) {
-    const flags = [];
-    const svc = pms.service.toLowerCase();
-    const mat = pms.material.toUpperCase();
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
-    // Base pressure for hydrotest: max P-T rated pressure if available, otherwise design pressure
-    const ptPressures = pms.pressure_temperature && pms.pressure_temperature.pressures ? pms.pressure_temperature.pressures : [];
-    const maxRatedP = ptPressures.length > 0 ? Math.max(...ptPressures) : dpVal;
-    const htBaseP = pms.hydrotest_pressure ? (ht / ENG.hydrotest_factor) : dpVal;  // back-calculate the base used
-
-    // Determine material family for flag specificity
-    const isCS = mat.includes('CS') && !mat.includes('DSS') && !mat.includes('SS') && !mat.includes('SDSS');
-    const isDSS = mat.includes('DSS') && !mat.includes('SDSS');
-    const isSDSS = mat.includes('SDSS') || mat.includes('SUPER DUPLEX') || mat.includes('S32750');
-    const isSS = mat.includes('SS') || mat.includes('STAINLESS');
-    const isDuplexFamily = isDSS || isSDSS;
-
-    if (isNACE) {
-        // NACE compliance — material-specific hardness requirements
-        if (isDuplexFamily) {
-            flags.push({
-                level: 'critical', badge: 'CRITICAL',
-                title: 'NACE MR0175 / ISO 15156-3 \u2014 Duplex Sour Service Compliance',
-                body: `All ${isSDSS ? 'Super Duplex (S32750)' : 'Duplex (S31803)'} pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156-3 Annex A. Max hardness: ${isSDSS ? '32 HRC (SDSS)' : '28 HRC (DSS)'}. Solution annealing required. Ferrite content: 35\u201365%. PREN \u2265 ${isSDSS ? '40 (SDSS)' : '34 (DSS)'}. No PWHT required for DSS/SDSS (solution-annealed condition).`
-            });
-        } else if (isSS) {
-            flags.push({
-                level: 'critical', badge: 'CRITICAL',
-                title: 'NACE MR0175 / ISO 15156-3 \u2014 Austenitic SS Sour Service Compliance',
-                body: 'All SS316L pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156-3. Max hardness: 22 HRC (solution annealed). Cold work limit applies. No PWHT typically required for austenitic SS.'
-            });
-        } else {
-            flags.push({
-                level: 'critical', badge: 'CRITICAL',
-                title: 'NACE MR0175 / ISO 15156 \u2014 Sour Service Compliance',
-                body: 'All pipe, fittings, flanges, and welds must comply with NACE MR0175 / ISO 15156. Max hardness: CS \u2264 22 HRC / 250 HBW (base metal, weld metal, HAZ). HIC testing per NACE TM0284 if H\u2082S partial pressure > 0.0003 MPa (0.05 psia). SSC testing per NACE TM0177 Method A may also be required.'
-            });
-        }
-
-        // Minimum schedule — this is a PROJECT / COMPANY spec, NOT a NACE requirement
-        if (isCS) {
-            flags.push({
-                level: 'warning', badge: 'PROJECT SPEC',
-                title: 'Minimum Schedule Recommended \u2014 Sch 160 (\u2264 NPS 1\u00bd") / XS (\u2265 NPS 2")',
-                body: 'Common oil & gas project specs (Shell DEP 31.38.01, Aramco SAES-L, Total GS EP PVV) require minimum Sch 160 (NPS \u2264 1\u00bd") / Extra Strong (NPS \u2265 2") for CS sour service \u2014 for mechanical robustness and lifecycle margin. NOTE: NACE MR0175 itself does NOT mandate any minimum schedule; this is a project / company standard. Verify against your project\u2019s Piping Design Basis (PDS).'
-            });
-        } else if (isDuplexFamily || isSS) {
-            flags.push({
-                level: 'note', badge: 'NOTE',
-                title: `Schedule per Design Calculation \u2014 ${isDuplexFamily ? 'Duplex' : 'SS'} NACE`,
-                body: `For ${isDuplexFamily ? 'Duplex/Super Duplex' : 'Stainless Steel'} NACE service, schedule is governed by pressure/mechanical design calculation \u2014 no project-standard minimum schedule override (unlike CS sour). Corrosion allowance is typically NIL for ${isDuplexFamily ? 'DSS/SDSS' : 'SS'} in sour service.`
-            });
-        }
-
-        // Bolting — split into NACE requirements (grades) and project spec (coating)
-        flags.push({
-            level: 'mandatory', badge: 'NACE REQ',
-            title: `NACE Bolting Grades \u2014 ${pms.bolts_nuts_gaskets.stud_bolts || 'A320 L7M Studs'} + ${pms.bolts_nuts_gaskets.hex_nuts || 'A194 7ML Nuts'}`,
-            body: `Per NACE MR0175 Table 7: max hardness 22 HRC (studs) / 22 HRC (nuts) for sour service exposure. Studs: ${pms.bolts_nuts_gaskets.stud_bolts || 'ASTM A320 Gr. L7M'}. Nuts: ${pms.bolts_nuts_gaskets.hex_nuts || 'ASTM A194 Gr. 7ML'}. Alternative grades (B7M + 2HM) also NACE-compliant.`
-        });
-        if (isCS) {
-            flags.push({
-                level: 'warning', badge: 'PROJECT SPEC',
-                title: 'Bolting Coating \u2014 XYLAR 2 + XYLAN 1070 (Project Optional)',
-                body: 'XYLAR 2 + XYLAN 1070 coating (min 50 \u00b5m combined) is a common offshore / splash-zone project spec for corrosion and galling protection. NOTE: NACE MR0175 does NOT mandate coatings. Uncoated B7M / 2HM bolts are fully NACE-compliant for onshore applications. Verify against your project\u2019s bolting spec.'
-            });
-        }
-
-        // PWHT — CONDITIONAL per ASME B31.3 + NACE MR0175 (not unconditional)
-        if (isCS) {
-            flags.push({
-                level: 'warning', badge: 'CONDITIONAL',
-                title: 'PWHT \u2014 Required Based on Thickness / Hardness',
-                body: 'Per ASME B31.3 Table 331.1.1 (P-Number 1 / CS): PWHT required when nominal wall thickness > 19 mm (\u00be"). For thinner sections, PWHT may be waived if HAZ hardness \u2264 250 HBW is demonstrated in PQR. Per NACE MR0175 \u00a77.2.1.3, PWHT is NOT mandatory if hardness limits are met via: low-hydrogen electrodes + proper preheat + PQR hardness testing. WPS/PQR must include hardness survey regardless.'
-            });
-        } else if (isDuplexFamily) {
-            flags.push({
-                level: 'note', badge: 'NOTE',
-                title: 'No PWHT Required \u2014 Duplex / Super Duplex',
-                body: `PWHT is NOT required for ${isSDSS ? 'Super Duplex (S32750)' : 'Duplex (S31803)'}. Material is supplied in solution-annealed condition. Ferrite/austenite balance must be maintained in HAZ (35\u201365% ferrite).`
-            });
-        }
-    }
-
-    if (svc.includes('steam') || svc.includes('condensate')) {
-        flags.push({
-            level: 'note', badge: 'NOTE',
-            title: 'Steam / Condensate \u2014 Thermal Fatigue & Drainage',
-            body: 'Provide adequate drain points and thermal insulation. Check for water hammer and thermal cycling fatigue. For steam > 250\u00b0C apply ASME B31.1 Power Piping if applicable. ERW pipe not recommended; specify seamless.'
-        });
-    }
-
-    if (svc.includes('corrosive') || svc.includes('acid') || svc.includes('chemical')) {
-        // Material-specific corrosive-service guidance
-        if (isSDSS) {
-            flags.push({
-                level: 'note', badge: 'NOTE',
-                title: 'Corrosive / Acid Service \u2014 Super Duplex (PREN \u2265 40)',
-                body: 'SDSS (S32750) has PREN \u2265 40 \u2014 one of the highest corrosion-resistant CRAs. CA typically NIL. Suitable for chloride, sour, and dilute acid exposure. Limits: avoid sustained service above 300\u00b0C (475\u00b0C embrittlement risk). Monitor crevice corrosion at gaskets/flange faces. NDE: 100% RT or UT for butt welds; maintain ferrite 35\u201355% in HAZ.'
-            });
-        } else if (isDSS) {
-            flags.push({
-                level: 'note', badge: 'NOTE',
-                title: 'Corrosive / Acid Service \u2014 Duplex (PREN \u2265 34)',
-                body: 'DSS (S31803) has PREN \u2265 34 \u2014 superior to SS 316L in chloride/sour environments. CA typically NIL. Avoid prolonged service above 300\u00b0C (475\u00b0C embrittlement). For highly aggressive acids (pH < 2) or high-chloride + high-temp combinations, consider SDSS or nickel alloys. NDE: 100% RT or UT for butt welds; maintain ferrite balance 35\u201365% in HAZ.'
-            });
-        } else if (isSS) {
-            flags.push({
-                level: 'warning', badge: 'WARNING',
-                title: 'Corrosive / Acid Service \u2014 SS (Chloride SCC Risk)',
-                body: 'SS 316L is susceptible to chloride stress corrosion cracking (SCC) above ~60\u00b0C or when Cl\u207b > 50 ppm. Consider upgrading to DSS/SDSS if: pH < 4, chloride > 50 ppm, or T > 60\u00b0C. Typical CA: 1\u20131.5 mm. 100% RT or UT for all butt welds. Monitor crevice corrosion at flanges and dead-legs.'
-            });
-        } else if (isCS || isLTCS) {
-            if (isNACE) {
-                // Already NACE-qualified CS — don't suggest "upgrade"; just verify chemistry bounds
-                flags.push({
-                    level: 'note', badge: 'NOTE',
-                    title: 'Corrosive Service \u2014 Verify CS NACE Application Limits',
-                    body: `CS NACE class (${pms.piping_class}) is already qualified for sour service. Verify process chemistry is within CS operating envelope: H\u2082S partial pressure, pH (typically > 4 for CS), chloride, temperature. For very aggressive sour (pH < 4, high H\u2082S, high Cl\u207b, T > 60\u00b0C), consider switching to a CRA class (DSS/SDSS) at material selection stage. Monitor corrosion rate at turnarounds.`
-                });
-            } else {
-                // Non-NACE CS in corrosive service — legitimate upgrade suggestion
-                flags.push({
-                    level: 'warning', badge: 'WARNING',
-                    title: 'Corrosive / Acid Service \u2014 CS May Be Insufficient',
-                    body: 'For aggressive corrosive service, consider upgrading to SS 316L, DSS, or nickel alloy (especially if pH < 4, T > 60\u00b0C, or chloride-bearing). Minimum CA: 3.0 mm if CS is retained. 100% RT or UT typically specified by project. Monitor corrosion rate; review CA at major turnarounds. For sour + corrosive combined, NACE MR0175-compliant class required.'
-                });
-            }
-        } else {
-            // CuNi, GRE, CPVC, GALV or other non-metallics
-            flags.push({
-                level: 'note', badge: 'NOTE',
-                title: 'Corrosive / Acid Service \u2014 Verify Material Compatibility',
-                body: `Verify that ${pms.material} is compatible with the specific process fluid, concentration, and temperature. Consult material datasheet and corrosion tables. 100% RT or UT for butt welds where applicable.`
-            });
-        }
-    }
-
-    if (isNACE || svc.includes('sour') || svc.includes('h2s')) {
-        flags.push({
-            level: 'warning', badge: 'PROJECT SPEC',
-            title: 'NDE: 100% RT or UT \u2014 Commonly Specified for Sour Service',
-            body: '100% Radiographic (RT) or Ultrasonic (UT) examination of butt welds is typically required by client specifications for sour service (e.g., ExxonMobil GP 03-02-01, Shell DEP 31.38.01, Aramco SAES-L). NOTE: ASME B31.3 does NOT mandate 100% RT for sour service \u2014 default per \u00a7341.4.1 is 5% random RT for Normal Fluid Service. 100% RT is codified only for: Category M (high-toxicity fluids, \u00a7M341.4), Severe Cyclic (\u00a7341.4.3), or when specified by the owner. Verify against your project\u2019s inspection test plan (ITP).'
-        });
-    }
-
-    if (isLTCS) {
-        flags.push({
-            level: 'mandatory', badge: 'MANDATORY',
-            title: 'Low Temperature Service \u2014 Impact Testing Required',
-            body: 'Impact testing per ASME B31.3 \u00a7323.2 required for LTCS materials at MDMT. Charpy V-notch test: minimum 27J (20 ft-lbs) at MDMT. Materials must be A333 Gr.6 / A350 LF2 / A352 LCB or equivalent.'
-        });
-    }
-
-    // Hydrotest — formula is simplified; strict ASME B31.3 §345.4.2 includes stress correction
-    flags.push({
-        level: 'mandatory', badge: 'MANDATORY',
-        title: `Hydrostatic Test Pressure: ${ht.toFixed(1)} barg (\u2248 1.5 \u00d7 ${htBaseP.toFixed(1)} barg max rated pressure)`,
-        body: `Shop test: ${ht.toFixed(1)} barg per ASME B31.3 \u00a7345.4.2. Base: max P-T rated pressure = ${htBaseP.toFixed(1)} barg (at ambient). Medium: potable water (deionised for SS; chloride \u2264 50 ppm). Duration: minimum 10 minutes. Verify all flanges rated \u2265 ${ht.toFixed(1)} barg at test temperature. NOTE: Strict \u00a7345.4.2(b) formula is P<sub>test</sub> = 1.5 \u00d7 P<sub>design</sub> \u00d7 (S<sub>T_ambient</sub> / S<sub>T_design</sub>) \u2014 may yield higher pressure when design temperature significantly reduces allowable stress. This display uses the simplified 1.5 \u00d7 rated pressure form as a conservative default.`
-    });
-
+// Fetches the canonical flag list from POST /api/compute-thickness so the
+// standalone HTML UI and the Valvesheet frontend always show the same
+// engineering rules. The flag-generation logic lives in
+// thickness_service.py::_build_engineering_flags() — single source of truth.
+//
+// Fallback: if the endpoint is unreachable, render a one-line notice rather
+// than a stale local copy of the rules (which would drift over time).
+async function renderEngineeringFlags(pms, dpVal /* , isNACE, isLTCS unused */) {
     const container = document.getElementById('engineeringFlags');
-    if (flags.length === 0) {
-        container.innerHTML = '<p style="color:var(--text-muted);padding:12px">No special engineering flags for this specification.</p>';
-        return;
-    }
+    container.innerHTML = '<p style="color:var(--text-muted);padding:12px">Loading engineering requirements…</p>';
 
-    container.innerHTML = flags.map(f => `
-        <div class="flag-card ${f.level}">
-            <div class="flag-header">
-                <span class="flag-badge ${f.level}">${f.badge}</span>
-                <span class="flag-title">${f.title}</span>
+    const designTempC = parseFloat(document.getElementById('designTemperature').value) || 0;
+
+    try {
+        const res = await fetch('/api/compute-thickness', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                piping_class: pms.piping_class,
+                material: pms.material,
+                corrosion_allowance: pms.corrosion_allowance,
+                service: pms.service,
+                design_pressure_barg: dpVal,
+                design_temp_c: designTempC,
+            }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const flags = (data.engineering_flags || []).map(f => ({
+            level: _flagKindToLevel(f.kind),
+            badge: f.label,
+            title: f.title,
+            body: f.body,
+        }));
+        if (flags.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-muted);padding:12px">No special engineering flags for this specification.</p>';
+            return;
+        }
+        container.innerHTML = flags.map(f => `
+            <div class="flag-card ${f.level}">
+                <div class="flag-header">
+                    <span class="flag-badge ${f.level}">${f.badge}</span>
+                    <span class="flag-title">${f.title}</span>
+                </div>
+                <p class="flag-body">${f.body}</p>
             </div>
-            <p class="flag-body">${f.body}</p>
-        </div>
-    `).join('');
+        `).join('');
+    } catch (e) {
+        console.warn('[flags] API unreachable, showing fallback notice:', e);
+        container.innerHTML = `
+            <div class="flag-card note">
+                <div class="flag-header">
+                    <span class="flag-badge note">NOTE</span>
+                    <span class="flag-title">Engineering flags unavailable</span>
+                </div>
+                <p class="flag-body">The /api/compute-thickness endpoint is not reachable. Engineering requirements are computed server-side; refresh once the backend is running to see them.</p>
+            </div>`;
+    }
+}
+
+// Map backend EngineeringFlag.kind to the legacy CSS class names used by
+// .flag-card / .flag-badge (critical / mandatory / warning / note).
+function _flagKindToLevel(kind) {
+    if (kind === 'mandatory') return 'mandatory';
+    if (kind === 'project-spec') return 'warning';
+    if (kind === 'note') return 'note';
+    return 'note';
 }
 
 // === Enhanced Pipe Table ===
