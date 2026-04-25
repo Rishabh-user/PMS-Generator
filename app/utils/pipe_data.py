@@ -17,6 +17,9 @@ import logging
 import re
 
 from app.utils.engineering_constants import (
+    ASME_B3610M_WT,
+    ASME_B3619M_WT,
+    _normalize_nps,
     lookup_od,
     lookup_wall_thickness,
 )
@@ -99,6 +102,57 @@ def _round2(x) -> float | None:
     return round(val, 2)
 
 
+def _format_schedule(sched_key: str) -> str:
+    """Format a bare table key the way the AI emits schedules: bare for
+    STD/XS/XXS and S-suffix schedules, "SCH N" for plain numerics."""
+    if sched_key in ("STD", "XS", "XXS"):
+        return sched_key
+    if sched_key.endswith("S"):
+        return sched_key
+    return f"SCH {sched_key}"
+
+
+def _smallest_schedule_meeting_min(
+    nps,
+    t_min_mm: float,
+    pipe_code: str | None,
+) -> tuple[str, float] | None:
+    """Pick the thinnest standard ASME schedule whose nominal wall ≥ t_min_mm.
+
+    Returns (schedule_string, nominal_wt_mm). Picks from B36.19M S-suffix
+    schedules when pipe_code refers to B36.19M, otherwise B36.10M. Falls
+    back to the thickest available schedule when no standard meets t_min
+    (the row is then flagged SUBSTD downstream by thickness_service).
+    """
+    nps_key = _normalize_nps(nps)
+    if not nps_key:
+        return None
+
+    code = (pipe_code or "").upper()
+    is_b3619 = "B 36.19M" in code or "B36.19M" in code
+
+    if is_b3619:
+        order = ["5S", "10S", "40S", "80S"]
+        table = ASME_B3619M_WT
+    else:
+        order = ["10", "20", "30", "40", "STD", "60", "80", "XS",
+                 "100", "120", "140", "160", "XXS"]
+        table = ASME_B3610M_WT
+
+    row = table.get(nps_key, {})
+    available = [(s, row[s]) for s in order if s in row]
+    if not available:
+        return None
+    available.sort(key=lambda x: x[1])
+
+    for sched, wt in available:
+        if wt >= t_min_mm:
+            return _format_schedule(sched), wt
+
+    sched, wt = available[-1]
+    return _format_schedule(sched), wt
+
+
 def correct_pipe_data(
     pipe_data: list[dict],
     pipe_code: str | None = None,
@@ -117,13 +171,17 @@ def correct_pipe_data(
          from the ASME B36.10M / B36.19M tables in engineering_constants.
 
       2. ASME class + Schedule == "-" (calculated WT, e.g. F1LN 10-24",
-         G2N 1-24"): od_mm is replaced from the OD table and
-         wall_thickness_mm is COMPUTED per ASME B31.3 §304.1.2 Eq. 3a using
-         the class's design pressure, design temperature, material stress,
-         and corrosion allowance. Requires `design_pressure_barg`,
-         `design_temp_c`, `material`, and `corrosion_allowance` to be
-         provided by the caller (pms_service passes them from
-         pipe_classes.json P-T data + the request).
+         G2N 1-24"): od_mm is replaced from the OD table, and the row is
+         UPGRADED to the smallest standard B36.10M / B36.19M schedule whose
+         nominal wall ≥ the Eq. 3a minimum (P × OD/(2(SEW + PY)) + CA, then
+         divided by 1 − mill_tol). BOTH `schedule` and `wall_thickness_mm`
+         are replaced — so the resulting row is a buyable spec, not just an
+         engineering minimum. Requires `design_pressure_barg`, `design_temp_c`,
+         `material`, and `corrosion_allowance` to be provided by the caller
+         (pms_service passes them from pipe_classes.json P-T data + the
+         request). If no standard schedule is thick enough, the thickest
+         available is selected — thickness_service will then mark the row
+         SUBSTD.
 
       3. Non-ASME pipe code (CuNi EEMUA 234, Copper ASTM B42, GRE
          manufacturer std, CPVC ASTM F441, Tubing ASTM A269): row is left
@@ -172,7 +230,15 @@ def correct_pipe_data(
                 joint_factor=1.0,
             )
             if computed is not None and computed > 0:
-                row["wall_thickness_mm"] = computed
+                # Round UP to smallest standard ASME schedule whose nominal
+                # wall ≥ t_min, so the row is a buyable spec (real wall +
+                # real schedule) rather than the bare theoretical minimum.
+                chosen = _smallest_schedule_meeting_min(nps, computed, pipe_code)
+                if chosen is not None:
+                    row["schedule"] = chosen[0]
+                    row["wall_thickness_mm"] = chosen[1]
+                else:
+                    row["wall_thickness_mm"] = computed
 
     # ── Final normalization: every numeric cell to 2 decimals ──
     # Covers: AI-emitted values on non-ASME classes (CuNi/Copper/GRE/CPVC/
