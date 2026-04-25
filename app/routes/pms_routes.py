@@ -47,6 +47,15 @@ async def list_pipe_classes():
     return data_service.get_pipe_class_list()
 
 
+@router.get("/services", response_model=list[str])
+async def list_services():
+    """Canonical service-description list for the Service picker. Both the
+    standalone HTML UI and the Valvesheet frontend fetch from here so the
+    options stay in sync without hard-coding either side."""
+    from app.data.service_options import SERVICE_OPTIONS
+    return SERVICE_OPTIONS
+
+
 @router.get("/pipe-classes/codes", response_model=list[str])
 async def list_pipe_class_codes():
     return data_service.get_available_classes()

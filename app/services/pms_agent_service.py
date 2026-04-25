@@ -1388,7 +1388,7 @@ IMPORTANT: The available-values lists given below are already filtered
 to values that EXIST for the slots the user has already picked. If a
 list looks short (e.g. Rating only has two options after the user
 picked GRE material), that's because only those ratings have a class
-in the catalogue for the chosen material. Don't invent other values —
+available for the chosen material. Don't invent other values —
 the user picked a material that just doesn't have all rating options.
 
 GATING RULE (very important):
@@ -1416,9 +1416,9 @@ SLOT-FILLING BEHAVIOUR:
 • If a user-provided value doesn't match any valid option (e.g. "Platinum"
   as material, or "200#" as rating), DON'T just reject it — show the closest
   valid alternatives. Example:
-    "I don't recognize **Platinum** as a catalogue material. Did you mean
-     one of these? Titanium · CuNi · SS316L · DSS. Pick one and I'll pull
-     the matching classes."
+    "I don't have **Platinum** as a supported material. Did you mean one of
+     these? Titanium · CuNi · SS316L · DSS. Pick one and I'll pull the
+     matching classes."
 
 • If all three fields are filled and matches were found, describe the
   matches briefly (rating, material family, suffix meaning) and tell the
@@ -1446,6 +1446,14 @@ STYLE:
 - Never invent piping classes or values. If unsure, say so.
 - Never echo JSON or mention "parser" / "matched_classes" — the UI renders
   the class cards separately; you're just the conversational layer.
+- Don't refer to the data as a "catalogue" or "catalog" in replies — the
+  user doesn't think of it that way. Say "supported", "available", or just
+  describe what does/doesn't exist without naming the source.
+- When the search returns no matches, just say so plainly (one or two
+  sentences). Do NOT volunteer example queries like "try: list 150#
+  classes / tell me about A1 / show 600# SS316L" — those are random
+  suggestions disconnected from what the user actually asked, and the UI
+  already shows the right pickers / next steps.
 - Keep replies under ~120 words unless the user explicitly asks for detail.
 """
 
@@ -1505,17 +1513,17 @@ async def _compose_ai_reply(
         fs_lines = []
         for fs in field_suggestions:
             fs_lines.append(
-                f"  - {fs.field}: user said '{fs.provided}' which is NOT in the catalogue. "
+                f"  - {fs.field}: user said '{fs.provided}' which isn't a supported value. "
                 f"Nearest valid values: {', '.join(fs.suggestions) if fs.suggestions else '(no close match)'}"
             )
-        fs_block = "\nUSER-PROVIDED VALUES THAT DON'T MATCH THE CATALOGUE:\n" + "\n".join(fs_lines) + "\n"
+        fs_block = "\nUSER-PROVIDED VALUES THAT AREN'T SUPPORTED:\n" + "\n".join(fs_lines) + "\n"
 
     context = (
         f"USER PROMPT:\n{prompt}\n\n"
         f"WHAT THE PARSER EXTRACTED:\n{_format_parsed_for_ai(parsed)}\n\n"
         f"SLOT-FILLING STATE (the 3 required fields for generating a PMS):\n{slot_block}\n"
         f"{fs_block}\n"
-        f"MATCHED PIPING CLASSES (from the deterministic catalogue search):\n"
+        f"MATCHED PIPING CLASSES (from the deterministic search):\n"
         f"{_format_matches_for_ai(matches)}\n\n"
         f"Now write your reply to the user. Rules:\n"
         f"  • If slots are incomplete AND no class code was given → ask for the missing field(s) by name.\n"

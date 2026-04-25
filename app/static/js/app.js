@@ -38,6 +38,7 @@ const API = {
     listCodes: () => fetch('/api/pipe-classes/codes'),
     indexData: () => fetch('/api/index-data'),
     engineeringConstants: () => fetch('/api/engineering-constants'),
+    services: () => fetch('/api/services'),
     health: () => fetch('/health'),
 };
 
@@ -71,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initResultTabs();
     initForm();
     initCascadingDropdowns();
+    initServiceMultiSelect();
     initDesignInputs();
     initValvesheetSync();
     checkAPI();
@@ -409,6 +411,114 @@ function initCascadingDropdowns() {
 function resolvePipingClass(rating, material, ca) {
     const match = indexData.find(d => d.rating === rating && d.material === material && d.corrosion_allowance === ca);
     return match ? match.piping_class : null;
+}
+
+// === Service Description Multi-Select ===
+// Options fetched from GET /api/services so the standalone UI and the
+// Valvesheet frontend stay on the same canonical list. "Other" reveals a
+// free-text input for one-off services that aren't in the list.
+const SERVICE_OPTIONS_FALLBACK = [
+    "General",
+    "Hydrocarbon Service",
+    "Sour / H2S Service (NACE)",
+    "Cooling Water / Seawater",
+    "Cooling Media",
+    "Heating Media",
+    "Steam",
+    "Fire Water",
+    "Diesel",
+    "Water Injection",
+    "Hydraulic Oil",
+    "Fuel Gas",
+    "Glycol",
+    "Nitrogen",
+    "Hydrogen Service",
+    "Utility / Instrument",
+    "Low Temperature Service",
+];
+
+async function fetchServiceOptions() {
+    try {
+        const res = await API.services();
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const list = await res.json();
+        return Array.isArray(list) && list.length ? list : SERVICE_OPTIONS_FALLBACK;
+    } catch (e) {
+        console.warn('[services] falling back to local list:', e);
+        return SERVICE_OPTIONS_FALLBACK;
+    }
+}
+
+async function initServiceMultiSelect() {
+    const root    = document.getElementById('serviceMultiSelect');
+    const panel   = document.getElementById('servicePanel');
+    const trigger = document.getElementById('serviceTrigger');
+    const label   = document.getElementById('serviceLabel');
+    const hidden  = document.getElementById('service');
+    const otherIn = document.getElementById('serviceOtherInput');
+    if (!root || !panel || !trigger || !hidden) return;
+
+    const options = await fetchServiceOptions();
+    panel.innerHTML = '';
+    options.forEach(opt => {
+        const row = document.createElement('label');
+        row.className = 'multi-select-option';
+        row.dataset.value = opt;
+        row.innerHTML = `<input type="checkbox"><span></span>`;
+        row.querySelector('input').value = opt;
+        row.querySelector('span').textContent = opt;
+        panel.appendChild(row);
+    });
+    const div = document.createElement('div');
+    div.className = 'multi-select-divider';
+    panel.appendChild(div);
+    const other = document.createElement('label');
+    other.className = 'multi-select-option';
+    other.dataset.value = '__OTHER__';
+    other.innerHTML = `<input type="checkbox" value="__OTHER__"><span>Other (custom)</span>`;
+    panel.appendChild(other);
+
+    function syncValue() {
+        const checks = Array.from(panel.querySelectorAll('input[type="checkbox"]'));
+        const picks = checks.filter(c => c.checked && c.value !== '__OTHER__').map(c => c.value);
+        const otherChecked = checks.some(c => c.value === '__OTHER__' && c.checked);
+        otherIn.style.display = otherChecked ? 'block' : 'none';
+        if (otherChecked) {
+            const txt = otherIn.value.trim();
+            if (txt) picks.push(txt);
+        }
+        const joined = picks.join(', ');
+        hidden.value = joined;
+        if (joined) {
+            label.textContent = joined.length > 70 ? joined.slice(0, 67) + '…' : joined;
+            label.classList.remove('placeholder');
+        } else {
+            label.textContent = 'Select one or more services…';
+            label.classList.add('placeholder');
+        }
+        panel.querySelectorAll('.multi-select-option').forEach(r => {
+            r.classList.toggle('selected', r.querySelector('input').checked);
+        });
+    }
+
+    panel.addEventListener('change', e => {
+        if (e.target.matches('input[type="checkbox"]')) syncValue();
+    });
+    otherIn.addEventListener('input', syncValue);
+
+    trigger.addEventListener('click', e => {
+        e.stopPropagation();
+        const open = root.classList.toggle('open');
+        trigger.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', e => {
+        if (!root.contains(e.target)) {
+            root.classList.remove('open');
+            trigger.setAttribute('aria-expanded', 'false');
+        }
+    });
+    panel.addEventListener('click', e => e.stopPropagation());
+    otherIn.addEventListener('click', e => e.stopPropagation());
 }
 
 // === Design Condition Inputs ===

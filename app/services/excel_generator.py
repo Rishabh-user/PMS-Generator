@@ -7,10 +7,16 @@ import logging
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.models.pms_models import PMSResponse
+
+# Logo target height in pixels — the banner area is rows 1-3 (~72 pt ≈ 96 px),
+# so 78 px leaves a small margin top + bottom. Width is scaled proportionally
+# from the source PNG's native aspect ratio.
+LOGO_TARGET_HEIGHT_PX = 78
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,44 @@ BOTTOM_BORDER = Border(bottom=Side(style="medium", color="1F4E79"))
 
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+
+def _logo_path() -> Path | None:
+    """Return absolute path to the logo PNG, or None if missing.
+
+    Tries `excel-logo.png` first (purpose-built variant if curated later),
+    then falls back to the standard `logo.png` brand asset.
+    """
+    base = Path(__file__).resolve().parent.parent / "static" / "images"
+    for name in ("excel-logo.png", "logo.png"):
+        p = base / name
+        if p.exists():
+            return p
+    return None
+
+
+def _insert_logo(ws, anchor_cell: str = "A1") -> None:
+    """Embed the project logo in the top-left banner area (cells A1:C3).
+
+    Image is proportionally resized to LOGO_TARGET_HEIGHT_PX so the original
+    aspect ratio is preserved and it fits the 3-row × 3-col banner cleanly.
+    Silently no-ops if the logo file is missing or openpyxl rejects it —
+    spec generation must keep working even without branding.
+    """
+    p = _logo_path()
+    if p is None:
+        logger.info("Logo not found at app/static/images/{excel-logo.png,logo.png}; skipping.")
+        return
+    try:
+        img = XLImage(str(p))
+        # img.height / img.width are the native pixel dimensions on first load
+        if img.height and img.width:
+            scale = LOGO_TARGET_HEIGHT_PX / img.height
+            img.height = LOGO_TARGET_HEIGHT_PX
+            img.width = int(img.width * scale)
+        ws.add_image(img, anchor_cell)
+    except Exception as e:
+        logger.warning("Failed to insert logo (%s): %s", p, e)
 
 
 def _get_sheet_no(piping_class: str) -> str:
@@ -112,17 +156,16 @@ def _write_pms_header(ws, pms: PMSResponse, total_cols: int) -> int:
     ws.row_dimensions[2].height = 22
     ws.row_dimensions[3].height = 22
 
-    # ── Left banner area (cols 1-3, rows 1-3): blank ──
-    # Paint the 3×3 banner cells white with no border. The area is
-    # intentionally empty — no image, no header text. Keep the sizing
-    # intact so the right-side header table (cols D-J) still lines up
-    # the way a stakeholder used to the logo-present layout expects.
+    # ── Left banner area (cols 1-3, rows 1-3): paint white, then embed logo ──
+    # Cells are painted plain white so the image overlay reads cleanly; the
+    # right-side header table (cols D-J) still lines up the same as before.
     for r in (1, 2, 3):
         for c in range(1, LOGO_COL_END + 1):
             cell = ws.cell(row=r, column=c)
             cell.fill = DATA_FILL
             cell.font = DATA_FONT
             cell.alignment = CENTER
+    _insert_logo(ws, "A1")
 
     # ── Row 1: Title + Rev ──
     ws.merge_cells(start_row=1, start_column=RIGHT_COL_START, end_row=1, end_column=TITLE_COL_END)
