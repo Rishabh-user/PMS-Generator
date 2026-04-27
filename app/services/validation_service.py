@@ -383,19 +383,41 @@ def _check_valve_code_prefix(pms: PMSResponse) -> list[ValidationFinding]:
     # series small-bore where ball is replaced by "USE GATE VALVE".
     _VDS_PLACEHOLDERS = {"USE GATE VALVE", "N/A", "NA", "-", ""}
 
+    # AI sometimes appends size annotations to a code, e.g.
+    #   "USE GATE VALVE FOR SIZES 0.5\" TO 1.5\""
+    #   "BLFPE1J FOR SIZES 2\" AND LARGER"
+    # Strip everything from " FOR …" / " (FOR …)" / " — FOR …" onwards
+    # so the leading code (placeholder or real VDS) can be validated cleanly.
+    _SIZE_ANNOTATION_RE = re.compile(
+        r"\s*[\(\[\u2014\-]?\s*\bFOR\s+SIZES?\b.*$",
+        re.IGNORECASE,
+    )
+
+    def _strip_size_annotation(token: str) -> str:
+        return _SIZE_ANNOTATION_RE.sub("", token).strip().rstrip(",;")
+
     any_bad = False
     for label, code_str in groups:
         if not code_str or code_str.strip().upper() in _VDS_PLACEHOLDERS:
             continue
         codes = [c.strip() for c in re.split(r"[,/]", code_str) if c.strip()]
         for code in codes:
+            # Strip trailing size-annotation suffix (AI emits these on
+            # ball-valve fields for E/F/G classes).
+            cleaned = _strip_size_annotation(code)
+            if not cleaned:
+                continue
             # Skip per-token placeholders too — e.g. "USE GATE VALVE, BLRPE1J"
             # splits into ["USE GATE VALVE", "BLRPE1J"], and the first token
             # must not go through structural validation.
-            if code.upper() in _VDS_PLACEHOLDERS:
+            if cleaned.upper() in _VDS_PLACEHOLDERS:
                 continue
             # Strip trailing "T" for DBB-inst variants before parsing
-            core = code[:-1] if code.endswith("T") and "DB" in code.upper()[:2] else code
+            core = (
+                cleaned[:-1]
+                if cleaned.endswith("T") and "DB" in cleaned.upper()[:2]
+                else cleaned
+            )
             per_code = _check_vds_code(core, cls)
             if per_code:
                 any_bad = True

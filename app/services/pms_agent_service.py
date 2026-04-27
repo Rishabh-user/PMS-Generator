@@ -196,8 +196,21 @@ _DESIGN_PRESSURE_PATTERN = re.compile(
     r"(\d+(?:\.\d+)?)\s*(barg|bar|psig|psi)",
     re.IGNORECASE,
 )
+# Design temperature — accepts:
+#   "250 °C", "250 °F"            (degree symbol with explicit unit)
+#   "250 °", "250°"                (degree symbol alone — defaults to °C)
+#   "250 deg C", "250 degree C"    (word form with unit)
+#   "250 degree", "250 degrees"    (word form alone — defaults to °C)
+#   "250 C", "250 celsius"          (bare unit, no marker)
+# Group 1 = the number, group 2 = unit (may be empty when only the
+# degree marker was used; treated as Celsius downstream).
 _DESIGN_TEMP_PATTERN = re.compile(
-    r"(-?\d+(?:\.\d+)?)\s*(?:°|deg)?\s*(c|celsius|f|fahrenheit)\b",
+    r"(-?\d+(?:\.\d+)?)\s*"
+    r"(?:"
+        r"°\s*(c|celsius|f|fahrenheit)?\b"               # ° symbol, unit optional
+        r"|deg(?:ree)?s?\s*(c|celsius|f|fahrenheit)?\b"  # deg / degree / degrees, unit optional
+        r"|(c|celsius|f|fahrenheit)\b"                   # bare unit (no marker)
+    r")",
     re.IGNORECASE,
 )
 
@@ -470,12 +483,16 @@ def parse_prompt(prompt: str) -> ParsedQuery:
         else:
             design_pressure_barg = val
 
-    # Design temperature
+    # Design temperature — the regex has 3 unit-capture groups (one per
+    # alternative branch); only one matches, the others are None. Default
+    # to Celsius when the user wrote a bare degree symbol/word with no F.
     design_temp_c: float | None = None
     dt_match = _DESIGN_TEMP_PATTERN.search(low)
     if dt_match:
         val = float(dt_match.group(1))
-        unit = dt_match.group(2).lower()
+        unit = (
+            dt_match.group(2) or dt_match.group(3) or dt_match.group(4) or ""
+        ).lower()
         if unit.startswith("f"):
             design_temp_c = round((val - 32) * 5 / 9, 1)
         else:
@@ -733,6 +750,52 @@ def _filter_by_service(rows: list[dict], service: str | None) -> list[dict]:
     return refined if refined else rows
 
 
+def _allowable_pressure_at_temp(entry: dict, design_t_c: float) -> float | None:
+    """Linearly interpolate the class's max allowable pressure at the given
+    temperature using its P-T table. Returns None if the table is empty or
+    unparseable. Outside the table range, clamps to the nearest endpoint
+    (conservative for low temps, hard cap at the highest tabulated temp).
+    """
+    pt = entry.get("pressure_temperature") or {}
+    temps = pt.get("temperatures") or []
+    pressures = pt.get("pressures") or []
+    if not temps or not pressures or len(temps) != len(pressures):
+        return None
+    pairs = sorted(zip([float(t) for t in temps], [float(p) for p in pressures]),
+                   key=lambda x: x[0])
+    if design_t_c <= pairs[0][0]:
+        return pairs[0][1]
+    if design_t_c >= pairs[-1][0]:
+        return pairs[-1][1]
+    for i in range(len(pairs) - 1):
+        t1, p1 = pairs[i]
+        t2, p2 = pairs[i + 1]
+        if t1 <= design_t_c <= t2:
+            frac = (design_t_c - t1) / (t2 - t1) if t2 != t1 else 0.0
+            return p1 + frac * (p2 - p1)
+    return pairs[-1][1]
+
+
+def _pt_supports_design_point(
+    entry: dict, design_p_barg: float | None, design_t_c: float | None
+) -> tuple[bool, float | None]:
+    """Decide whether the class's P-T envelope covers the user's design
+    point. Returns (ok, allowable_at_design_temp).
+
+      • ok=True when both design conditions are missing (no check possible),
+        or when the class's allowable pressure at design temp ≥ requested.
+      • ok=False when the class is OUT OF ENVELOPE — the second value is
+        the allowable pressure for the error message.
+    """
+    if design_p_barg is None or design_t_c is None:
+        return True, None
+    allowable = _allowable_pressure_at_temp(entry, design_t_c)
+    if allowable is None:
+        return True, None  # no P-T data — can't gate
+    # 1 % tolerance to absorb interpolation rounding noise
+    return (design_p_barg <= allowable * 1.01), allowable
+
+
 def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
     """Return the best matching pipe classes for the parsed query.
 
@@ -829,6 +892,26 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
         # CS - Epoxy Lined).
         if q.prefer_corrosion_resistant:
             exact = _apply_cra_filter(exact)
+
+        # P-T envelope check — when the user gave both design pressure
+        # AND design temperature, drop classes that can't carry that
+        # pressure at that temperature. Track the dropped ones in the
+        # query object so the chat reply can explain why no class fits.
+        if q.design_pressure_barg is not None and q.design_temp_c is not None:
+            kept: list[dict] = []
+            inadequate: list[tuple[dict, float]] = []
+            for e in exact:
+                ok, allowable = _pt_supports_design_point(
+                    e, q.design_pressure_barg, q.design_temp_c,
+                )
+                if ok:
+                    kept.append(e)
+                else:
+                    inadequate.append((e, allowable or 0.0))
+            exact = kept
+            # Stash inadequate matches on the parsed query so the reply
+            # composer can mention them in the natural-language answer.
+            q._pt_inadequate_classes = inadequate  # type: ignore[attr-defined]
 
         rows = exact if limit is None else exact[:limit]
         return [
@@ -1635,11 +1718,37 @@ async def _compose_ai_reply(
             )
         fs_block = "\nUSER-PROVIDED VALUES THAT AREN'T SUPPORTED:\n" + "\n".join(fs_lines) + "\n"
 
+    # P-T-envelope context — classes that matched rating/material/CA/service
+    # but failed the design-point check (user asked for X barg @ Y°C and the
+    # class only handles less). Surfaced so the reply can explicitly state
+    # why nothing matched and suggest a fix (lower P, higher rating, etc.).
+    pt_block = ""
+    pt_inadequate = getattr(parsed, "_pt_inadequate_classes", None) or []
+    if pt_inadequate and parsed.design_pressure_barg is not None and parsed.design_temp_c is not None:
+        pt_lines = []
+        for entry, allowable in pt_inadequate:
+            pt_lines.append(
+                f"  - {entry.get('piping_class', '?')}: max {allowable:.1f} barg "
+                f"at {parsed.design_temp_c}°C (user asked for "
+                f"{parsed.design_pressure_barg} barg)"
+            )
+        pt_block = (
+            "\nP-T ENVELOPE INADEQUACY — classes that matched rating/material/CA "
+            "but cannot carry the user's requested design pressure at the "
+            "requested temperature. These were DROPPED from the result list. "
+            "If MATCHED PIPING CLASSES is empty, your reply MUST explicitly "
+            "state that no class supports their design point, list the "
+            "max-allowable values per the candidates below, and suggest "
+            "either reducing the design pressure or moving to a higher "
+            "pressure rating.\n"
+            + "\n".join(pt_lines) + "\n"
+        )
+
     context = (
         f"USER PROMPT:\n{prompt}\n\n"
         f"WHAT THE PARSER EXTRACTED:\n{_format_parsed_for_ai(parsed)}\n\n"
         f"SLOT-FILLING STATE (the 3 required fields for generating a PMS):\n{slot_block}\n"
-        f"{fs_block}\n"
+        f"{fs_block}{pt_block}\n"
         f"MATCHED PIPING CLASSES (from the deterministic search):\n"
         f"{_format_matches_for_ai(matches)}\n\n"
         f"Now write your reply to the user. Rules:\n"
