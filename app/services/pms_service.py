@@ -19,6 +19,7 @@ from app.models.pms_models import (
 from app.services.ai_service import generate_pms_with_ai, AIGenerationError
 from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
+from app.services.tubing_service import build_tubing_pms, is_tubing_class
 from app.services import data_service
 from app.services import db_service
 from app.services import valvesheet_sync_service
@@ -384,7 +385,24 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
       * POST /api/clear-cache (nukes both L1 and L2)
       * Manual SQL DELETE on the pms_cache table
     """
+    # ── Tubing classes (T80A/B/C, T90A/B/C) bypass the AI entirely ──
+    # Tubing specs are fully deterministic per the project sheet workbook
+    # and don't have any flexibility the AI could add value to. We build
+    # the response from app/data/tubing_specs.json instead. Still cache
+    # it so subsequent requests hit L1 directly.
     key = _cache_key(req)
+    if is_tubing_class(req.piping_class):
+        if key in _pms_cache:
+            logger.info("L1 memory cache HIT for %s (tubing)", req.piping_class)
+            return _pms_cache[key]
+        logger.info("Building %s deterministically from tubing_specs.json", req.piping_class)
+        pms = build_tubing_pms(req)
+        _pms_cache[key] = pms
+        # Note: tubing classes are NOT persisted to the L2 Postgres cache
+        # because the JSON file IS the source of truth — re-deploys with
+        # an updated spec sheet should pick up the new values immediately,
+        # not be shadowed by stale DB rows.
+        return pms
 
     # L1: In-memory cache
     if key in _pms_cache:
@@ -433,8 +451,19 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
 
 
 async def regenerate_pms(req: PMSRequest) -> PMSResponse:
-    """Force fresh AI generation, bypassing all caches. Overwrites cache."""
+    """Force fresh AI generation, bypassing all caches. Overwrites cache.
+
+    Tubing classes (T80A/B/C, T90A/B/C) are still deterministic — Regenerate
+    just refreshes the L1 entry from tubing_specs.json (in case the file
+    was edited at runtime).
+    """
     key = _cache_key(req)
+    if is_tubing_class(req.piping_class):
+        logger.info("Regenerating %s deterministically (tubing — refresh from JSON)", req.piping_class)
+        pms = build_tubing_pms(req)
+        _pms_cache[key] = pms
+        return pms
+
     logger.info("Regenerating PMS for %s via AI (forced, bypassing cache)", req.piping_class)
     pms = await _generate_from_ai(req)
     await _store_in_caches(key, req, pms)

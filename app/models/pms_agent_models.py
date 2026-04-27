@@ -114,6 +114,16 @@ class ParsedQuery(BaseModel):
     """What the agent understood from the prompt."""
     piping_class: Optional[str] = None
     rating: Optional[str] = None
+    rating_set: Optional[list[str]] = Field(
+        default=None,
+        description="When the user specifies a comparison (e.g. 'above 900', "
+                    "'≥ 600', '1500+', 'below 300'), the parser expands to "
+                    "the explicit set of allowed ratings (e.g. ['1500#', "
+                    "'2500#']). When populated, this overrides `rating` for "
+                    "filtering. `rating` is still set to the most "
+                    "representative value so existing slot-tracking and "
+                    "display logic keep working.",
+    )
     material: Optional[str] = None
     corrosion_allowance: Optional[str] = None
     service: Optional[str] = None

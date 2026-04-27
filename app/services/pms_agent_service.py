@@ -40,11 +40,103 @@ logger = logging.getLogger(__name__)
 # Class code: letter(A-K,T) + digit(s) + optional suffix (e.g. A1, F20N, B1LN, T1)
 _CLASS_PATTERN = re.compile(r"\b([ABCDEFGJKT]\d{1,2}[A-Z]*)\b")
 
+# Known pressure ratings in ascending order — used by the rating regex
+# AND by the comparison expander below.
+_KNOWN_RATINGS: list[int] = [150, 300, 400, 600, 900, 1500, 2500, 5000, 10000]
+
 # Rating: 150#, 300#, 600, class 600, 1500#, etc.
 _RATING_PATTERN = re.compile(
-    r"\b(?:class\s*)?(150|300|400|600|900|1500|2500|5000|10000)\s*#?\b",
+    r"\b(?:class\s*)?(10000|5000|2500|1500|900|600|400|300|150)\s*#?\b",
     re.IGNORECASE,
 )
+
+# Rating with COMPARISON operator. Two separate patterns because word-form
+# operators ("above", "below", "up to") need \b boundaries to avoid
+# matching substrings (e.g. "improve" containing "ove"), but symbolic
+# operators (>, >=, ≥, ≤, <, <=) are non-word chars where \b doesn't fire.
+_RATING_COMPARE_WORD = re.compile(
+    r"\b("
+    r"above|over|more\s+than|greater\s+than|higher\s+than|"
+    r"below|under|less\s+than|lower\s+than|up\s+to"
+    r")\s*(10000|5000|2500|1500|900|600|400|300|150)\s*#?",
+    re.IGNORECASE,
+)
+_RATING_COMPARE_SYM = re.compile(
+    r"(>=|<=|>|<|≥|≤)\s*(10000|5000|2500|1500|900|600|400|300|150)\s*#?"
+)
+
+# "1500+" / "600 +" — implicit "and above". No trailing \b because '+' is
+# itself a definitive terminator.
+_RATING_PLUS_PATTERN = re.compile(
+    r"\b(10000|5000|2500|1500|900|600|400|300|150)\s*\+"
+)
+
+# "600 or above" / "1500 and higher" — suffix-form of "and above". Matches
+# a plain rating followed by a phrase that means "this and up".
+_RATING_PLUS_PHRASE = re.compile(
+    r"\b(10000|5000|2500|1500|900|600|400|300|150)\s*#?\s+"
+    r"(?:and|or)\s+(?:above|higher|more|greater|equal)\b",
+    re.IGNORECASE,
+)
+
+
+def _expand_rating_comparison(text: str) -> "tuple[str | None, list[str] | None]":
+    """Detect rating comparisons in `text` and expand to an explicit set
+    of allowed rating strings (e.g. ['1500#', '2500#']).
+
+    Returns (representative_rating, rating_set):
+      • If a comparison is found: representative = first allowed rating
+        (preserves slot-filled state), rating_set = full allowed list.
+      • If no comparison: returns (None, None) — caller falls back to
+        the plain `_RATING_PATTERN`.
+    """
+    low = text.lower()
+
+    # 1) Plus-suffix: "1500+", "600 +"
+    m_plus = _RATING_PLUS_PATTERN.search(low)
+    if m_plus:
+        threshold = int(m_plus.group(1))
+        allowed = [r for r in _KNOWN_RATINGS if r >= threshold]
+        if allowed:
+            allowed_strs = [f"{r}#" for r in allowed]
+            return allowed_strs[0], allowed_strs
+
+    # 2) Suffix-phrase: "600 or above", "1500 and higher"
+    m_phrase = _RATING_PLUS_PHRASE.search(low)
+    if m_phrase:
+        threshold = int(m_phrase.group(1))
+        allowed = [r for r in _KNOWN_RATINGS if r >= threshold]
+        if allowed:
+            allowed_strs = [f"{r}#" for r in allowed]
+            return allowed_strs[0], allowed_strs
+
+    # 3) Word-form OR symbolic comparison
+    m = _RATING_COMPARE_WORD.search(low) or _RATING_COMPARE_SYM.search(low)
+    if m:
+        op = m.group(1).strip().lower().replace(" ", "")
+        threshold = int(m.group(2))
+        # "and above", "or above", "or higher", "or more" trailing the match
+        # promotes a strict ">" to inclusive ">=" — e.g. "above 900 or higher".
+        tail = low[m.end(): m.end() + 25]
+        inclusive_tail = bool(re.match(
+            r"\s*(?:and|or)\s+(?:above|higher|more|greater|equal)", tail
+        ))
+
+        if op in (">=", "≥"):
+            allowed = [r for r in _KNOWN_RATINGS if r >= threshold]
+        elif op in ("<=", "≤", "upto"):
+            allowed = [r for r in _KNOWN_RATINGS if r <= threshold]
+        elif op in (">", "above", "over", "morethan", "greaterthan", "higherthan"):
+            allowed = [r for r in _KNOWN_RATINGS if (r >= threshold if inclusive_tail else r > threshold)]
+        elif op in ("<", "below", "under", "lessthan", "lowerthan"):
+            allowed = [r for r in _KNOWN_RATINGS if (r <= threshold if inclusive_tail else r < threshold)]
+        else:
+            allowed = []
+        if allowed:
+            allowed_strs = [f"{r}#" for r in allowed]
+            return allowed_strs[0], allowed_strs
+
+    return None, None
 
 # Material keywords (checked in priority order — most specific first)
 _MATERIAL_PATTERNS = [
@@ -212,9 +304,16 @@ def parse_prompt(prompt: str) -> ParsedQuery:
     class_match = _CLASS_PATTERN.search(up)
     piping_class = class_match.group(1) if class_match else None
 
-    # Rating
-    rating_match = _RATING_PATTERN.search(low)
-    rating = f"{rating_match.group(1)}#" if rating_match else None
+    # Rating — check for comparison phrasing FIRST ("above 900",
+    # "≥ 600", "1500+", etc.). When found, expand to the explicit set
+    # of allowed ratings and pick a representative for slot tracking.
+    # Fall back to plain single-rating regex when no comparison is used.
+    rep_rating, rating_set = _expand_rating_comparison(raw)
+    if rep_rating:
+        rating = rep_rating
+    else:
+        rating_match = _RATING_PATTERN.search(low)
+        rating = f"{rating_match.group(1)}#" if rating_match else None
 
     # Material — try catalogue verbatim first (handles "CS NACE",
     # "LTCS NACE", "GRE (Valve: NAB)", etc.), then fall back to regex
@@ -395,6 +494,7 @@ def parse_prompt(prompt: str) -> ParsedQuery:
     return ParsedQuery(
         piping_class=piping_class,
         rating=rating,
+        rating_set=rating_set,
         material=material,
         corrosion_allowance=ca,
         service=service,
@@ -493,9 +593,14 @@ def _score_match(entry: dict, q: ParsedQuery) -> float:
         if entry.get("piping_class", "").upper() == q.piping_class.upper():
             score += 1.0
 
-    if q.rating:
+    if q.rating_set or q.rating:
         checks += 1
-        if (entry.get("rating") or "").replace(" ", "") == q.rating.replace(" ", ""):
+        er = (entry.get("rating") or "").replace(" ", "")
+        if q.rating_set:
+            allowed = {r.replace(" ", "") for r in q.rating_set}
+            if er in allowed:
+                score += 1.0
+        elif er == q.rating.replace(" ", ""):
             score += 1.0
 
     if q.material:
@@ -679,11 +784,17 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
         qr = q.rating.replace(" ", "")
         qm = q.material.strip().upper()
         qc = q.corrosion_allowance.strip().upper()
+        # When the user gave a comparison ("above 900"), accept ANY
+        # rating in the expanded set instead of exact equality.
+        rating_allowed = (
+            {r.replace(" ", "") for r in q.rating_set}
+            if q.rating_set else {qr}
+        )
         for e in all_entries:
             er = (e.get("rating") or "").replace(" ", "")
             em = (e.get("material") or "").strip().upper()
             ec = (e.get("corrosion_allowance") or "").strip().upper()
-            if er == qr and em == qm and ec == qc:
+            if er in rating_allowed and em == qm and ec == qc:
                 exact.append(e)
         if not exact and not q.strict_material:
             # Fall back to fuzzy material match — lets "GRE" hit the
@@ -695,7 +806,7 @@ def find_matches(q: ParsedQuery, limit: int | None = None) -> list[ClassMatch]:
                 er = (e.get("rating") or "").replace(" ", "")
                 ec = (e.get("corrosion_allowance") or "").strip().upper()
                 if (
-                    er == qr
+                    er in rating_allowed
                     and _material_matches(e.get("material", ""), q.material)
                     and ec == qc
                 ):
@@ -1009,9 +1120,15 @@ def _available_values(parsed: ParsedQuery | None = None) -> dict[str, list[str]]
                     strict=parsed.strict_material,
                 )
             ]
-        if exclude != "rating" and parsed.rating:
-            qr = _norm_rating(parsed.rating)
-            rows = [e for e in rows if _norm_rating(e.get("rating")) == qr]
+        if exclude != "rating" and (parsed.rating_set or parsed.rating):
+            # rating_set wins when present (comparison-expanded list).
+            # Otherwise fall back to single exact match.
+            if parsed.rating_set:
+                allowed = {_norm_rating(r) for r in parsed.rating_set}
+                rows = [e for e in rows if _norm_rating(e.get("rating")) in allowed]
+            else:
+                qr = _norm_rating(parsed.rating)
+                rows = [e for e in rows if _norm_rating(e.get("rating")) == qr]
         if exclude != "corrosion_allowance" and parsed.corrosion_allowance:
             qc = (parsed.corrosion_allowance or "").strip().upper()
             rows = [

@@ -193,21 +193,29 @@ def _check_wt_pressure_adequacy(pms: PMSResponse) -> list[ValidationFinding]:
             corrosion_allowance_mm=ca_mm,
         )
         t_min_required = calc["t_minimum_mm"]
-        # The selected nominal WT must meet this after mill tolerance + CA
+        # NOTE: B31.3 Eq. 3a shortfall warnings have been suppressed at the
+        # owner's direction — many genuine large-bore / high-pressure /
+        # high-CA combinations exceed every standard schedule's nominal wall
+        # (e.g. F-class 16"/20"/24" at 1500# with 6 mm CA). The thickness
+        # service still computes margins for the Wall Thickness table; this
+        # validator no longer emits the cell-level "Upgrade schedule" error.
+        # Re-enable by uncommenting the block below if a future review
+        # decides to surface the signal again.
         if p.wall_thickness_mm + 0.001 < t_min_required:
-            shortfall = round(t_min_required - p.wall_thickness_mm, 3)
-            findings.append(ValidationFinding(
-                kind="error",
-                rule="WT_PRESSURE_ADEQUACY",
-                title=f"{p.size_inch}\": WT {p.wall_thickness_mm} mm below B31.3 Eq. 3a minimum {t_min_required} mm",
-                detail=(
-                    f"At {p_max_barg} barg / {t_ref_c} °C with S={stress['S_psi']} psi, "
-                    f"c={ca_mm} mm, mill tol 12.5%: required t_min = {t_min_required} mm. "
-                    f"PMS schedule {p.schedule} gives {p.wall_thickness_mm} mm — "
-                    f"short by {shortfall} mm. Upgrade schedule."
-                ),
-                size_inch=p.size_inch,
-            ))
+            # shortfall = round(t_min_required - p.wall_thickness_mm, 3)
+            # findings.append(ValidationFinding(
+            #     kind="error",
+            #     rule="WT_PRESSURE_ADEQUACY",
+            #     title=f"{p.size_inch}\": WT {p.wall_thickness_mm} mm below B31.3 Eq. 3a minimum {t_min_required} mm",
+            #     detail=(
+            #         f"At {p_max_barg} barg / {t_ref_c} °C with S={stress['S_psi']} psi, "
+            #         f"c={ca_mm} mm, mill tol 12.5%: required t_min = {t_min_required} mm. "
+            #         f"PMS schedule {p.schedule} gives {p.wall_thickness_mm} mm — "
+            #         f"short by {shortfall} mm. Upgrade schedule."
+            #     ),
+            #     size_inch=p.size_inch,
+            # ))
+            pass
         else:
             margin = round(p.wall_thickness_mm - t_min_required, 3)
             findings.append(ValidationFinding(
@@ -286,16 +294,19 @@ def _check_vds_code(code: str, expected_class: str) -> list[ValidationFinding]:
             detail="First two characters must be a known valve type.",
         ))
 
-    # Slot 3 — Bore (Ball only) or Design (all others)
+    # Slot 3 — Bore (Ball + DBB) or Design (all others)
+    # DBB (DB prefix) is functionally a ball-based double-block-and-bleed and
+    # uses the same R/F bore letters as Ball valves per the project spec
+    # (e.g. DBRPE20NJ, DBRMG25NJ). Only Gate / Globe / Check / Butterfly /
+    # Needle take the Design letter (P/S/D/W/Y/I/A/T) at slot 3.
     slot3 = parsed["slot3"]
-    if parsed["type"] == "BL":
+    if parsed["type"] in ("BL", "DB"):
         if slot3 not in _VALVE_BORE_LETTERS:
             findings.append(ValidationFinding(
                 kind="error",
                 rule="VALVE_CODE_BORE",
-                title=f"VDS '{code}': Ball valve bore letter '{slot3}' "
-                      "is not R or F",
-                detail="For Ball valves, position 3 must be R (Reduced) or F (Full).",
+                title=f"VDS '{code}': bore letter '{slot3}' is not R or F",
+                detail="For Ball / DBB valves, position 3 must be R (Reduced) or F (Full).",
             ))
     else:
         if slot3 not in _VALVE_DESIGN_LETTERS:
@@ -366,12 +377,23 @@ def _check_valve_code_prefix(pms: PMSResponse) -> list[ValidationFinding]:
         ("Butterfly", pms.valves.butterfly),
         ("DBB", pms.valves.dbb),
     ]
+    # Tokens that are intentional placeholders (not real VDS codes) and
+    # MUST be skipped at every level — both as the whole field and as
+    # individual entries inside a comma-separated list. Used for E/F/G
+    # series small-bore where ball is replaced by "USE GATE VALVE".
+    _VDS_PLACEHOLDERS = {"USE GATE VALVE", "N/A", "NA", "-", ""}
+
     any_bad = False
     for label, code_str in groups:
-        if not code_str or code_str.upper() in ("USE GATE VALVE", "N/A", "NA", "-"):
+        if not code_str or code_str.strip().upper() in _VDS_PLACEHOLDERS:
             continue
         codes = [c.strip() for c in re.split(r"[,/]", code_str) if c.strip()]
         for code in codes:
+            # Skip per-token placeholders too — e.g. "USE GATE VALVE, BLRPE1J"
+            # splits into ["USE GATE VALVE", "BLRPE1J"], and the first token
+            # must not go through structural validation.
+            if code.upper() in _VDS_PLACEHOLDERS:
+                continue
             # Strip trailing "T" for DBB-inst variants before parsing
             core = code[:-1] if code.endswith("T") and "DB" in code.upper()[:2] else code
             per_code = _check_vds_code(core, cls)
