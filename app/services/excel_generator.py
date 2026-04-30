@@ -15,18 +15,20 @@ from openpyxl.utils import get_column_letter
 
 from app.models.pms_models import PMSResponse
 
-# Logo banner bounds (cols A:C × rows 1:3).
-#   Cols A=16, B=11, C=11 char widths ≈ 38 chars × ~7 px ≈ 266 px usable.
-#   Rows 1-3 are 28+22+22 = 72 pt ≈ 96 px usable.
+# Logo banner bounds (cols A:E × rows 1:6 — the full merged logo cell).
+#   Cols A=16, B=11, C=11, D=11, E=11 char widths ≈ 60 chars × ~7 px ≈ 420 px usable.
+#   Rows 1-3 are 22 pt each, rows 4-6 are 20 pt each → 126 pt ≈ 168 px usable.
+#   (Row 5 may grow with long service strings; the few-pixel drift is fine
+#    because the logo is much shorter than the banner and stays centred.)
 # Image is scaled UNIFORMLY by whichever dimension is binding so it fills
-# the banner without overflowing into column D / row 4. Original aspect
+# the banner without overflowing into column F / row 7. Original aspect
 # ratio is preserved, and the image is then centred horizontally and
-# vertically inside the banner via offset on a OneCellAnchor.
-LOGO_MAX_WIDTH_PX  = 250
-LOGO_MAX_HEIGHT_PX = 90
-BANNER_WIDTH_PX    = int((16 + 11 + 11) * 7)         # ≈ 266 px
-BANNER_HEIGHT_PX   = int((28 + 22 + 22) * 4 / 3)     # = 96  px
-PX_TO_EMU          = 9525                            # 1 px @ 96 DPI
+# vertically inside the full 6-row banner via offset on a OneCellAnchor.
+LOGO_MAX_WIDTH_PX  = 380
+LOGO_MAX_HEIGHT_PX = 150
+BANNER_WIDTH_PX    = int((16 + 11 + 11 + 11 + 11) * 7)         # ≈ 420 px
+BANNER_HEIGHT_PX   = int((22 + 22 + 22 + 20 + 20 + 20) * 4 / 3)  # = 168 px
+PX_TO_EMU          = 9525                                       # 1 px @ 96 DPI
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +77,11 @@ def _logo_bytes() -> bytes | None:
 
 
 def _insert_logo(ws, anchor_cell: str = "A1") -> None:
-    """Embed the project logo in the top-left banner area (cells A1:C3).
+    """Embed the project logo in the top-left banner area (cells A1:E6).
 
-    Image is proportionally resized to LOGO_TARGET_HEIGHT_PX so the original
-    aspect ratio is preserved and it fits the 3-row × 3-col banner cleanly.
+    Image is proportionally resized to fit LOGO_MAX_WIDTH_PX × LOGO_MAX_HEIGHT_PX
+    so the original aspect ratio is preserved, then centred horizontally
+    AND vertically inside the full 6-row × 5-col merged banner cell.
     Silently no-ops if the logo bytes can't be obtained — spec generation
     must keep working even without branding.
     """
@@ -119,6 +122,24 @@ def _insert_logo(ws, anchor_cell: str = "A1") -> None:
         logger.warning("Failed to insert logo: %s", e)
 
 
+def _short_schedule(sched) -> str:
+    """Render schedule for the compact pipe-data row.
+
+    Strips the leading 'SCH ' prefix so the cell shows '160' instead of
+    'SCH 160' (matches the project's reference layout). Bare schedule
+    names like 'STD' / 'XS' / 'XXS' / '5S' / '40S' / '-' pass through
+    unchanged.
+    """
+    if sched is None:
+        return ""
+    s = str(sched).strip()
+    upper = s.upper()
+    for prefix in ("SCHEDULE ", "SCH ", "SCH"):
+        if upper.startswith(prefix):
+            return s[len(prefix):].strip() or s
+    return s
+
+
 def _get_sheet_no(piping_class: str) -> str:
     """Return the sheet number shown in the header table.
 
@@ -143,157 +164,191 @@ def _get_sheet_no(piping_class: str) -> str:
 
 
 def _write_pms_header(ws, pms: PMSResponse, total_cols: int) -> int:
-    """Write the compact 6-row header banner and return the next free row.
+    """Write the 6-row header banner and return the next free row.
 
-    Layout (matches the reference PMS document):
+    Layout — single big merged logo on the left (A1:E6) plus the full
+    header content stacked on the right (cols F..total_cols), matching
+    the reference PMS document:
 
-        ┌──────────────┬──────────────────────────────────────────┬──────────┐
-        │              │        PIPING MATERIAL SPECIFICATION      │  Rev: A0 │
-    Row1│              ├─────┬─────────┬──────┬─────────┬─────────┤          │
-        │     LOGO     │Piping Class   │Mat'l │   C.A   │Mill Tol │Sheet No. │
-    Row2│              ├──┬──┼─────────┼──────┼─────────┼─────────┼──────────┤
-        │              │A1│150#│   CS   │ 3 mm │ 12.5% │   27   │          │
-    Row3├──────────────┼──┴──┴─────────┴──────┴─────────┴─────────┴──────────┤
-    Row4│ Design Code: │              ASME B 31.3                              │
-    Row5│   Service:   │ Cooling Media, Heating Media, …                       │
-    Row6│ Branch Chart:│ Ref. APPENDIX-1, Chart 1                              │
-        └──────────────┴───────────────────────────────────────────────────────┘
+        ┌─────────────┬───────────────────────────────────┬────────┐
+    Row1│             │     PIPING MATERIAL SPECIFICATION │ Rev: A0│
+        │             ├─────────┬───────┬─────┬─────┬─────┤        │
+    Row2│             │ Piping  │Material│ C.A │Mill │Sheet│        │
+        │             │  Class  │       │     │ Tol │ No. │        │
+    Row3│    LOGO     ├──┬──────┼───────┼─────┼─────┼─────┤        │
+        │             │A1│ 150# │  CS   │3 mm │12.5%│  27 │        │
+        │             ├──┴──────┴───────┴─────┴─────┴─────┴────────┤
+    Row4│             │ Design Code: │       ASME B 31.3            │
+    Row5│             │ Service:     │ Cooling Media, Heating, …    │
+    Row6│             │ Branch Chart:│ Ref. APPENDIX-1, Chart 1     │
+        └─────────────┴──────────────────────────────────────────────┘
 
-    Column map (the 'logo area' = cols 1-3, 'table area' = cols 4-10):
-      Col 1-3: Logo banner (rows 1-3) / label cells (rows 4-6, each merged)
-      Col 4  : Piping Class value (A1)
-      Col 5  : Rating value        (150#)
-      Col 6  : Material value      (CS)
-      Col 7  : C.A value           (3 mm)
-      Col 8  : Mill Tol value      (12.5%)
-      Col 9  : Sheet No. value     (27)
-      Col 10 : Rev cell            (A0)
-    Col 4-10 are merged for the rows 4-6 value cells.
+    Column groups on the right (proportional to available width):
+      Piping Class : 3 cols out of 18  (Class value spans 2, Rating 1)
+      Material     : 6 cols
+      C.A          : 3 cols
+      Mill Tol     : 2 cols
+      Sheet No.    : 4 cols
+      Title row uses the same 18 cols; Rev sits at the rightmost 3.
     """
-    # Column widths — narrow enough that the 6-cell data row reads naturally
-    # while the logo area on the left fits the ~330px wide PNG.
+    # ── Column widths ──
     ws.column_dimensions["A"].width = 16
     ws.column_dimensions["B"].width = 11
     ws.column_dimensions["C"].width = 11
-    # Header table columns (compact):
-    for letter, w in [("D", 11), ("E", 9), ("F", 12), ("G", 10), ("H", 10), ("I", 11), ("J", 10)]:
-        ws.column_dimensions[letter].width = w
-    # Remaining pipe-data columns stay at 12 — set already by the caller
-    # where applicable.
+    ws.column_dimensions["D"].width = 11
+    ws.column_dimensions["E"].width = 11
+    # The right-side header cols default to ~10; pipe-data cols K+ stay at
+    # width 6 (set by the caller). No special per-letter widths here — the
+    # cell merges define the visual blocks.
 
-    LOGO_COL_END = 3      # logo banner spans cols 1-3
-    RIGHT_COL_START = 4   # header table starts here
-    TITLE_COL_END = 9     # "PIPING MATERIAL SPECIFICATION" ends here
-    REV_COL = 10          # "Rev: A0" sits here
+    LOGO_COL_END = 5            # logo banner spans cols 1-5 (A:E)
+    RIGHT_COL_START = 6         # header table starts at col F
 
-    # Row heights — sum to ~80pt so the 90px logo fits inside the 3-row banner.
-    ws.row_dimensions[1].height = 28
+    # ── Compute the proportional column groups for the right side ──
+    # Available width on the right: total_cols - 5 = 18 cols for A1.
+    # Distribute by weight: PC 3 / MAT 6 / CA 3 / MT 2 / SN 4 = 18.
+    right_w = max(total_cols - LOGO_COL_END, 14)  # at least 14 cols
+    weights = {"pc": 3, "mat": 6, "ca": 3, "mt": 2, "sn": 4}
+    total_weight = sum(weights.values())  # 18
+    widths = {k: max(2, round(w * right_w / total_weight)) for k, w in weights.items()}
+    # Last group absorbs any rounding remainder
+    widths["sn"] = right_w - sum(v for k, v in widths.items() if k != "sn")
+
+    # Column boundaries (start..end inclusive) for each header group.
+    pc_s = RIGHT_COL_START
+    pc_e = pc_s + widths["pc"] - 1
+    mat_s = pc_e + 1
+    mat_e = mat_s + widths["mat"] - 1
+    ca_s = mat_e + 1
+    ca_e = ca_s + widths["ca"] - 1
+    mt_s = ca_e + 1
+    mt_e = mt_s + widths["mt"] - 1
+    sn_s = mt_e + 1
+    sn_e = sn_s + widths["sn"] - 1
+    # Sub-split inside Piping Class group: class value spans first 2 cols,
+    # rating value gets the 3rd. (Both share Header label.)
+    pc_class_e = pc_s + max(1, widths["pc"] - 2)  # class spans up to here
+    pc_rating_s = pc_class_e + 1                  # rating starts here
+
+    # Title row 1: title fills the left portion; Rev fits on the right.
+    # Reuse the Sheet No. group for Rev so the column ratios align.
+    title_s = RIGHT_COL_START
+    title_e = mt_e        # ends just before Sheet No. group
+    rev_s = sn_s          # Rev sits in Sheet No.'s columns on row 1
+    rev_e = sn_e
+
+    # ── Row heights ──
+    ws.row_dimensions[1].height = 22
     ws.row_dimensions[2].height = 22
     ws.row_dimensions[3].height = 22
+    ws.row_dimensions[4].height = 20
+    # Row 5 height is set later based on the service string length.
+    ws.row_dimensions[6].height = 20
 
-    # ── Left banner area (cols 1-3, rows 1-3): paint white, then embed logo ──
-    # Cells are painted plain white so the image overlay reads cleanly; the
-    # right-side header table (cols D-J) still lines up the same as before.
-    for r in (1, 2, 3):
-        for c in range(1, LOGO_COL_END + 1):
-            cell = ws.cell(row=r, column=c)
-            cell.fill = DATA_FILL
-            cell.font = DATA_FONT
-            cell.alignment = CENTER
+    # ── Logo block: one big merged cell A1:E6 ──
+    ws.merge_cells(start_row=1, start_column=1, end_row=6, end_column=LOGO_COL_END)
+    logo_cell = _apply_style(
+        ws, 1, 1, font=DATA_FONT, fill=DATA_FILL,
+        alignment=CENTER, border=THIN_BORDER,
+    )
+    logo_cell.value = ""    # placeholder — image overlays this
     _insert_logo(ws, "A1")
 
     # ── Row 1: Title + Rev ──
-    ws.merge_cells(start_row=1, start_column=RIGHT_COL_START, end_row=1, end_column=TITLE_COL_END)
+    ws.merge_cells(start_row=1, start_column=title_s, end_row=1, end_column=title_e)
     title_cell = _apply_style(
-        ws, 1, RIGHT_COL_START,
+        ws, 1, title_s,
         font=Font(name="Arial", bold=True, color="1F4E79", size=13),
         fill=ALT_FILL, alignment=CENTER, border=THIN_BORDER,
     )
     title_cell.value = "PIPING MATERIAL SPECIFICATION"
-    # Border the merged range
-    for c in range(RIGHT_COL_START, TITLE_COL_END + 1):
+    for c in range(title_s, title_e + 1):
         _apply_style(ws, 1, c, font=DATA_FONT, fill=ALT_FILL, border=THIN_BORDER)
+    # Rev block (right edge, narrower)
+    ws.merge_cells(start_row=1, start_column=rev_s, end_row=1, end_column=rev_e)
     rev_cell = _apply_style(
-        ws, 1, REV_COL,
-        font=Font(name="Arial", bold=True, color="333333", size=9),
+        ws, 1, rev_s,
+        font=Font(name="Arial", bold=True, color="333333", size=10),
         fill=ALT_FILL, alignment=CENTER, border=THIN_BORDER,
     )
     rev_cell.value = f"Rev: {pms.version or 'A0'}"
+    for c in range(rev_s, rev_e + 1):
+        _apply_style(ws, 1, c, font=DATA_FONT, fill=ALT_FILL, border=THIN_BORDER)
 
-    # ── Row 2: Column headers ──
-    # "Piping Class" spans 2 cells (cols 4-5) since the value row puts A1
-    # and 150# in those two cells.
-    ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
-    headers_row2 = [
-        (4, "Piping Class"),
-        (6, "Material"),
-        (7, "C.A"),
-        (8, "Mill Tol"),
-        (9, "Sheet No."),
-        (10, ""),   # empty under Rev column
+    # ── Row 2: Column headers (Piping Class / Material / C.A / Mill Tol / Sheet No.) ──
+    header_groups = [
+        (pc_s,  pc_e,  "Piping Class"),
+        (mat_s, mat_e, "Material"),
+        (ca_s,  ca_e,  "C.A"),
+        (mt_s,  mt_e,  "Mill Tol"),
+        (sn_s,  sn_e,  "Sheet No."),
     ]
-    for col, text in headers_row2:
-        cell = _apply_style(
-            ws, 2, col, font=LABEL_FONT, fill=ALT_FILL,
-            alignment=CENTER, border=THIN_BORDER,
-        )
-        cell.value = text
-    # Border the merged Piping Class span
-    for c in (4, 5):
-        _apply_style(ws, 2, c, font=LABEL_FONT, fill=ALT_FILL, border=THIN_BORDER)
+    for s, e, label in header_groups:
+        if s != e:
+            ws.merge_cells(start_row=2, start_column=s, end_row=2, end_column=e)
+        for c in range(s, e + 1):
+            _apply_style(ws, 2, c, font=LABEL_FONT, fill=ALT_FILL,
+                         alignment=CENTER, border=THIN_BORDER)
+        ws.cell(row=2, column=s).value = label
 
     # ── Row 3: Values ──
-    values_row3 = [
-        (4, pms.piping_class),
-        (5, pms.rating),
-        (6, pms.material),
-        (7, pms.corrosion_allowance),
-        (8, pms.mill_tolerance),
-        (9, _get_sheet_no(pms.piping_class)),
-        (10, ""),
-    ]
-    for col, value in values_row3:
-        cell = _apply_style(
-            ws, 3, col, font=DATA_FONT, fill=DATA_FILL,
-            alignment=CENTER, border=THIN_BORDER,
-        )
-        cell.value = value
+    # Piping Class group is split: class value spans 2 cols, rating spans 1
+    if pc_class_e >= pc_s and pc_class_e > pc_s:
+        ws.merge_cells(start_row=3, start_column=pc_s, end_row=3, end_column=pc_class_e)
+    if pc_rating_s <= pc_e and pc_rating_s != pc_e:
+        ws.merge_cells(start_row=3, start_column=pc_rating_s, end_row=3, end_column=pc_e)
+    for c in range(pc_s, pc_e + 1):
+        _apply_style(ws, 3, c, font=DATA_FONT, fill=DATA_FILL,
+                     alignment=CENTER, border=THIN_BORDER)
+    ws.cell(row=3, column=pc_s).value = pms.piping_class
+    ws.cell(row=3, column=pc_rating_s).value = pms.rating
 
-    # ── Rows 4-6: Design Code / Service / Branch Chart (full-width) ──
-    # Both label cells (cols 1-3) and value cells (cols 4-end) use LEFT
-    # alignment per the reference PMS document. Order of style application
-    # matters: first style every cell in the range with LEFT alignment,
-    # THEN set the content on the top-left cell. Previously the second
-    # loop defaulted to CENTER which silently overrode the LEFT on the
-    # top-left cell of the merged range.
+    value_groups = [
+        (mat_s, mat_e, pms.material),
+        (ca_s,  ca_e,  pms.corrosion_allowance),
+        (mt_s,  mt_e,  pms.mill_tolerance),
+        (sn_s,  sn_e,  _get_sheet_no(pms.piping_class)),
+    ]
+    for s, e, value in value_groups:
+        if s != e:
+            ws.merge_cells(start_row=3, start_column=s, end_row=3, end_column=e)
+        for c in range(s, e + 1):
+            _apply_style(ws, 3, c, font=DATA_FONT, fill=DATA_FILL,
+                         alignment=CENTER, border=THIN_BORDER)
+        ws.cell(row=3, column=s).value = value
+
+    # ── Rows 4-6: Design Code / Service / Branch Chart ──
+    # Label spans the Piping Class group width (cols F..H ≈ 3 cols),
+    # value spans everything else on the right (Material..Sheet No.).
+    label_s = RIGHT_COL_START
+    label_e = pc_e
+    val_s = mat_s
+    val_e = sn_e
     full_rows = [
         ("Design Code:", pms.design_code or ""),
         ("Service:", pms.service or ""),
         ("Branch Chart:", pms.branch_chart or ""),
     ]
-    value_end = max(total_cols, REV_COL)
     for i, (label, value) in enumerate(full_rows):
         r = 4 + i
 
-        # --- Label side (cols 1-3) ---
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=LOGO_COL_END)
-        for c in range(1, LOGO_COL_END + 1):
-            _apply_style(
-                ws, r, c, font=LABEL_FONT, fill=ALT_FILL,
-                alignment=LEFT, border=THIN_BORDER,
-            )
-        ws.cell(row=r, column=1).value = label
+        # Label side
+        if label_s != label_e:
+            ws.merge_cells(start_row=r, start_column=label_s, end_row=r, end_column=label_e)
+        for c in range(label_s, label_e + 1):
+            _apply_style(ws, r, c, font=LABEL_FONT, fill=ALT_FILL,
+                         alignment=LEFT, border=THIN_BORDER)
+        ws.cell(row=r, column=label_s).value = label
 
-        # --- Value side (cols 4..value_end), LEFT-aligned ---
-        ws.merge_cells(start_row=r, start_column=RIGHT_COL_START, end_row=r, end_column=value_end)
-        for c in range(RIGHT_COL_START, value_end + 1):
-            _apply_style(
-                ws, r, c, font=DATA_FONT, fill=DATA_FILL,
-                alignment=LEFT, border=THIN_BORDER,
-            )
-        ws.cell(row=r, column=RIGHT_COL_START).value = value
+        # Value side (left-aligned, spans Material..Sheet No.)
+        if val_s != val_e:
+            ws.merge_cells(start_row=r, start_column=val_s, end_row=r, end_column=val_e)
+        for c in range(val_s, val_e + 1):
+            _apply_style(ws, r, c, font=DATA_FONT, fill=DATA_FILL,
+                         alignment=LEFT, border=THIN_BORDER)
+        ws.cell(row=r, column=val_s).value = value
 
-        # Wrap long service strings onto multiple lines
+        # Wrap long service strings — bump row height proportional to length
         if label == "Service:":
             ws.row_dimensions[r].height = max(
                 (len(str(value)) // 60 + 1) * 14, 20
@@ -596,19 +651,20 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     # Determine column count based on pipe sizes
     num_pipe_cols = max(len(pms.pipe_data), 1)
-    total_cols = max(num_pipe_cols + 2, 19)  # Col 1 = label, col 2..N = data
+    # Col 1 = label, col 2..(N+1) = size-data. No trailing empty column —
+    # the title-row banner extends to the rightmost data col via fill.
+    total_cols = max(num_pipe_cols + 1, 19)
     pipe_col_start = 2
 
-    # Per-pipe-size column widths (the new header helper sets its own widths
-    # for cols A-J; anything beyond J is left at 12 for uniform data rows).
+    # Per-pipe-size column widths — compact format per Image-2 reference.
+    # Cols A-J are sized by the header helper; cols K+ carry the size-by-size
+    # data and are kept narrow (~6) so the full 22-size row fits without
+    # horizontal scrolling.
     for i in range(11, total_cols + 1):
-        ws.column_dimensions[get_column_letter(i)].width = 12
+        ws.column_dimensions[get_column_letter(i)].width = 6
 
     # === HEADER BANNER (rows 1-6): compact spec table ===
     row = _write_pms_header(ws, pms, total_cols)
-
-    # Blank spacer before the P-T section
-    row += 1
 
     # === PRESSURE-TEMPERATURE RATING ===
     _write_section_header(ws, row, "Pressure-Temperature Rating", col_end=total_cols)
@@ -616,40 +672,30 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     pt = pms.pressure_temperature
 
-    # Temp labels row (e.g. "-29 TO 38")
-    if pt.temp_labels:
-        _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. Range (°C)"
-        for i, lbl in enumerate(pt.temp_labels):
-            col = pipe_col_start + i
-            if col <= total_cols:
-                _apply_style(ws, row, col, font=DATA_FONT, fill=ALT_FILL).value = lbl
-        row += 1
-
-    # Temperature row
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. (°C)"
-    for i, temp in enumerate(pt.temperatures):
-        col = pipe_col_start + i
-        if col <= total_cols:
-            _apply_style(ws, row, col, font=DATA_FONT, fill=ALT_FILL).value = temp
-    # Hydrotest header
-    if pms.hydrotest_pressure:
-        ht_col = pipe_col_start + len(pt.temperatures) + 1
-        if ht_col <= total_cols:
-            _apply_style(ws, row, ht_col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = "Hydrotest Pr.\n(barg)"
-    row += 1
-
-    # Pressure row
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press. (barg)"
+    # Pressure row (compact label, comma form per the reference sheet)
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press., barg"
     for i, press in enumerate(pt.pressures):
         col = pipe_col_start + i
         if col <= total_cols:
             _apply_style(ws, row, col, font=DATA_FONT, fill=DATA_FILL).value = press
-    # Hydrotest value
-    if pms.hydrotest_pressure:
-        ht_col = pipe_col_start + len(pt.temperatures) + 1
-        if ht_col <= total_cols:
-            _apply_style(ws, row, ht_col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER).value = pms.hydrotest_pressure
-    row += 2
+    # Hydrotest header — single-line, sits to the right of the P/T columns
+    ht_col = pipe_col_start + len(pt.temperatures) + 1
+    if pms.hydrotest_pressure and ht_col <= total_cols:
+        _apply_style(ws, row, ht_col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = "Hydrotest Pr. (barg)"
+    row += 1
+
+    # Temperature row — single combined row using the labels (e.g. "-29 to 38")
+    # so the header doesn't carry a duplicate "Temp. Range" row.
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp., °C"
+    temp_values = pt.temp_labels if pt.temp_labels else [str(t) for t in pt.temperatures]
+    for i, lbl in enumerate(temp_values):
+        col = pipe_col_start + i
+        if col <= total_cols:
+            _apply_style(ws, row, col, font=DATA_FONT, fill=ALT_FILL).value = lbl
+    # Hydrotest value beneath its header
+    if pms.hydrotest_pressure and ht_col <= total_cols:
+        _apply_style(ws, row, ht_col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER).value = pms.hydrotest_pressure
+    row += 1
 
     # === PIPE DATA ===
     _write_section_header(ws, row, "Pipe Data", col_end=total_cols)
@@ -663,14 +709,14 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     # inside diameter — used by GRE classes (A50/A51/A52). Row is inserted
     # right after O.D.; other classes skip it.
     pipe_rows = [
-        ("Size (in)", [p.size_inch for p in pms.pipe_data]),
-        ("O.D. (mm)", [p.od_mm for p in pms.pipe_data]),
+        ("Size(in)", [p.size_inch for p in pms.pipe_data]),
+        ("O.D.mm", [p.od_mm for p in pms.pipe_data]),
     ]
     if any((getattr(p, "id_mm", 0) or 0) > 0 for p in pms.pipe_data):
-        pipe_rows.append(("I.D. (mm)", [p.id_mm for p in pms.pipe_data]))
+        pipe_rows.append(("I.D.mm", [p.id_mm for p in pms.pipe_data]))
     pipe_rows.extend([
-        ("Schedule", [p.schedule for p in pms.pipe_data]),
-        ("W.T. (mm)", [p.wall_thickness_mm for p in pms.pipe_data]),
+        ("Sch.", [_short_schedule(p.schedule) for p in pms.pipe_data]),
+        ("WT.mm", [p.wall_thickness_mm for p in pms.pipe_data]),
         ("Type", [p.pipe_type for p in pms.pipe_data]),
         ("MOC", [p.material_spec for p in pms.pipe_data]),
         ("Ends", [p.ends for p in pms.pipe_data]),
@@ -679,7 +725,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     # Rows that benefit from merging (repeated values across sizes)
     mergeable_pipe_rows = {"Type", "MOC", "Ends"}
     for label, values in pipe_rows:
-        is_alt = label in ("Size (in)", "Schedule", "Type", "Ends")
+        is_alt = label in ("Size(in)", "Sch.", "Type", "Ends")
         fill = ALT_FILL if is_alt else DATA_FILL
         if label in mergeable_pipe_rows:
             _write_merged_data_row(ws, row, label, values, col_start=pipe_col_start,
@@ -693,8 +739,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
             for c in range(pipe_col_start + len(values), total_cols + 1):
                 _apply_style(ws, row, c, fill=fill)
         row += 1
-
-    row += 1
 
     # === FITTINGS (SIZE-WISE DATA) ===
     _write_section_header(ws, row, "Fittings — Butt Weld (SCH to match pipe)", col_end=total_cols)
@@ -787,8 +831,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
                                    total_cols=total_cols, fill=fill)
         row += 1
 
-    row += 1
-
     pipe_sizes = [p.size_inch for p in pms.pipe_data]
 
     # === FLANGE DATA ===
@@ -825,8 +867,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
                 ws.cell(row=row, column=c).fill = fill
         row += 1
 
-    row += 1
-
     # === SPECTACLE BLIND ===
     _write_section_header(ws, row, "Spectacle Blind / Spacer Blinds", col_end=total_cols)
     row += 1
@@ -837,7 +877,7 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
     # Spectacle row — split at 14" (ASME B 16.48 project cutoff)
     _render_spectacle_blind_row(ws, row, pms, pipe_col_start, total_cols)
     ws.row_dimensions[row].height = 25
-    row += 2
+    row += 1
 
     # === BOLTS / NUTS / GASKETS ===
     _write_section_header(ws, row, "Bolts / Nuts / Gaskets", col_end=total_cols)
@@ -864,8 +904,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
             ws.cell(row=row, column=c).fill = fill
         row += 1
         rendered += 1
-
-    row += 1
 
     # === VALVES ===
     _write_section_header(ws, row, "Valves", col_end=total_cols)
@@ -899,8 +937,6 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
             for c in range(1, total_cols + 1):
                 ws.cell(row=row, column=c).fill = fill
         row += 1
-
-    row += 1
 
     # === NOTES ===
     # Rendered as a numbered table: col A = position number, col B..end = note text (merged).
@@ -943,58 +979,45 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
 
     # Re-use the same generation logic but save to buffer
     num_pipe_cols = max(len(pms.pipe_data), 1)
-    total_cols = max(num_pipe_cols + 2, 19)
+    total_cols = max(num_pipe_cols + 1, 19)
     pipe_col_start = 2
 
     from openpyxl.utils import get_column_letter as gcl
+    # Compact per-size data columns — see generate_pms_excel above.
     for i in range(11, total_cols + 1):
-        ws.column_dimensions[gcl(i)].width = 12
+        ws.column_dimensions[gcl(i)].width = 6
 
     # === HEADER BANNER (rows 1-6): compact spec table ===
     row = _write_pms_header(ws, pms, total_cols)
-
-    # Blank spacer before the P-T section
-    row += 1
 
     # P-T Rating
     _write_section_header(ws, row, "Pressure-Temperature Rating", col_end=total_cols)
     row += 1
 
-    # Temp labels row (e.g. "-29 TO 38")
     pt = pms.pressure_temperature
-    if pt.temp_labels:
-        _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. Range (°C)"
-        for i, lbl in enumerate(pt.temp_labels):
-            col = pipe_col_start + i
-            if col <= total_cols:
-                _apply_style(ws, row, col, font=DATA_FONT, fill=ALT_FILL).value = lbl
-        row += 1
 
-    # Temperature values row
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp. (°C)"
-    for i, temp in enumerate(pt.temperatures):
-        col = pipe_col_start + i
-        if col <= total_cols:
-            _apply_style(ws, row, col, font=DATA_FONT, fill=ALT_FILL).value = temp
-    # Hydrotest header in same row
-    if pms.hydrotest_pressure:
-        ht_col = pipe_col_start + len(pt.temperatures) + 1
-        if ht_col <= total_cols:
-            _apply_style(ws, row, ht_col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = "Hydrotest\n(barg)"
-    row += 1
-
-    # Pressure values row
-    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press. (barg)"
+    # Pressure row (compact label, comma form per the reference sheet)
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=DATA_FILL, alignment=LEFT).value = "Press., barg"
     for i, press in enumerate(pt.pressures):
         col = pipe_col_start + i
         if col <= total_cols:
             _apply_style(ws, row, col, font=DATA_FONT, fill=DATA_FILL).value = press
-    # Hydrotest value
-    if pms.hydrotest_pressure:
-        ht_col = pipe_col_start + len(pt.temperatures) + 1
-        if ht_col <= total_cols:
-            _apply_style(ws, row, ht_col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER).value = pms.hydrotest_pressure
-    row += 2
+    # Hydrotest header — single-line, sits to the right of the P/T columns
+    ht_col = pipe_col_start + len(pt.temperatures) + 1
+    if pms.hydrotest_pressure and ht_col <= total_cols:
+        _apply_style(ws, row, ht_col, font=LABEL_FONT, fill=ALT_FILL, alignment=CENTER).value = "Hydrotest Pr. (barg)"
+    row += 1
+
+    # Temperature row — single combined row using the labels (e.g. "-29 to 38")
+    _apply_style(ws, row, 1, font=LABEL_FONT, fill=ALT_FILL, alignment=LEFT).value = "Temp., °C"
+    temp_values = pt.temp_labels if pt.temp_labels else [str(t) for t in pt.temperatures]
+    for i, lbl in enumerate(temp_values):
+        col = pipe_col_start + i
+        if col <= total_cols:
+            _apply_style(ws, row, col, font=DATA_FONT, fill=ALT_FILL).value = lbl
+    if pms.hydrotest_pressure and ht_col <= total_cols:
+        _apply_style(ws, row, ht_col, font=DATA_FONT, fill=DATA_FILL, alignment=CENTER).value = pms.hydrotest_pressure
+    row += 1
 
     # Pipe Data
     _write_section_header(ws, row, "Pipe Data", col_end=total_cols)
@@ -1004,14 +1027,14 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         row += 1
 
     pipe_rows = [
-        ("Size (in)", [p.size_inch for p in pms.pipe_data]),
-        ("O.D. (mm)", [p.od_mm for p in pms.pipe_data]),
+        ("Size(in)", [p.size_inch for p in pms.pipe_data]),
+        ("O.D.mm", [p.od_mm for p in pms.pipe_data]),
     ]
     if any((getattr(p, "id_mm", 0) or 0) > 0 for p in pms.pipe_data):
-        pipe_rows.append(("I.D. (mm)", [p.id_mm for p in pms.pipe_data]))
+        pipe_rows.append(("I.D.mm", [p.id_mm for p in pms.pipe_data]))
     pipe_rows.extend([
-        ("Schedule", [p.schedule for p in pms.pipe_data]),
-        ("W.T. (mm)", [p.wall_thickness_mm for p in pms.pipe_data]),
+        ("Sch.", [_short_schedule(p.schedule) for p in pms.pipe_data]),
+        ("WT.mm", [p.wall_thickness_mm for p in pms.pipe_data]),
         ("Type", [p.pipe_type for p in pms.pipe_data]),
         ("MOC", [p.material_spec for p in pms.pipe_data]),
         ("Ends", [p.ends for p in pms.pipe_data]),
@@ -1019,7 +1042,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     # Rows that benefit from merging (repeated values across sizes)
     mergeable_pipe_rows = {"Type", "MOC", "Ends"}
     for label, values in pipe_rows:
-        is_alt = label in ("Size (in)", "Schedule", "Type", "Ends")
+        is_alt = label in ("Size(in)", "Sch.", "Type", "Ends")
         fill = ALT_FILL if is_alt else DATA_FILL
         if label in mergeable_pipe_rows:
             _write_merged_data_row(ws, row, label, values, col_start=pipe_col_start,
@@ -1031,7 +1054,6 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
                 if col <= total_cols:
                     _apply_style(ws, row, col, font=DATA_FONT, fill=fill).value = val
         row += 1
-    row += 1
 
     # Fittings (SIZE-WISE DATA)
     _write_section_header(ws, row, "Fittings — Butt Weld (SCH to match pipe)", col_end=total_cols)
@@ -1120,7 +1142,6 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
             _write_merged_data_row(ws, row, label, prop_values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         row += 1
-    row += 1
 
     pipe_sizes = [p.size_inch for p in pms.pipe_data]
 
@@ -1153,7 +1174,6 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
             for c in range(1, total_cols + 1):
                 ws.cell(row=row, column=c).fill = fill
         row += 1
-    row += 1
 
     # Spectacle Blind
     _write_section_header(ws, row, "Spectacle Blind / Spacer Blinds", col_end=total_cols)
@@ -1165,7 +1185,7 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
     # Spectacle row — split at 14" (ASME B 16.48 project cutoff)
     _render_spectacle_blind_row(ws, row, pms, pipe_col_start, total_cols)
     ws.row_dimensions[row].height = 25
-    row += 2
+    row += 1
 
     # Bolts/Nuts/Gaskets
     _write_section_header(ws, row, "Bolts / Nuts / Gaskets", col_end=total_cols)
@@ -1189,7 +1209,6 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
             ws.cell(row=row, column=c).fill = ALT_FILL if rendered % 2 == 0 else DATA_FILL
         row += 1
         rendered += 1
-    row += 1
 
     # Valves
     _write_section_header(ws, row, "Valves", col_end=total_cols)
@@ -1223,7 +1242,6 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
 
     # Notes — numbered: col 1 = position number, col 2..end = merged text
     if pms.notes:
-        row += 1
         _write_section_header(ws, row, "Notes", col_end=total_cols)
         row += 1
         for idx, note in enumerate(pms.notes, start=1):
