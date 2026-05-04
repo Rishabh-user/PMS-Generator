@@ -38,6 +38,7 @@ from app.models.pms_models import (
     ValveSizeEntry,
 )
 from app.services import data_service
+from app.utils.engineering import hydrotest_pressure_corrected
 from app.utils.engineering_constants import HYDROTEST_FACTOR
 
 logger = logging.getLogger(__name__)
@@ -144,8 +145,20 @@ def build_tubing_pms(req: PMSRequest) -> PMSResponse:
         pressures=pressures,
         temp_labels=temp_lbls,
     )
+    # Hydrotest per ASME B31.3 §345.4.2(b). Tubing rarely sees high
+    # temperatures (instrumentation lines), so the correction usually
+    # collapses to flat 1.5·P; but the helper is used so the moment a
+    # tubing class is rated for hot service, the correction kicks in
+    # automatically without a tubing-specific code path.
     max_p = max(pressures) if pressures else 0.0
-    hydrotest = round(max_p * HYDROTEST_FACTOR, 2)
+    rated_temps = [t for t, p in zip(temps, pressures) if (p or 0) > 0 and t is not None]
+    max_t = max(rated_temps) if rated_temps else (max(temps) if temps else 0)
+    ht = hydrotest_pressure_corrected(
+        design_pressure=max_p,
+        design_temp_c=max_t,
+        material_spec=material,
+    )
+    hydrotest = ht["pressure_barg"]
 
     # User-supplied service in the request overrides the catalogue default,
     # same convention as the AI-generated classes.

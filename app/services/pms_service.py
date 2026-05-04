@@ -25,6 +25,7 @@ from app.services import db_service
 from app.services import valvesheet_sync_service
 from app.utils.pipe_data import correct_pipe_data
 from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PERCENT
+from app.utils.engineering import hydrotest_pressure_corrected
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,94 @@ def _cache_key(req: PMSRequest) -> str:
     uppercased, trimmed piping_class.
     """
     return req.piping_class.upper().strip()
+
+
+# Classes whose pipe-size table extends past NPS 24 (B16.5's upper bound).
+# For these classes the flange-Standard cell must cite both B16.5 (for sizes
+# ≤24") AND B16.47A (for sizes ≥26") because a single B16.5 reference is
+# wrong above 24". Source-of-truth list comes from the AI prompt's "PIPE
+# SIZES — STANDARD NPS RANGES" block; cross-check before adding entries.
+# A50/A52/A51 (GRE) handle their own dimensional reference string in the
+# AI prompt and are deliberately excluded here.
+_FLANGE_NEEDS_B1647_DUAL: frozenset[str] = frozenset({
+    "A1", "A1N",     # CS 150# — sizes to 36"
+    "A1L", "A1LN",   # LTCS 150# — sizes to 30"
+    "A2N", "A2LN",   # CS NACE 150# — sizes to 30"
+    "A20", "A20N",   # DSS 150# — sizes to 32"
+    "B20",           # DSS 300# — sizes to 32"
+    "B25",           # SDSS 300# — sizes to 32"
+    "A30",           # CuNi EEMUA 234 — sizes to 28"
+})
+
+
+# Classes whose flange MOC must be A105N (B16.5 Group 1.1 forging), not the
+# B16.47 pipeline-flange material A694 F60. Earlier prompt revisions told
+# the AI to use A694 F60 for all 1500#/2500# CS forgings; that's wrong
+# because none of those classes exceeds NPS 24, so they live entirely
+# inside B16.5 territory where Table 1A specifies A105 / A350 LF2 / A182 F1.
+# A694 F60 still belongs to the hub_connector row (which is a B16.47-style
+# component) — that field is not touched by this enforcer.
+_FLANGE_FORCE_A105N: frozenset[str] = frozenset({
+    "F1", "G1",       # 1500# / 2500# CS — to 24"
+    "F2N", "G2N",     # 1500# / 2500# CS NACE — to 24"
+})
+
+
+def _enforce_flange_material(piping_class: str, ai_value: str) -> str:
+    """Override A694 F60 with A105N for 1500#/2500# CS classes ≤24".
+
+    Same defensive pattern as `_enforce_flange_standard`: we only
+    intervene when the AI emitted exactly the wrong material for one
+    of the affected classes. Any other string (custom MOC, project
+    override, NACE qualifier added by the AI) passes through.
+    """
+    cls = (piping_class or "").upper().strip()
+    value = (ai_value or "").strip()
+    if cls not in _FLANGE_FORCE_A105N:
+        return value
+    if "A 694" in value.upper() or "A694" in value.upper():
+        upgraded = "ASTM A 105N"
+        logger.info(
+            "Flange.material_spec for %s upgraded from %r to %r "
+            "(B16.5 Table 1A Group 1.1 — A694 is a B16.47 material)",
+            cls, value, upgraded,
+        )
+        return upgraded
+    return value
+
+
+def _enforce_flange_standard(piping_class: str, ai_value: str) -> str:
+    """Make sure the flange.standard string is correct for the class.
+
+    The AI prompt now teaches the dual-citation rule for classes that
+    span past NPS 24, but model output drifts and a regenerated cache
+    entry from before the prompt update can still carry a bare
+    "ASME B16.5". This is a last-line server-side enforcer: if the
+    class is on the >24" list AND the AI's emitted value doesn't
+    already mention B16.47, upgrade the string to the dual citation.
+
+    We only intervene when the AI value is empty OR cites only B16.5
+    without B16.47 — anything else (GRE classes, manufacturer-standard
+    strings, edge cases) passes through untouched so the AI's intent
+    isn't second-guessed.
+    """
+    cls = (piping_class or "").upper().strip()
+    value = (ai_value or "").strip()
+    if cls not in _FLANGE_NEEDS_B1647_DUAL:
+        return value
+    # Already cites B16.47 (in any form) → trust it.
+    norm = value.upper().replace(" ", "")
+    if "16.47" in norm or "B1647" in norm:
+        return value
+    # Empty / bare B16.5 / something we don't recognise → upgrade.
+    upgraded = "ASME B16.5 / B16.47A"
+    if value:
+        logger.info(
+            "Flange.standard for %s upgraded from %r to %r "
+            "(class spans >24\"; B16.47A required per B16.5 §1.1)",
+            cls, value, upgraded,
+        )
+    return upgraded
 
 
 def _determine_class_type(piping_class: str) -> str:
@@ -86,9 +175,44 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         temp_labels=pt_data.get("temp_labels", []),
     )
 
+    # Hydrotest pressure per ASME B31.3 §345.4.2(b) — Eq. 24:
+    #     P_T = 1.5 × P × (S_T / S_design)
+    # When the line runs hot, the steel is weaker at the design
+    # temperature than at the test (≈ ambient) temperature, so the cold
+    # hydrotest must be *higher* than 1.5·P to prove the line can carry
+    # the rated pressure once it heats up. The previous flat 1.5·P
+    # under-tested every high-temperature class. Catalogue's max(P) is
+    # the design pressure; max(T) (highest column with a non-zero P) is
+    # the design temperature feeding the S(T) lookup.
     pressures = pt_data.get("pressures", [])
+    temperatures = pt_data.get("temperatures", [])
     if pressures:
-        hydrotest_str = str(round(max(pressures) * HYDROTEST_FACTOR, 2))
+        max_p = max(pressures)
+        # Highest temperature with a non-zero pressure rating drives the
+        # correction. If a class lists 600 °C with P=0 (above material
+        # limit), that row should not pull the hydrotest up — pair each
+        # T with its P and pick max(T) only over rated rows.
+        rated_temps = [
+            t for t, p in zip(temperatures, pressures)
+            if (p or 0) > 0 and t is not None
+        ]
+        max_t = max(rated_temps) if rated_temps else (max(temperatures) if temperatures else 0)
+        ht = hydrotest_pressure_corrected(
+            design_pressure=max_p,
+            design_temp_c=max_t,
+            material_spec=entry.get("material") or req.material or "",
+        )
+        hydrotest_str = str(ht["pressure_barg"])
+        if ht.get("correction_applied"):
+            logger.info(
+                "Hydrotest §345.4.2(b) correction for %s: %s barg "
+                "(flat 1.5·P would be %.2f, S_T/S=%.3f at T=%s°C)",
+                req.piping_class,
+                hydrotest_str,
+                round(max_p * HYDROTEST_FACTOR, 2),
+                ht["ratio_st_over_s"],
+                max_t,
+            )
     else:
         hydrotest_str = ai_data.get("hydrotest_pressure", "")
 
@@ -162,10 +286,10 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
 
     fl = ai_data.get("flange", {})
     flange = FlangeData(
-        material_spec=fl.get("material_spec", ""),
+        material_spec=_enforce_flange_material(req.piping_class, fl.get("material_spec", "")),
         face_type=fl.get("face_type", ""),
         flange_type=fl.get("flange_type", ""),
-        standard=fl.get("standard", ""),
+        standard=_enforce_flange_standard(req.piping_class, fl.get("standard", "")),
         compact_flange=fl.get("compact_flange", ""),
         hub_connector=fl.get("hub_connector", ""),
     )

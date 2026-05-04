@@ -334,6 +334,19 @@ async function loadIndexData() {
     } catch {}
 }
 
+// Canonical PART-1 rating order from §5.5 of the project PMS doc
+// (40801-SPE-80000-PP-SP-0001 Rev A0, page 18). The dropdown always
+// shows this exact order so the user sees every spec-defined rating —
+// including 5000# (J) and 10000# (K) which currently have no catalogue
+// entry. Picking a rating with no matching class leaves the Material
+// dropdown empty (an honest signal that no class is curated yet).
+const SPEC_RATINGS_ORDER = [
+    '150#', '300#', '600#', '900#', '1500#', '2500#', '5000#', '10000#',
+];
+// Non-§5.5 ratings that show up in the catalogue (EEMUA for A30, "Tubing"
+// alias for the T80*/T90* family whose catalogue rating is "-").
+const NON_SPEC_RATINGS = ['EEMUA 20 bar', 'Tubing'];
+
 function populateClassDropdown() {
     const sel = document.getElementById('pipingClass');
     sel.innerHTML = '<option value="">-- Select Rating --</option>';
@@ -343,12 +356,34 @@ function populateClassDropdown() {
         return;
     }
 
-    // Show unique ratings only (150#, 300#, 600#, etc.)
-    const seen = new Set();
-    indexData.forEach(d => {
-        const rating = d.rating || '';
-        if (!rating || seen.has(rating)) return;
-        seen.add(rating);
+    // Build the rating set: every §5.5 rating, then any non-§5.5 ratings
+    // present in the catalogue. The "-" rating used by tubing classes is
+    // mapped to a friendly "Tubing" label so the user actually knows what
+    // to pick (rating="-" is invisible-looking and confusing in the UI).
+    const present = new Set(
+        indexData.map(d => d.rating || '').filter(r => r && r !== '-')
+    );
+    // Rating "-" with class name starting with T means the entry is tubing
+    // — surface it as "Tubing" instead.
+    if (indexData.some(d => (d.rating || '') === '-' &&
+                            (d.piping_class || '').toUpperCase().startsWith('T'))) {
+        present.add('Tubing');
+    }
+
+    // Always render the full §5.5 rating list — including ratings the
+    // catalogue doesn't have yet (e.g. 5000# / 10000#). Picking one with
+    // no matching class leaves the Material dropdown empty, which is an
+    // honest signal to the user without polluting the option label.
+    SPEC_RATINGS_ORDER.forEach(rating => {
+        const opt = document.createElement('option');
+        opt.value = rating;
+        opt.textContent = rating;
+        sel.appendChild(opt);
+    });
+    // Tail-on the non-§5.5 ratings that exist in the catalogue, in a stable
+    // order so the dropdown layout is reproducible.
+    NON_SPEC_RATINGS.forEach(rating => {
+        if (!present.has(rating)) return;
         const opt = document.createElement('option');
         opt.value = rating;
         opt.textContent = rating;
@@ -362,6 +397,17 @@ function initCascadingDropdowns() {
     const caSelect = document.getElementById('corrosionAllowance');
     const serviceInput = document.getElementById('service');
 
+    // The catalogue stores tubing classes with rating "-" (their actual
+    // pressure tier comes from the A/B/C suffix). When the user picks the
+    // friendly "Tubing" label in the rating dropdown, treat any catalogue
+    // entry whose class code starts with "T" as a match.
+    function ratingMatches(entry, picked) {
+        if (picked === 'Tubing') {
+            return (entry.piping_class || '').toUpperCase().startsWith('T');
+        }
+        return entry.rating === picked;
+    }
+
     // Rating changed -> populate Material dropdown (filtered by rating)
     ratingSelect.addEventListener('change', () => {
         const rating = ratingSelect.value;
@@ -372,7 +418,7 @@ function initCascadingDropdowns() {
         if (!rating) return;
 
         // Find all materials for this rating
-        const matches = indexData.filter(d => d.rating === rating);
+        const matches = indexData.filter(d => ratingMatches(d, rating));
         const materials = [...new Set(matches.map(d => d.material))];
         if (materials.length === 0) return;
 
@@ -393,7 +439,7 @@ function initCascadingDropdowns() {
         caSelect.disabled = true;
         if (!rating || !mat) return;
 
-        const matches = indexData.filter(d => d.rating === rating && d.material === mat);
+        const matches = indexData.filter(d => ratingMatches(d, rating) && d.material === mat);
         const cas = [...new Set(matches.map(d => d.corrosion_allowance))];
         if (cas.length === 0) return;
 
@@ -407,9 +453,16 @@ function initCascadingDropdowns() {
     });
 }
 
-// Resolve piping class from rating + material + CA
+// Resolve piping class from rating + material + CA. Mirrors the
+// `ratingMatches` rule above: a "Tubing" pick resolves to a T-prefixed
+// class without checking the catalogue's "-" rating field.
 function resolvePipingClass(rating, material, ca) {
-    const match = indexData.find(d => d.rating === rating && d.material === material && d.corrosion_allowance === ca);
+    const match = indexData.find(d => {
+        const ratingOk = (rating === 'Tubing')
+            ? (d.piping_class || '').toUpperCase().startsWith('T')
+            : (d.rating === rating);
+        return ratingOk && d.material === material && d.corrosion_allowance === ca;
+    });
     return match ? match.piping_class : null;
 }
 

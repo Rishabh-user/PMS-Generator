@@ -60,25 +60,29 @@ Format: [PART1][PART2][PART3]
 PART 1 — RATING (letter):
   A=150# | B=300# | D=600# | E=900# | F=1500# | G=2500# | J=5000# | K=10000# | T=Tubing
 
-PART 2 — MATERIAL (number):
-  1  = CS, 3mm Corrosion Allowance
-  2  = CS, 6mm Corrosion Allowance (heavy wall)
-  3  = CS Galvanized, 3mm CA (screwed fittings)
-  4  = CS Galvanized, 1.5mm CA (screwed fittings)
-  5  = CS Galvanized, 6mm CA
-  6  = CS Internally Epoxy Coated
-  9  = SS316 (not used in this project)
+PART 2 — MATERIAL (number) — verbatim from §5.5 of the project PMS doc
+(40801-SPE-80000-PP-SP-0001 Rev A0, page 18). Keep this list in lock-step
+with validation_service._MATERIAL_DIGIT and any reviewer shares of the §5.5
+screenshot:
+  1  = CS-3mm CA
+  2  = CS-6mm CA (heavy wall)
+  3  = CS GALV-3mm CA (screwed fittings)
+  4  = CS GALV-1.5mm CA (screwed fittings)
+  5  = CS GALV-6mm CA
+  6  = CS Internally coated
+  9  = SS316 (defined in the spec; no class currently uses this digit)
   10 = SS316L
   20 = Duplex SS (DSS) UNS S31803
   25 = Super Duplex SS (SDSS) UNS S32750
   30 = 90/10 CuNi (Copper-Nickel)
-  31 = Copper
-  40 = GRE (Glass Reinforced Epoxy)
-  41 = GRV — BONSTRAND Series 5000C
-  42 = CPVC
-  50 = SS316L/SS316 Tubing
-  60 = 6Mo Tubing
+  40 = Copper
+  50 = GRE (Glass Reinforced Epoxy)
+  51 = GRV — BONSTRAND Series 5000C
+  52 = GRE (for special service)
+  60 = CPVC
   70 = Titanium
+  80 = SS316L/SS316 Tubing
+  90 = 6 Mo Tubing
 
 PART 3 — IDENTIFIER (optional suffix):
   N = NACE (sour service, adds NACE-MR-01-75/ISO-15156 to design code)
@@ -88,7 +92,18 @@ PART 3 — IDENTIFIER (optional suffix):
   B = 200 Barg Pressure (tubing)
   C = 325 Barg Pressure (tubing)
 
-Examples: A1 = 150# CS 3mm CA | B1N = 300# CS 3mm CA NACE | A2LN = 150# CS 6mm CA LTCS+NACE | T80A = SS316L Tubing 125 Barg
+Examples:
+  A1   = 150# CS 3mm CA
+  B1N  = 300# CS 3mm CA NACE
+  A2LN = 150# CS 6mm CA LTCS+NACE
+  A40  = 150# Copper
+  A50  = 150# GRE
+  A60  = 150# CPVC
+  A70  = 150# Titanium
+  T80A = SS316L Tubing, 125 Barg
+  T90C = 6 Mo Tubing, 325 Barg
+  J1   = 5000# CS 3mm CA  (rating reserved for HP service; no class currently catalogued)
+  K1   = 10000# CS 3mm CA (rating reserved for HP service; no class currently catalogued)
 
 === PIPE SIZES — STANDARD NPS RANGES ===
 Generate ALL standard NPS sizes for the class. Typical ranges:
@@ -101,6 +116,10 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
   E-series 900#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
   F-series 1500#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
   G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14)
+  J-series 5000#  / K-series 10000# (high-pressure ratings reserved in §5.5):
+    No J* / K* class exists in the current catalogue. If the user requests
+    one, follow F-series sizing (0.5"-24", 17 sizes) as the safe default
+    and explicitly note the assumption in the response.
   GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 24" (17 sizes)
   CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30" — do NOT emit those sizes)
   Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
@@ -449,8 +468,14 @@ fittings_by_size: One entry per pipe size. Each entry includes size_inch, type (
 
 === FLANGE RULES ===
 MOC by material family:
-  CS (A1-E1, N variants): ASTM A 105N
-  CS (F1/G1, F2N/G2N): ASTM A 694 F60
+  CS (A1-E1, N variants):  ASTM A 105N
+  CS (F1/G1, F2N/G2N):     ASTM A 105N
+    (1500#/2500# CS forgings per ASME B16.5 Table 1A Group 1.1 are A105N
+    — same as the lower ratings. ASTM A 694 F60 is a B16.47 pipeline
+    flange material and only appears in the hub_connector row below,
+    NOT as the main flange MOC. Earlier project sheets showed A 694 F60
+    here; that was a B16.47/B16.5 mix-up — A 105N is the correct
+    Table 1A entry for sizes ≤24".)
   LTCS (all 1L/2LN): ASTM A 350 Gr. LF2
   SS316L (10-series): ASTM A 182 F 316L
   DSS (20-series): ASTM A 182 Gr. F51
@@ -490,6 +515,32 @@ TYPE — compose the flange_type string from these components; do not copy a fix
   Note references: if the class has a numbered notes list that describes flange-specific requirements, cite those note positions at the end (e.g. ", Note 8,9").
     — 900#/1500#/2500# (RTJ) classes: cite the jackscrew/WNRTJ note and the gasket roughness note.
     — 150#/300#/600# classes: do not cite flange notes unless class-specific.
+
+STANDARD field (`flange.standard`) — the dimensional reference cited on the
+sheet's "Standard" row.  ASME B16.5 covers NPS ½ through NPS 24 only;
+classes that emit pipe sizes ≥26" need a dual citation so the printed
+reference is correct across the whole size range:
+
+  Single citation — class tops out at ≤24" (most classes):
+    standard = "ASME B16.5"
+
+  Dual citation — class spans sizes ≥26" (B16.47 takes over above 24"):
+    standard = "ASME B16.5 / B16.47A"
+    Affected classes (per the SIZE RANGES table above):
+      • A1, A1N        (CS 150#, to 36")
+      • A1L, A1LN      (LTCS 150#, to 30")
+      • A2N, A2LN      (CS NACE 150#, to 30")
+      • A20, A20N      (DSS 150#, to 32")
+      • B20            (DSS 300#, to 32")
+      • B25            (SDSS 300#, to 32")
+      • A30            (CuNi EEMUA 234, to 28")
+    A50 / A52 (GRE) use the existing GRE-specific string
+    "Drilled to ASME B 16.5/ 16.47A, 150#" — do not change.
+    A51 (GRE BONSTRAND, 1"-6" only) stays "Drilled to ASME B 16.5, 150#".
+
+  All other classes (B-series 300#, D-series 600#, E/F/G-series 900-2500#,
+  10-series SS, A40 Copper, A60 CPVC, A70 Titanium, GALV) top out at
+  ≤24" and use the single-citation form.
 
   GALV screwed (A3/A4): small sizes use screwed-end flanges (SCRD), larger sizes use WN butt-welded
   CuNi (A30): SW Flange for 0.5"-1.5"; WN Flange for 2"-28" (boundary at 2", per EEMUA 234 / Excel spec)

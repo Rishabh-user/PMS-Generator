@@ -33,34 +33,54 @@ logger = logging.getLogger(__name__)
 
 # ── Naming-convention rules (project internal) ────────────────────
 
-# PART 1 (rating letter) → ASME class
+# PART 1 (rating letter) → ASME class. Verbatim from §5.5 of the project
+# Piping Material Specification (40801-SPE-80000-PP-SP-0001 Rev A0,
+# page 18). The spec deliberately skips letter C in PART 1 — C only
+# appears in PART 3 as a pressure suffix (325 Barg). Do NOT add C here.
 _RATING_LETTER = {
-    "A": "150#", "B": "300#", "C": "400#", "D": "600#",
-    "E": "900#", "F": "1500#", "G": "2500#", "J": "5000#",
-    "K": "10000#", "T": "Tubing",
+    "A": "150#",  "B": "300#",  "D": "600#",   "E": "900#",
+    "F": "1500#", "G": "2500#", "J": "5000#",  "K": "10000#",
+    "T": "Tubing",
 }
 
-# PART 2 (material digit) → material family label
+# PART 3 (optional identifier) → human-readable label.
+# Letters that appear after the material digits. Multiple letters can stack
+# (e.g. A1LN = …+L+N). The N/L pair is project-wide; A/B/C only apply to
+# tubing classes (T80A/B/C, T90A/B/C) where they encode the proprietary
+# pressure rating per the project spec.
+_PART3_SUFFIX = {
+    "N": "NACE (sour service)",
+    "L": "Low Temperature",
+    "A": "125 Barg Pressure (tubing)",
+    "B": "200 Barg Pressure (tubing)",
+    "C": "325 Barg Pressure (tubing)",
+}
+
+# PART 2 (material digit) → material family label.
+# Mapping mirrors §5.5 of the project Piping Material Specification
+# (40801-SPE-80000-PP-SP-0001 Rev A0, page 18). Keep this set in lock-step
+# with the AI prompt's PART-2 table in ai_service.py and with the §5.5
+# screenshot the project shares for naming-convention reviews.
 _MATERIAL_DIGIT = {
-    "1": "CS",
-    "2": "CS heavy wall",
-    "3": "CS Galvanized",
-    "4": "CS Galvanized thin wall",
-    "5": "CS Galvanized 6mm",
-    "6": "CS Epoxy",
+    "1":  "CS-3mm CA",
+    "2":  "CS-6mm CA",
+    "3":  "CS GALV-3mm CA",
+    "4":  "CS GALV-1.5mm CA",
+    "5":  "CS GALV-6mm CA",
+    "6":  "CS Internally coated",
+    "9":  "SS316",
     "10": "SS316L",
-    "11": "SS304L",
     "20": "DSS",
     "25": "SDSS",
-    "30": "CuNi",
+    "30": "90/10 CuNi",
     "40": "Copper",
     "50": "GRE",
-    "51": "GRE",
-    "52": "GRE",
+    "51": "GRV (BONSTRAND Series 5000C)",
+    "52": "GRE (for special service)",
     "60": "CPVC",
     "70": "Titanium",
-    "80": "Tubing SS316L",
-    "90": "Tubing 6Mo",
+    "80": "SS316L/SS316 Tubing",
+    "90": "6 Mo Tubing",
 }
 
 
@@ -84,7 +104,8 @@ def _check_class_code_vs_rating(pms: PMSResponse) -> list[ValidationFinding]:
             title="Class code does not match naming convention",
             detail=(
                 f"Class '{pms.piping_class}' — first character '{parsed['letter']}' "
-                "is not in the set A/B/C/D/E/F/G/J/K/T."
+                "is not in the set A/B/D/E/F/G/J/K/T (per §5.5 of the PMS doc; "
+                "C is a PART-3 suffix, not a PART-1 rating)."
             ),
         )]
     if pms.rating and expected != pms.rating and expected != "Tubing":
@@ -95,8 +116,8 @@ def _check_class_code_vs_rating(pms: PMSResponse) -> list[ValidationFinding]:
                   f"but rating reported is {pms.rating}",
             detail=(
                 f"Per naming convention: A=150#, B=300#, D=600#, E=900#, F=1500#, "
-                f"G=2500#. Class '{pms.piping_class}' starts with '{parsed['letter']}' "
-                f"→ expected {expected} but PMS shows '{pms.rating}'."
+                f"G=2500#, J=5000#, K=10000#. Class '{pms.piping_class}' starts with "
+                f"'{parsed['letter']}' → expected {expected} but PMS shows '{pms.rating}'."
             ),
         )]
     return [ValidationFinding(
