@@ -1,0 +1,639 @@
+{
+  "A1": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A1L": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A1LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A1N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A2LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A2N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A3": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A4": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A5": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A6": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A10": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A10N": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A20": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A20N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A25": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A25N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A30": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A40": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.21, Full face gasket, 2mm, CNAF",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A50": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "EPDM Rubber Full Face Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS )",
+    "washers": "ASTM A 307 Gr. B HDG",
+    "gasket_2": "EPDM Rubber Flat Ring Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS )"
+  },
+  "A51": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B16.21, Flat Ring, 3mm, CNAF, Oil Resistant, Glass Fibre Composite with NBR Binder",
+    "washers": "ASTM A 307 Gr. B HDG",
+    "gasket_2": ""
+  },
+  "A52": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "EPDM Rubber Full Face Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS )",
+    "washers": "ASTM A 307 Gr. B HDG",
+    "gasket_2": "EPDM Rubber Flat Ring Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS )"
+  },
+  "A60": {
+    "stud_bolts": "ASTM A 193 GR B7, HDG AS PER ASTM A 153, ASME B 1.1",
+    "hex_nuts": "ASTM A 194 GR 2H, HDG AS PER ASTM A 153, ASME B 18.2.2 WITH 3.2 mm thk Steel & CPVC washer on both sides",
+    "gasket": "#150 Full face gasket 3 mm thk to ASME B 16.21, PTFE/EPDM",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "A70": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm to be used with Insulating gasket",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm to be used with Insulating gasket",
+    "gasket": "ASME B 16.21, Flat Ring, 1.58mm, CNAF",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B1": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B1L": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B1LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B1N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B2LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B2N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B4": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B10": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B10N": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B20": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B20N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B25": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "B25N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D1": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D1L": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D1LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D1N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D2LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D2N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D4": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D10": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D10N": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, 4.5 mm, SS316/SS316L Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D20": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D20N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S31803 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D25": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "D25N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E1": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E1L": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E1LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E1N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E2LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E2N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E10": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of SS316L with Max. Hardness of 160 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E10N": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of SS316L with Max. Hardness of 160 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E20": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 31803 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E20N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 31803 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E25": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 332750 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "E25N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 332750 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F1": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F1L": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F1LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F1N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F2LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F2N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F10": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of SS316L with Max. Hardness of 160 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F10N": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of SS316L with Max. Hardness of 160 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F20": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 31803 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F20N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 31803 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F25": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 332750 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "F25N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 332750 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G1": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G1L": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G1LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G1N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G2LN": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT Ring of Soft Iron with Max. Hardness 90 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G2N": {
+    "stud_bolts": "ASTM A 193 Gr. B7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 2HM, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of Soft Iron with Max. Hardness of 90 BHN, HDG",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G10": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of SS316L with Max. Hardness of 160 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G10N": {
+    "stud_bolts": "ASTM A 320 Gr. L7M, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "hex_nuts": "ASTM A 194 Gr. 7ML, XYLAR 2 + XYLAN 1070 coated with minimum combined thickness of 50μm",
+    "gasket": "ASME B 16.20, OCT ring of SS316L with Max. Hardness of 160 BHN",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G20": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 31803 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G20N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 31803 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G25": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 332750 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "G25N": {
+    "stud_bolts": "ASTM A 453 Gr. 660",
+    "hex_nuts": "ASTM A 453 Gr. 660",
+    "gasket": "ASME B 16.20, OCT ring of UNS S 332750 with Max. Hardness of 22 HRC",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "T80A": {
+    "stud_bolts": "",
+    "hex_nuts": "",
+    "gasket": "",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "T80B": {
+    "stud_bolts": "",
+    "hex_nuts": "",
+    "gasket": "",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "T80C": {
+    "stud_bolts": "",
+    "hex_nuts": "",
+    "gasket": "",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "T90A": {
+    "stud_bolts": "",
+    "hex_nuts": "",
+    "gasket": "",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "T90B": {
+    "stud_bolts": "",
+    "hex_nuts": "",
+    "gasket": "",
+    "washers": "",
+    "gasket_2": ""
+  },
+  "T90C": {
+    "stud_bolts": "",
+    "hex_nuts": "",
+    "gasket": "",
+    "washers": "",
+    "gasket_2": ""
+  }
+}

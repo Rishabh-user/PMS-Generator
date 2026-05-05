@@ -45,6 +45,49 @@ class Settings(BaseSettings):
     # a slow external API can't stall PMS generation for long.
     external_valvesheet_timeout: float = 20.0
 
+    # ── RAG (Retrieval-Augmented Generation) ─────────────────────────
+    # The RAG layer is purely additive — every flag defaults OFF so an
+    # unconfigured deployment behaves identically to the pre-RAG version.
+    # Turn `rag_enabled` ON only after pgvector is installed on the DB
+    # AND an embedding API key is set, then enable individual feature
+    # flags (rag_use_for_notes, etc.) one at a time as you validate.
+    rag_enabled: bool = False
+    """Master switch for the RAG pipeline. When False, nothing in
+    rag_service.py is active and the system runs exactly as before."""
+
+    rag_use_for_notes: bool = False
+    """Replace the AI-generated/hardcoded notes with retrieved notes from
+    the indexed PMS document, per-class. First feature to ground via RAG."""
+
+    # Embedding provider selection.
+    #
+    #   "local"  → sentence-transformers/all-MiniLM-L6-v2 served via
+    #              fastembed (ONNX runtime). DEFAULT. No API key, no
+    #              rate limits, ~80MB model download on first use.
+    #              384-dim vectors. Recommended for production until
+    #              you have a clear reason to use a cloud provider.
+    #
+    #   "voyage" → Voyage AI (cloud, paid past free tier).
+    #              voyage-3 / voyage-3-large, 1024-dim.
+    #
+    #   "openai" → OpenAI (cloud, paid).
+    #              text-embedding-3-small/large, configurable dim.
+    embedding_provider: str = "local"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384      # MUST match the model's native dim
+
+    voyage_api_key: str = ""             # only used when embedding_provider="voyage"
+    openai_api_key: str = ""             # only used when embedding_provider="openai"
+
+    # Top-K retrieved chunks injected into the AI prompt at generation
+    # time. Higher = more context, more tokens, more likely to ground
+    # correctly. Lower = cheaper, faster, less context.
+    rag_top_k: int = 5
+    rag_min_similarity: float = 0.35
+    """Cosine similarity floor — chunks below this score are dropped from
+    retrieval so we never feed the AI noise. Tune empirically: too high
+    means good chunks get filtered; too low means the AI gets distracted."""
+
     class Config:
         env_file = ".env"
         extra = "ignore"

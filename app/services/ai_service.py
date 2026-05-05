@@ -1096,11 +1096,19 @@ async def generate_pms_with_ai(
     service: str,
     rating: str,
     reference_entries: list[dict],
+    retrieved_context: str = "",
 ) -> dict:
     """Call Claude API to generate PMS data (everything except P-T).
     Returns a dict of generated fields. Raises AIGenerationError on failure
     with a message describing the actual cause (credit balance, rate limit,
-    auth error, model-not-found, etc.)."""
+    auth error, model-not-found, etc.).
+
+    `retrieved_context` is the formatted RAG context block (produced by
+    rag_service.format_context). When non-empty, it gets appended to the
+    prompt as a "REFERENCE CONTEXT" block so the AI can ground its
+    narrative output on the actual master-PMS data sheet for this class.
+    Empty string = pre-RAG behaviour (prompt rules are the single source).
+    """
 
     if not settings.anthropic_api_key:
         raise AIGenerationError(
@@ -1111,8 +1119,26 @@ async def generate_pms_with_ai(
         piping_class, material, corrosion_allowance, service,
         rating, reference_entries,
     )
+    # When RAG is enabled, append retrieved chunks AFTER the main prompt.
+    # Order matters: instructions + project rules first, then evidence —
+    # so the rules guide the AI's interpretation of the retrieved text
+    # rather than the other way around. Empty string = no-op.
+    if retrieved_context:
+        prompt = (
+            f"{prompt}\n\n"
+            "=== REFERENCE CONTEXT — retrieved from indexed project documents ===\n"
+            "Each passage below is from the master PMS / VMS / standards corpus,\n"
+            "ranked by similarity. Use these passages to confirm or correct your\n"
+            "answer when they contradict your interpretation of the rules above.\n"
+            "When a value, code, or string is stated verbatim in the context, COPY it.\n\n"
+            f"{retrieved_context}\n"
+        )
 
-    logger.info("Calling Anthropic API for class %s with model %s", piping_class, settings.anthropic_model)
+    logger.info(
+        "Calling Anthropic API for class %s with model %s (prompt %d chars, RAG context %d chars)",
+        piping_class, settings.anthropic_model,
+        len(prompt), len(retrieved_context),
+    )
 
     response_text = ""
     try:

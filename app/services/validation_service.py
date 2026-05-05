@@ -376,6 +376,27 @@ def _check_vds_code(code: str, expected_class: str) -> list[ValidationFinding]:
             ),
         ))
 
+    # JT end suffix is reserved for instrument valves (per VMS p.16): only
+    # tubing DBB and Check codes use it. The other tubing valve families
+    # use J (Ball) or F (Needle); non-tubing classes never use JT. Catching
+    # this stops the regression where every tubing template was authored
+    # with JT (which produced VDS codes like BLFP*JT and NEIP*JT that the
+    # master VMS doesn't define).
+    if parsed["end"] == "JT" and parsed["type"] not in ("DB", "CH"):
+        findings.append(ValidationFinding(
+            kind="error",
+            rule="VALVE_CODE_END_JT_RESERVED",
+            title=f"VDS '{code}': end suffix 'JT' is not allowed on a "
+                  f"{parsed['type']} valve",
+            detail=(
+                "Per the project Valve Material Specification "
+                "(40801-SPE-80000-PP-SP-0002 §5.0 / p.16), end suffix JT "
+                "applies only to instrument-valve VDS codes — currently DBB "
+                "(DB*) and Check (CH*). Ball uses J, Needle uses F, "
+                "everything else uses R / J / F / H per the class face."
+            ),
+        ))
+
     return findings
 
 

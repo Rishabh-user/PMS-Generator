@@ -9,7 +9,9 @@ Flow:
   5. Store result in both DB and memory cache
   6. Regenerate endpoint bypasses cache and forces fresh AI call
 """
+import json
 import logging
+from pathlib import Path
 
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
@@ -22,12 +24,27 @@ from app.services.excel_generator import generate_pms_excel_bytes
 from app.services.tubing_service import build_tubing_pms, is_tubing_class
 from app.services import data_service
 from app.services import db_service
+from app.services import rag_service
 from app.services import valvesheet_sync_service
 from app.utils.pipe_data import correct_pipe_data
 from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PERCENT
 from app.utils.engineering import hydrotest_pressure_corrected
 
 logger = logging.getLogger(__name__)
+
+# Canonical Bolts / Nuts / Gaskets strings, extracted verbatim from the
+# project Piping Material Specification (40801-SPE-80000-PP-SP-0001 Rev A0)
+# class data sheets (PDF pages 27-117, one entry per class). Single source
+# of truth — when engineering updates the master spec, regenerate this JSON
+# with the helper at pms-files/_extract_bolts.py and the next AI request
+# will pick up the new values without any prompt edit.
+_BNG_RULES_PATH = Path(__file__).resolve().parent.parent / "data" / "bolt_gasket_rules.json"
+try:
+    with _BNG_RULES_PATH.open(encoding="utf-8") as _f:
+        _BNG_RULES: dict[str, dict] = json.load(_f)
+except FileNotFoundError:
+    logger.warning("bolt_gasket_rules.json not found at %s; BNG enforcer disabled", _BNG_RULES_PATH)
+    _BNG_RULES = {}
 
 # L1 (in-memory) PMS cache — unbounded plain dict, NO TTL and NO size cap.
 # Rationale per the project owner's directive: an entry should only ever
@@ -86,6 +103,56 @@ _FLANGE_FORCE_A105N: frozenset[str] = frozenset({
     "F1", "G1",       # 1500# / 2500# CS — to 24"
     "F2N", "G2N",     # 1500# / 2500# CS NACE — to 24"
 })
+
+
+def _enforce_bolts_gaskets(piping_class: str, ai_bng: dict) -> dict:
+    """Override the AI's bolts/nuts/gaskets fields with the canonical strings
+    transcribed from the project PMS document.
+
+    Why: the bolting and gasket strings on each class data sheet are
+    project-specific (XYLAR/XYLAN coatings, gasket thicknesses, GRE
+    manufacturer references like "Kroll & Ziller G-ST/PS") that the AI
+    cannot derive from generic ASME knowledge. Rather than teach those
+    strings via the prompt — which mixes engineering data with AI guidance
+    and burns ~600 tokens per generation — we keep them in
+    `app/data/bolt_gasket_rules.json` (single source of truth, extracted
+    verbatim from the master PDF) and stamp them onto the response here.
+
+    AI-emitted values for these three fields are ignored when the class
+    has a canonical entry; for the few classes without one (e.g. tubing
+    classes have no BNG section in the spec) we keep whatever the AI
+    emitted, which for tubing comes from the deterministic tubing_service
+    builder anyway.
+
+    `ai_bng` is the raw `bolts_nuts_gaskets` dict from the AI response.
+    Returns a new dict with the canonical fields applied; never mutates
+    the input. Optional fields (`washers`, `gasket_2`) are populated only
+    when the spec defines them for the class (GRE A50/A52).
+    """
+    cls = (piping_class or "").upper().strip()
+    canonical = _BNG_RULES.get(cls)
+    if not canonical:
+        # No catalogue entry → trust AI / tubing builder verbatim.
+        return dict(ai_bng or {})
+
+    # Only override fields the spec actually has; leave anything the AI
+    # emitted that isn't covered (notes, future fields, etc.) untouched.
+    out = dict(ai_bng or {})
+    for field in ("stud_bolts", "hex_nuts", "gasket", "washers", "gasket_2"):
+        canon = (canonical.get(field) or "").strip()
+        if canon:
+            ai_val = (out.get(field) or "").strip()
+            if ai_val and ai_val != canon:
+                logger.info(
+                    "BNG.%s for %s overridden by canonical rule "
+                    "(AI=%r → spec=%r)", field, cls, ai_val[:60], canon[:60],
+                )
+            out[field] = canon
+        else:
+            # Spec field is empty (e.g. no washers for non-GRE) — clear
+            # whatever the AI may have hallucinated.
+            out[field] = ""
+    return out
 
 
 def _enforce_flange_material(piping_class: str, ai_value: str) -> str:
@@ -301,7 +368,10 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         standard_large=sb.get("standard_large", ""),
     )
 
-    bg = ai_data.get("bolts_nuts_gaskets", {})
+    # AI emission for bolts/nuts/gaskets is overridden by the canonical
+    # values from app/data/bolt_gasket_rules.json (extracted verbatim from
+    # the master PMS PDF). See `_enforce_bolts_gaskets` above for rationale.
+    bg = _enforce_bolts_gaskets(req.piping_class, ai_data.get("bolts_nuts_gaskets", {}))
     bng = BoltsNutsGaskets(
         stud_bolts=bg.get("stud_bolts", ""),
         hex_nuts=bg.get("hex_nuts", ""),
@@ -395,6 +465,23 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     ][:2]
     reference_entries.extend(other_entries)
 
+    # ── RAG retrieval (additive, behind feature flag) ────────────────
+    # When `settings.rag_enabled` is on AND the indexed corpus is ready,
+    # pull the master-PMS data sheet for this class plus a few related
+    # passages, then feed them to the AI as grounding context. Falls
+    # back to an empty string (pre-RAG behaviour) when the flag is off,
+    # the embedding API isn't reachable, or pgvector isn't installed —
+    # `rag_service.retrieve_for_class` and `format_context` are both
+    # designed to be safe no-ops in those cases.
+    retrieved_chunks = await rag_service.retrieve_for_class(req.piping_class)
+    retrieved_context = rag_service.format_context(retrieved_chunks)
+    if retrieved_chunks:
+        logger.info(
+            "RAG: retrieved %d chunks for %s (top similarity %.2f)",
+            len(retrieved_chunks), req.piping_class,
+            retrieved_chunks[0].get("similarity", 0),
+        )
+
     # Call AI to generate everything except P-T.
     # generate_pms_with_ai raises AIGenerationError with a specific reason on
     # failure — we re-raise as RuntimeError so the route handler turns it
@@ -407,6 +494,7 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             service=req.service,
             rating=rating,
             reference_entries=reference_entries,
+            retrieved_context=retrieved_context,
         )
     except AIGenerationError as e:
         raise RuntimeError(

@@ -25,7 +25,7 @@ from app.services.thickness_service import compute_thickness
 from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.validation_service import validate as validate_pms
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
-from app.services import data_service, db_service, valvesheet_sync_service
+from app.services import data_service, db_service, rag_service, valvesheet_sync_service
 from app.utils.engineering import interpolate_pressure_at_temp
 from app.utils.engineering_constants import (
     HYDROTEST_FACTOR, OPERATING_PRESSURE_FACTOR, OPERATING_TEMP_FACTOR,
@@ -45,6 +45,38 @@ router = APIRouter(prefix="/api", tags=["PMS"])
 @router.get("/pipe-classes")
 async def list_pipe_classes():
     return data_service.get_pipe_class_list()
+
+
+@router.get("/rag/status")
+async def rag_status():
+    """RAG pipeline health check.
+
+    Reports which pieces are configured and ready so a developer/admin
+    can quickly see why retrieval might be a no-op without inspecting
+    config and DB state separately. Mirrors the structure of the
+    existing /api/health pattern (best-effort, non-fatal failures).
+    """
+    provider = (settings.embedding_provider or "voyage").lower()
+    has_provider_key = bool(
+        settings.voyage_api_key if provider == "voyage"
+        else settings.openai_api_key
+    )
+    indexed = await db_service.count_doc_chunks() if db_service.is_rag_available() else 0
+    indexed_pms = await db_service.count_doc_chunks("PMS") if db_service.is_rag_available() else 0
+    return {
+        "rag_enabled":          settings.rag_enabled,
+        "ready_for_retrieval":  rag_service.is_enabled(),
+        "pgvector_available":   db_service.is_rag_available(),
+        "provider":             provider,
+        "model":                settings.embedding_model,
+        "dimensions":           settings.embedding_dimensions,
+        "provider_key_set":     has_provider_key,
+        "indexed_chunks_total": indexed,
+        "indexed_chunks_PMS":   indexed_pms,
+        "feature_flags": {
+            "rag_use_for_notes": settings.rag_use_for_notes,
+        },
+    }
 
 
 @router.get("/services", response_model=list[str])

@@ -147,6 +147,108 @@ CREATE INDEX IF NOT EXISTS idx_pms_agent_sessions_user_updated
     ON pms_agent_sessions (user_id, updated_at DESC);
 """
 
+# ── doc_chunks — RAG corpus (vanilla Postgres) ─────────────────────
+# Stores the embedded chunks of every reference document we want the AI
+# to retrieve from. This is the foundation of the standards-driven /
+# RAG pipeline: the chunker produces Chunk records → the ingestion
+# script embeds them → they land here → at request time we run a
+# similarity query to find the K most relevant chunks, then inject
+# those into the AI prompt as grounding context.
+#
+# IMPORTANT — design choice: we deliberately do NOT use the pgvector
+# extension. Many managed Postgres hosts (Heroku, the cheaper RDS
+# tiers, some Azure plans) don't allow installing extensions, so
+# requiring pgvector blocked the project from running on those hosts.
+# Instead, we store each embedding as a native DOUBLE PRECISION[]
+# array (asyncpg ↔ Python list, no serialization needed) and compute
+# cosine similarity in Python at retrieval time.
+#
+# This is fast enough for the project's actual scale:
+#   • Single master PMS document    →    109 chunks
+#   • + B31.3 / B16.5 / VMS         →  ~2,000 chunks
+#   • + multi-tenant operator specs →  ~10,000 chunks
+# In-memory cosine over 10K × 1024-dim vectors takes ~50ms in pure
+# Python and ~5ms with numpy — both acceptable for a single retrieval
+# call. If the corpus ever grows past 50K chunks, we'd swap this for
+# pgvector with a feature flag — the public retrieve API stays the
+# same shape so callers don't change.
+
+# Default vector dimensionality: matches the local
+# sentence-transformers/all-MiniLM-L6-v2 model (384-dim). When you
+# switch embedding_provider/model in config.py, update this constant
+# too — and either drop & recreate doc_chunks (data wipe is OK) or
+# bump the table to a new dim. The CHECK constraint on the column
+# rejects rows whose embedding length doesn't match.
+RAG_VECTOR_DIM = 384
+
+CREATE_DOC_CHUNKS_SQL = f"""
+CREATE TABLE IF NOT EXISTS doc_chunks (
+    id            BIGSERIAL PRIMARY KEY,
+    doc_name      VARCHAR(64)  NOT NULL,
+    doc_revision  VARCHAR(32)  NOT NULL DEFAULT '',
+    page_number   INT          NOT NULL DEFAULT 0,
+    section       VARCHAR(255) NOT NULL DEFAULT '',
+    class_code    VARCHAR(16)  NOT NULL DEFAULT '',
+    text          TEXT         NOT NULL,
+    embedding     DOUBLE PRECISION[] NOT NULL,
+    indexed_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT doc_chunks_embedding_dim
+        CHECK (array_length(embedding, 1) = {RAG_VECTOR_DIM})
+);
+"""
+
+# Companion B-tree indexes for metadata filters (so retrieval can scope
+# by doc_name or class_code without scanning every row's embedding).
+CREATE_DOC_CHUNKS_METADATA_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc_class
+    ON doc_chunks (doc_name, class_code);
+"""
+
+# Migration helper:
+#   1. If the table was previously created with the pgvector `vector(N)`
+#      column type (from an earlier revision of this code), drop it.
+#   2. If the table exists with the new DOUBLE PRECISION[] column but the
+#      CHECK constraint expects a different dim than RAG_VECTOR_DIM (e.g.
+#      we switched from 1024-dim Voyage to 384-dim MiniLM), drop and
+#      recreate the table.
+# Both paths require the user to re-ingest, which is expected when
+# changing the embedding model.
+DROP_LEGACY_VECTOR_COLUMN_SQL = f"""
+DO $$
+DECLARE
+    has_legacy_vector BOOLEAN;
+    constraint_clause TEXT;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'doc_chunks' AND column_name = 'embedding'
+          AND udt_name = 'vector'
+    ) INTO has_legacy_vector;
+    IF has_legacy_vector THEN
+        DROP TABLE doc_chunks;
+        RAISE NOTICE 'Dropped legacy pgvector-typed doc_chunks; will recreate with DOUBLE PRECISION[]';
+        RETURN;
+    END IF;
+
+    -- Check the existing CHECK constraint's dim — if it's not RAG_VECTOR_DIM,
+    -- the user has changed embedding model so wipe the corpus.
+    SELECT pg_get_constraintdef(oid)
+    INTO constraint_clause
+    FROM pg_constraint
+    WHERE conname = 'doc_chunks_embedding_dim';
+    IF constraint_clause IS NOT NULL
+       AND constraint_clause NOT LIKE '%array_length(embedding, 1) = {RAG_VECTOR_DIM}%' THEN
+        DROP TABLE doc_chunks;
+        RAISE NOTICE 'doc_chunks vector dim changed (re-ingestion required); table dropped';
+    END IF;
+END $$;
+"""
+
+# True when the doc_chunks table is ready for queries. Read by
+# rag_service to decide whether to run retrieval or fall back to the
+# pre-RAG path. Set inside init_pool().
+_rag_available: bool = False
+
 
 def is_available() -> bool:
     """Check if the database connection pool is initialized and ready."""
@@ -176,9 +278,52 @@ async def init_pool():
         logger.info(
             "PostgreSQL pool initialized — pms_cache + pms_agent_sessions tables ready"
         )
+
+        # Bring up pgvector + the doc_chunks table separately so a
+        # missing extension on a managed Postgres (e.g. Heroku) leaves
+        # the rest of the schema fully functional. The RAG pipeline
+        # auto-disables in that case.
+        await _init_rag_schema()
     except Exception as e:
         logger.error("Failed to initialize PostgreSQL pool: %s", e)
         _pool = None
+
+
+async def _init_rag_schema() -> None:
+    """Create the doc_chunks table on vanilla Postgres.
+
+    No extensions required — `embedding` is stored as a native
+    DOUBLE PRECISION[] array. If a previous revision of this code
+    created the table with the pgvector `vector(N)` column type, we
+    detect that and drop the table so the new schema wins (the user
+    re-ingests after upgrade anyway).
+
+    On any failure we log a warning and leave _rag_available = False;
+    rag_service consults that flag and skips retrieval gracefully so
+    the rest of the system keeps working.
+    """
+    global _rag_available
+    if not _pool:
+        return
+    try:
+        async with _pool.acquire() as conn:
+            # If a legacy pgvector-typed table exists, drop it before
+            # recreating with the new DOUBLE PRECISION[] schema.
+            await conn.execute(DROP_LEGACY_VECTOR_COLUMN_SQL)
+            await conn.execute(CREATE_DOC_CHUNKS_SQL)
+            await conn.execute(CREATE_DOC_CHUNKS_METADATA_INDEX_SQL)
+        _rag_available = True
+        logger.info("RAG schema ready — doc_chunks table available")
+    except Exception as e:
+        _rag_available = False
+        logger.warning(
+            "Failed to initialise RAG schema (%s) — RAG features disabled.", e,
+        )
+
+
+def is_rag_available() -> bool:
+    """Returns True iff doc_chunks is ready for queries."""
+    return _rag_available and _pool is not None
 
 
 async def close_pool():
@@ -687,3 +832,206 @@ async def admin_delete_any_agent_session(user_id: str, session_id: str) -> bool:
     except Exception as e:
         logger.error("DB admin_delete_any_agent_session error: %s", e)
         return False
+
+
+# ─────────────────────────────────────────────────────────────────
+# RAG corpus — doc_chunks helpers
+# ─────────────────────────────────────────────────────────────────
+# These are deliberately thin wrappers around SQL so the rag_service
+# layer can stay focused on the retrieval / orchestration logic.
+# Every helper checks `is_rag_available()` first and returns a safe
+# default when pgvector isn't configured — that way callers don't have
+# to special-case the disabled state.
+#
+# Vector parameters use pgvector's special string format: `[v1,v2,…]`
+# rather than asyncpg's array binding. asyncpg has no built-in vector
+# type so we cast to vector at SQL level via `$1::vector`.
+
+async def insert_doc_chunks(rows: list[dict]) -> int:
+    """Bulk-insert chunks into doc_chunks. Each `rows[i]` must carry:
+        doc_name, doc_revision, page_number, section, class_code,
+        text, embedding (list[float] of dimension RAG_VECTOR_DIM).
+
+    Embeddings are stored as native Postgres DOUBLE PRECISION[] arrays
+    — asyncpg handles the Python-list ↔ Postgres-array conversion
+    automatically. The CHECK constraint on the column rejects any
+    list whose length doesn't match RAG_VECTOR_DIM, catching dimension
+    mismatches at insert time rather than at retrieval.
+
+    Existing rows for the same (doc_name, doc_revision) are NOT cleared
+    automatically — callers that want a clean re-ingest should call
+    `clear_doc_chunks(doc_name, doc_revision)` first. Returns the count
+    inserted; 0 if the RAG schema isn't available."""
+    if not is_rag_available() or not rows:
+        return 0
+    try:
+        async with _pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.executemany(
+                    """
+                    INSERT INTO doc_chunks
+                        (doc_name, doc_revision, page_number, section,
+                         class_code, text, embedding, indexed_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                    """,
+                    [
+                        (
+                            r["doc_name"], r.get("doc_revision", ""),
+                            int(r.get("page_number") or 0),
+                            r.get("section") or "",
+                            r.get("class_code") or "",
+                            r["text"],
+                            [float(x) for x in r["embedding"]],
+                        )
+                        for r in rows
+                    ],
+                )
+        return len(rows)
+    except Exception as e:
+        logger.error("DB insert_doc_chunks error: %s", e)
+        return 0
+
+
+async def clear_doc_chunks(doc_name: str = "", doc_revision: str = "") -> int:
+    """Delete chunks for a specific (doc_name, doc_revision) pair, or
+    all chunks if both args are empty. Used before a fresh re-ingest
+    so we don't accumulate stale embeddings.
+
+    Returns the row count deleted."""
+    if not is_rag_available():
+        return 0
+    try:
+        async with _pool.acquire() as conn:
+            if doc_name and doc_revision:
+                result = await conn.execute(
+                    "DELETE FROM doc_chunks "
+                    "WHERE doc_name = $1 AND doc_revision = $2",
+                    doc_name, doc_revision,
+                )
+            elif doc_name:
+                result = await conn.execute(
+                    "DELETE FROM doc_chunks WHERE doc_name = $1", doc_name,
+                )
+            else:
+                result = await conn.execute("DELETE FROM doc_chunks")
+        return int(result.split()[-1] or 0)
+    except Exception as e:
+        logger.error("DB clear_doc_chunks error: %s", e)
+        return 0
+
+
+async def retrieve_doc_chunks(
+    query_vec: list[float],
+    top_k: int = 5,
+    min_similarity: float = 0.0,
+    doc_name: str | None = None,
+    class_code: str | None = None,
+) -> list[dict]:
+    """Cosine-similarity search against doc_chunks.
+
+    `query_vec` is the embedding of the user's query (same model + dim
+    as the stored chunks).
+
+    Optional filters scope the search:
+      • doc_name   → "PMS" / "B31.3" / "VMS" / …
+      • class_code → "A25" / "T80A" / … (exact match — useful when the
+        request is for a specific class's notes/data sheet)
+
+    Implementation: runs the metadata filter at SQL level (so we don't
+    pull unrelated docs into Python), then computes cosine similarity
+    on the loaded vectors in Python and returns the top-K. For the
+    project's expected corpus size (≤ 10K chunks) this is fast enough
+    that an ANN index isn't worth the operational cost of pgvector;
+    we re-evaluate if the corpus grows past 50K chunks.
+
+    Returns up to `top_k` rows sorted by descending similarity. Each
+    row is a dict with the chunk metadata plus a `similarity` score in
+    [0, 1] (higher = more relevant)."""
+    if not is_rag_available() or not query_vec:
+        return []
+
+    where: list[str] = []
+    args: list = []
+    if doc_name:
+        args.append(doc_name)
+        where.append(f"doc_name = ${len(args)}")
+    if class_code:
+        args.append(class_code)
+        where.append(f"class_code = ${len(args)}")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    sql = f"""
+        SELECT doc_name, doc_revision, page_number, section, class_code,
+               text, embedding
+        FROM doc_chunks
+        {where_sql}
+    """
+    try:
+        async with _pool.acquire() as conn:
+            rows = await conn.fetch(sql, *args)
+    except Exception as e:
+        logger.error("DB retrieve_doc_chunks error: %s", e)
+        return []
+
+    if not rows:
+        return []
+
+    # Compute cosine similarity in Python over the candidate set. We
+    # pre-compute the query norm once; per-row norm + dot product are
+    # straight-line ops over RAG_VECTOR_DIM floats. asyncpg returns
+    # `embedding` as a Python list of floats already (no parsing).
+    q_norm_sq = sum(x * x for x in query_vec)
+    if q_norm_sq <= 0:
+        return []
+    q_norm = q_norm_sq ** 0.5
+
+    scored: list[tuple[float, dict]] = []
+    for r in rows:
+        emb = r["embedding"]
+        if not emb or len(emb) != len(query_vec):
+            continue
+        dot = 0.0
+        n_sq = 0.0
+        for a, b in zip(query_vec, emb):
+            dot += a * b
+            n_sq += b * b
+        if n_sq <= 0:
+            continue
+        sim = dot / (q_norm * (n_sq ** 0.5))
+        if sim < min_similarity:
+            continue
+        scored.append((sim, {
+            "doc_name":     r["doc_name"],
+            "doc_revision": r["doc_revision"],
+            "page_number":  r["page_number"],
+            "section":      r["section"],
+            "class_code":   r["class_code"],
+            "text":         r["text"],
+            "similarity":   round(float(sim), 4),
+        }))
+
+    # Top-K by similarity (descending). For small K and N we use a
+    # simple sort; partial-sort would be marginal on this scale.
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [d for _, d in scored[:top_k]]
+
+
+async def count_doc_chunks(doc_name: str | None = None) -> int:
+    """Return the number of indexed chunks (optionally scoped to one
+    doc). Used by health/status endpoints and by the ingestion script
+    to confirm an ingest succeeded."""
+    if not is_rag_available():
+        return 0
+    try:
+        async with _pool.acquire() as conn:
+            if doc_name:
+                n = await conn.fetchval(
+                    "SELECT COUNT(*) FROM doc_chunks WHERE doc_name = $1",
+                    doc_name,
+                )
+            else:
+                n = await conn.fetchval("SELECT COUNT(*) FROM doc_chunks")
+        return int(n or 0)
+    except Exception as e:
+        logger.error("DB count_doc_chunks error: %s", e)
+        return 0

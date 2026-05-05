@@ -70,13 +70,23 @@ _FITTING_MATERIAL_SPEC = (
 )
 _FITTING_ENDS          = "OD X THD, OD X OD, & OD X SW (Manufacturer Standard)"
 
-# Valve codes — instrument-only with JT (RTJ + NPT female) suffix per spec.
-# Format: "<Type><Bore><Seat>{class}JT"
-_VALVE_RATING        = "10000# (69 MPa)"
-_VALVE_DBB_TEMPLATE   = "DBFP{cls}JT"   # DBB:    DB · F bore · P (PEEK) seat
-_VALVE_NEEDLE_TEMPLATE= "NEIP{cls}JT"   # Needle: NE · I (Inline) · P (PEEK)
-_VALVE_BALL_TEMPLATE  = "BLFP{cls}JT"   # Ball:   BL · F bore · P (PEEK)
-_VALVE_CHECK_TEMPLATE = "CHPM{cls}JT"   # Check:  CH · P (Piston) · M (Metal)
+# Valve codes — instrument-only, end suffix per the project Valve Material
+# Specification (40801-SPE-80000-PP-SP-0002 Rev A0). The end-suffix letter
+# is NOT uniform across valve families — it was hand-checked against each
+# appendix's data-sheet index in the VMS PDF:
+#   • DBB    → JT  (RTJ + NPT female, instrument)         — VMS Appx-6, p.~698+
+#   • Check  → JT  (RTJ + NPT female, instrument)         — VMS Appx-3, p.265
+#   • Ball   → J   (RTJ flanged + OD-tube/NPT)            — VMS Appx-1, p.232-238
+#   • Needle → F   (FF face, OD tube / NPT female)        — VMS Appx-7, p.790-796
+# Earlier revisions of this file used "JT" for all four templates; that
+# produced VDS codes (BLFP*JT, NEIP*JT) that don't appear in the master
+# VMS, so any contractor looking up the printed code on the spec sheet
+# couldn't find the corresponding data sheet.
+_VALVE_RATING         = "10000# (69 MPa)"
+_VALVE_DBB_TEMPLATE   = "DBFP{cls}JT"   # DBB:    DB · F bore · P (PEEK) seat · JT end
+_VALVE_NEEDLE_TEMPLATE= "NEIP{cls}F"    # Needle: NE · I (Inline) · P (PEEK) · F end
+_VALVE_BALL_TEMPLATE  = "BLFP{cls}J"    # Ball:   BL · F bore · P (PEEK) · J end
+_VALVE_CHECK_TEMPLATE = "CHPM{cls}JT"   # Check:  CH · P (Piston) · M (Metal) · JT end
 
 # Notes — 7 standard for all 6 classes; T90 family adds note 8 (Mo content).
 _NOTES_COMMON = [
