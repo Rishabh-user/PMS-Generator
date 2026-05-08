@@ -15,7 +15,6 @@ from pathlib import Path
 
 from huggingface_hub import login as hf_login
 from langchain_community.retrievers import BM25Retriever
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_community.cross_encoders.huggingface import HuggingFaceCrossEncoder
 from langchain_community.vectorstores import FAISS
 from langchain_classic.retrievers import EnsembleRetriever, ContextualCompressionRetriever
@@ -36,30 +35,55 @@ _STANDARD_DATA_DIR = Path(__file__).resolve().parent.parent / "standard_data"
 _retriever = None
 _init_failed = False
 
-loader = DirectoryLoader(_STANDARD_DATA_DIR, glob="**/*.md", loader_cls=TextLoader)
-docs = loader.load()
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _load_md_splits():
-    """Load and chunk all ASME standard markdown files for BM25."""
-    headers_to_split_on = [
-        ("#", "Header 1"),
-    ]
+    """Load and chunk all standard documents for BM25.
+
+    For each PDF in standard_data/:
+      - Use the same-named .md file when available (preferred)
+      - Fall back to pymupdf4llm PDF extraction when no .md exists
+    """
+    from langchain_core.documents import Document
+
+    headers_to_split_on = [("#", "Header 1")]
     markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
 
-    # Process all loaded documents
+    pdf_files = sorted(_STANDARD_DATA_DIR.glob("*.pdf"))
+    if not pdf_files:
+        logger.warning("RAG: no PDF files found in standard_data/")
+        return []
+
+    raw_docs: list[Document] = []
+    for pdf_path in pdf_files:
+        md_path = pdf_path.with_suffix(".md")
+        if md_path.exists():
+            text   = md_path.read_text(encoding="utf-8")
+            source = str(md_path)
+        else:
+            # Fallback: extract markdown from the PDF
+            try:
+                import pymupdf4llm  # type: ignore
+                text   = pymupdf4llm.to_markdown(str(pdf_path))
+                source = str(pdf_path)
+                logger.info("RAG: extracted %s via pymupdf4llm (no .md found)", pdf_path.name)
+            except Exception as exc:
+                logger.warning("RAG: skipping %s — cannot extract (%s)", pdf_path.name, exc)
+                continue
+        raw_docs.append(Document(page_content=text, metadata={"source": source}))
+
     md_splits = []
-    for doc in docs:
+    for doc in raw_docs:
         splits = markdown_splitter.split_text(doc.page_content)
-        # Propagate parent file path into each split so BM25 results carry source metadata
         parent_src = doc.metadata.get("source", "")
         for split in splits:
             split.metadata["source"] = parent_src
         md_splits.extend(splits)
-    logger.info("RAG: loaded %d chunks from standard_data/", len(docs))
+
+    logger.info("RAG: loaded %d chunks from %d document(s) in standard_data/",
+                len(md_splits), len(raw_docs))
     return md_splits
 
 
