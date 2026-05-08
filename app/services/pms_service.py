@@ -10,13 +10,16 @@ Flow:
   6. Regenerate endpoint bypasses cache and forces fresh AI call
 """
 import logging
+import re
+from pathlib import Path
 
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
     PipeSize, FittingsData, FittingBySize, ExtraFittings, FlangeData,
     SpectacleBlind, BoltsNutsGaskets, ValveData, ValveSizeEntry,
 )
-from app.services.ai_service import generate_pms_with_ai, AIGenerationError
+from app.services.ai_service import generate_pms_with_ai, generate_class_code_with_ai, AIGenerationError
+from app.services.rag_service import retrieve_context
 from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services.tubing_service import build_tubing_pms, is_tubing_class
@@ -25,7 +28,6 @@ from app.services import db_service
 from app.services import valvesheet_sync_service
 from app.utils.pipe_data import correct_pipe_data
 from app.utils.engineering_constants import HYDROTEST_FACTOR, MILL_TOLERANCE_PERCENT
-from app.utils.engineering import hydrotest_pressure_corrected
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +47,36 @@ logger = logging.getLogger(__name__)
 _pms_cache: dict[str, PMSResponse] = {}
 
 
-def _cache_key(req: PMSRequest) -> str:
-    """Cache key is the normalized piping_class.
+def _norm(s: str) -> str:
+    """Normalise a string for use in a composite cache key."""
+    return re.sub(r'\s+', ' ', (s or '').strip()).upper()
 
-    Previously this hashed (class, material, CA, service) into an MD5 so
-    the same class with a different `service` blurb created a second row.
-    The project owner explicitly wants one row per class with a bumped
-    version (A0 → A1 → A2 …) on regenerate, so the key collapses to the
-    uppercased, trimmed piping_class.
+
+def _apply_hydrotest(pms: PMSResponse) -> PMSResponse:
+    """Enforce the mandatory hydrotest rule on any PMSResponse (fresh or cached).
+    P_hydrotest = pressures[0] × 1.5  — the first (coldest) P-T column.
+    Mutates pms.hydrotest_pressure in-place and returns pms."""
+    pressures = pms.pressure_temperature.pressures if pms.pressure_temperature else []
+    non_zero = [p for p in pressures if (p or 0) > 0]
+    if non_zero:
+        pms.hydrotest_pressure = str(round(non_zero[0] * HYDROTEST_FACTOR, 2))
+    return pms
+
+
+def _cache_key(req: PMSRequest) -> str:
+    """Composite cache key: class || material || CA || service (all normalised).
+
+    A change in ANY of the four parameters produces a different key, so the
+    backend never serves a cached entry that doesn't match the exact request.
+    The display class code (just the class part) is stored separately in
+    display_class so the admin UI still shows a clean code, not the full key.
     """
-    return req.piping_class.upper().strip()
+    return "||".join([
+        _norm(req.piping_class),
+        _norm(req.material),
+        _norm(req.corrosion_allowance),
+        _norm(req.service),
+    ])
 
 
 # Classes whose pipe-size table extends past NPS 24 (B16.5's upper bound).
@@ -166,53 +188,34 @@ def _determine_class_type(piping_class: str) -> str:
     return "standard"
 
 
-def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSResponse:
+def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest, piping_class_override: str | None = None) -> PMSResponse:
     """Merge JSON P-T data with AI-generated fields into a PMSResponse."""
     pt_data = entry.get("pressure_temperature", {})
+
+    # For custom classes the catalogue entry has no P-T data; the AI was
+    # asked to generate it via generate_pt=True.  Fall back to ai_data's
+    # pressure_temperature block so the table isn't empty.
+    if not pt_data.get("temperatures") and ai_data.get("pressure_temperature"):
+        pt_data = ai_data["pressure_temperature"]
+
     pt = PressureTemperature(
         temperatures=pt_data.get("temperatures", []),
         pressures=pt_data.get("pressures", []),
         temp_labels=pt_data.get("temp_labels", []),
     )
 
-    # Hydrotest pressure per ASME B31.3 §345.4.2(b) — Eq. 24:
-    #     P_T = 1.5 × P × (S_T / S_design)
-    # When the line runs hot, the steel is weaker at the design
-    # temperature than at the test (≈ ambient) temperature, so the cold
-    # hydrotest must be *higher* than 1.5·P to prove the line can carry
-    # the rated pressure once it heats up. The previous flat 1.5·P
-    # under-tested every high-temperature class. Catalogue's max(P) is
-    # the design pressure; max(T) (highest column with a non-zero P) is
-    # the design temperature feeding the S(T) lookup.
+    # Hydrotest pressure — mandatory rule for all classes:
+    #   P_hydrotest = first pressure in P-T table × 1.5
+    # The first column is the cold/base rating (at -29°C or lowest listed
+    # temperature), which is the MAWP at ambient test conditions.
     pressures = pt_data.get("pressures", [])
-    temperatures = pt_data.get("temperatures", [])
     if pressures:
-        max_p = max(pressures)
-        # Highest temperature with a non-zero pressure rating drives the
-        # correction. If a class lists 600 °C with P=0 (above material
-        # limit), that row should not pull the hydrotest up — pair each
-        # T with its P and pick max(T) only over rated rows.
-        rated_temps = [
-            t for t, p in zip(temperatures, pressures)
-            if (p or 0) > 0 and t is not None
-        ]
-        max_t = max(rated_temps) if rated_temps else (max(temperatures) if temperatures else 0)
-        ht = hydrotest_pressure_corrected(
-            design_pressure=max_p,
-            design_temp_c=max_t,
-            material_spec=entry.get("material") or req.material or "",
+        base_p = pressures[0]
+        hydrotest_str = str(round(base_p * HYDROTEST_FACTOR, 2))
+        logger.info(
+            "Hydrotest for %s: %.2f barg (= %.4g × 1.5)",
+            req.piping_class, float(hydrotest_str), base_p,
         )
-        hydrotest_str = str(ht["pressure_barg"])
-        if ht.get("correction_applied"):
-            logger.info(
-                "Hydrotest §345.4.2(b) correction for %s: %s barg "
-                "(flat 1.5·P would be %.2f, S_T/S=%.3f at T=%s°C)",
-                req.piping_class,
-                hydrotest_str,
-                round(max_p * HYDROTEST_FACTOR, 2),
-                ht["ratio_st_over_s"],
-                max_t,
-            )
     else:
         hydrotest_str = ai_data.get("hydrotest_pressure", "")
 
@@ -342,8 +345,8 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
     class_type = _determine_class_type(req.piping_class)
 
     return PMSResponse(
-        piping_class=req.piping_class,
-        rating=entry.get("rating", ""),
+        piping_class=piping_class_override or req.piping_class,
+        rating=req.custom_rating or entry.get("rating", ""),
         class_type=class_type,
         material=req.material,
         corrosion_allowance=req.corrosion_allowance,
@@ -376,15 +379,39 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     """Core AI generation logic — shared by generate_pms and regenerate_pms."""
     # Find P-T data from JSON
     entry = data_service.find_entry(req.piping_class)
-    if not entry:
-        raise RuntimeError(
-            f"Piping class '{req.piping_class}' not found in database. "
-            "Only classes with P-T data in the system can be generated."
-        )
 
-    # Get reference entries for AI context
+    # ── Custom class path ─────────────────────────────────────────────────
+    # When piping_class is not in the catalogue AND custom_rating is provided,
+    # this is a user-defined combination.  We:
+    #   1. Build a synthetic catalogue entry (empty P-T — the AI generates
+    #      all structural data from the custom params + naming rules).
+    #   2. Call generate_class_code_with_ai() to replace the internal CUST-*
+    #      placeholder with a proper project-standard code (e.g. "K10").
+    #   3. Use that code as the canonical piping_class throughout so caching,
+    #      the PMSResponse, and the UI all show a clean designation.
+    if not entry:
+        if not req.custom_rating:
+            raise RuntimeError(
+                f"Piping class '{req.piping_class}' not found in database. "
+                "Only classes with P-T data in the system can be generated."
+            )
+        logger.info(
+            "Custom class '%s' — resolving class code via AI "
+            "(custom_rating='%s', material='%s', CA='%s')",
+            req.piping_class, req.custom_rating, req.material, req.corrosion_allowance,
+        )
+        entry = {
+            "rating": req.custom_rating,
+            "piping_class": req.piping_class,
+            "pressure_temperature": {"temperatures": [], "pressures": [], "temp_labels": []},
+            "material": req.material,
+        }
+
+    # Get reference entries for AI context / few-shots
     all_entries = data_service.get_all_entries()
-    rating = entry.get("rating", "")
+    # Use custom_rating when provided — the piping_class may be a custom code
+    # whose catalogue entry (if any) uses a different rating.
+    rating = req.custom_rating or entry.get("rating", "")
     reference_entries = [
         e for e in all_entries
         if e.get("rating") == rating and e["piping_class"] != req.piping_class
@@ -395,18 +422,53 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     ][:2]
     reference_entries.extend(other_entries)
 
-    # Call AI to generate everything except P-T.
+    # ── Custom class: resolve proper piping class code ────────────────────
+    # Resolve FIRST so the correct class code (e.g. "K10") goes into both
+    # the RAG query and the LLM prompt — not the "CUST-*" placeholder.
+    effective_piping_class = req.piping_class
+    if req.custom_rating and req.piping_class.upper().startswith('CUST'):
+        effective_piping_class = await generate_class_code_with_ai(
+            rating=rating,
+            material=req.material,
+            corrosion_allowance=req.corrosion_allowance,
+            service=req.service,
+            reference_entries=reference_entries,
+            rag_context=None,   # no RAG yet at this point
+        )
+        logger.info(
+            "Custom class resolved (direct path): %s → %s",
+            req.piping_class, effective_piping_class,
+        )
+
+    # RAG: retrieve relevant ASME standard excerpts using the RESOLVED class code.
+    # Returns (context_string, source_map) where source_map = {1: "ASME B16.5_2020", ...}
+    # so we can resolve the LLM's integer rag_docs_used back to real document names.
+    rag_context, rag_source_map = retrieve_context(
+        piping_class=effective_piping_class,
+        material=req.material,
+        corrosion_allowance=req.corrosion_allowance,
+        service=req.service,
+        rating=rating,
+    )
+
+    # For custom classes the synthetic entry has no P-T data; instruct the
+    # AI to generate pressure_temperature + hydrotest_pressure from ASME tables.
+    is_custom_class = not bool(entry.get("pressure_temperature", {}).get("temperatures"))
+
+    # Call AI to generate everything (P-T included for custom classes).
     # generate_pms_with_ai raises AIGenerationError with a specific reason on
     # failure — we re-raise as RuntimeError so the route handler turns it
     # into a 422 with the exact cause (credit balance, rate limit, etc.).
     try:
         ai_data = await generate_pms_with_ai(
-            piping_class=req.piping_class,
+            piping_class=effective_piping_class,
             material=req.material,
             corrosion_allowance=req.corrosion_allowance,
             service=req.service,
             rating=rating,
             reference_entries=reference_entries,
+            rag_context=rag_context,
+            generate_pt=is_custom_class,
         )
     except AIGenerationError as e:
         raise RuntimeError(
@@ -429,6 +491,10 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     #   - Non-ASME pipe codes (CuNi, Copper, GRE, CPVC, Tubing): untouched.
     if "pipe_data" in ai_data:
         pt_data = entry.get("pressure_temperature", {}) or {}
+        # For custom classes the catalogue entry has no P-T; fall back to
+        # the AI-generated block so wall-thickness correction has real values.
+        if not (pt_data.get("pressures") or pt_data.get("temperatures")):
+            pt_data = ai_data.get("pressure_temperature", {}) or {}
         pressures = pt_data.get("pressures") or []
         temperatures = pt_data.get("temperatures") or []
         design_pressure = max(pressures) if pressures else None
@@ -453,8 +519,62 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
         )
 
     # Merge P-T from JSON + AI-generated data
-    pms = _build_pms_response(entry, ai_data, req)
-    logger.info("Generated PMS for %s via AI (P-T from JSON, rest from AI)", req.piping_class)
+    pms = _build_pms_response(entry, ai_data, req, piping_class_override=effective_piping_class)
+
+    # Tag each section with its data origin for the optional Excel audit table.
+    ai_src = "LLM (RAG)" if rag_context else "LLM (No RAG)"
+    pt_src = ai_src if is_custom_class else "Rule Extraction"
+    pms.data_sources = {
+        "Pressure-Temperature Rating": pt_src,
+        "Hydrotest Pressure": pt_src,
+        "Pipe Data — Dimensions (OD / WT)": "Rule Extraction",
+        "Pipe Data — Type, MOC, Schedule, Ends": ai_src,
+        "Fittings": ai_src,
+        "Flange": ai_src,
+        "Spectacle Blind": ai_src,
+        "Bolts / Nuts / Gaskets": ai_src,
+        "Valves": ai_src,
+        "Notes": ai_src,
+    }
+
+    # Build data_source_notes with full RAG chunk text for used documents.
+    # Parse chunk bodies from rag_context; use LLM's integer indices to select
+    # only the chunks it actually referenced.
+    pms.data_source_notes = {}
+    if rag_context and rag_source_map:
+        # Parse full text of each numbered chunk.
+        # First line is "[N] SourceName" — use [^\n]+ so it stops at the newline,
+        # then (.*) with DOTALL captures the entire body.
+        chunk_texts: dict[int, str] = {}
+        for chunk in re.split(r'\n\n---\n\n', rag_context):
+            chunk = chunk.strip()
+            m = re.match(r'^\[(\d+)\]\s*[^\n]+\n(.*)', chunk, re.DOTALL)
+            if m:
+                chunk_texts[int(m.group(1))] = m.group(2).strip()
+
+        used_indices = ai_data.get("rag_docs_used", [])
+        if isinstance(used_indices, list) and used_indices:
+            valid = [int(n) for n in used_indices
+                     if str(n).lstrip("-").isdigit() and int(n) in rag_source_map]
+        else:
+            valid = list(rag_source_map.keys())
+
+        if valid:
+            parts = []
+            for n in valid:
+                name = rag_source_map[n]
+                text = chunk_texts.get(n, "")
+                parts.append(f"[{n}] {name}\n{text}")
+            rag_note = "\n\n".join(parts)
+            for section, src in pms.data_sources.items():
+                if src == "LLM (RAG)":
+                    pms.data_source_notes[section] = rag_note
+
+    logger.info(
+        "Generated PMS for %s (display: %s) via AI (P-T from %s, rest from %s)",
+        req.piping_class, effective_piping_class,
+        pt_src, ai_src,
+    )
     return pms
 
 
@@ -474,7 +594,8 @@ async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
     synced_version: str | None = None
     if db_service.is_available():
         synced_version = await db_service.store_pms(
-            piping_class=key,
+            piping_class=key,                            # composite cache key
+            display_class=pms.piping_class.upper().strip(),  # human-readable code
             material=req.material,
             corrosion_allowance=req.corrosion_allowance,
             service=req.service,
@@ -531,7 +652,7 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
     # L1: In-memory cache
     if key in _pms_cache:
         logger.info("L1 memory cache HIT for %s (key=%s)", req.piping_class, key)
-        return _pms_cache[key]
+        return _apply_hydrotest(_pms_cache[key])
 
     # L2: PostgreSQL cache
     if db_service.is_available():
@@ -557,6 +678,7 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
                     "L2 database cache HIT for %s (key=%s, version=%s)",
                     req.piping_class, key, cached.get("version", "?"),
                 )
+                _apply_hydrotest(pms)
                 _pms_cache[key] = pms  # Promote to L1
                 return pms
         else:
@@ -570,6 +692,7 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
     # L3: AI generation (only reached when BOTH caches missed)
     logger.info("Generating %s via AI (cache miss)", req.piping_class)
     pms = await _generate_from_ai(req)
+    _apply_hydrotest(pms)
     await _store_in_caches(key, req, pms)
     return pms
 
@@ -590,6 +713,7 @@ async def regenerate_pms(req: PMSRequest) -> PMSResponse:
 
     logger.info("Regenerating PMS for %s via AI (forced, bypassing cache)", req.piping_class)
     pms = await _generate_from_ai(req)
+    _apply_hydrotest(pms)
     await _store_in_caches(key, req, pms)
     return pms
 

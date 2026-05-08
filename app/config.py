@@ -1,6 +1,7 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
+import os
 
 load_dotenv(override=True)
 
@@ -17,8 +18,22 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
 
+    openai_api_key: str = os.getenv("OPENAI_API_KEY")
+    rag_enabled: bool = True
+    # When True, a "Data Sources" table is appended to every generated Excel
+    # sheet showing which sections came from rule extraction, LLM+RAG, or
+    # LLM without RAG.  Toggle via SHOW_DATA_SOURCE_TABLE in .env.
+    show_data_source_table: bool = True
+    # When True, the AI generation call includes Anthropic's built-in
+    # web_search tool (max 3 searches per call).  Searches are restricted
+    # to engineering standards (ASME/API/ASTM) via the system prompt.
+    # Toggle via ENABLE_AI_WEB_SEARCH in .env.
+    enable_ai_web_search: bool = True
+
     templates_dir: Path = BASE_DIR / "app" / "templates"
     static_dir: Path = BASE_DIR / "app" / "static"
+
+    huggingface_api_key: str = os.getenv("HUGGINGFACE_API_KEY")
 
     # NOTE: the former `cache_ttl` + `cache_max_size` settings have been
     # removed — the L1 PMS cache no longer time-expires or size-caps.

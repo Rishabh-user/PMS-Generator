@@ -8,8 +8,10 @@ ASME/ASTM standards combined with project-specific conventions taught in the pro
 """
 import json
 import logging
+import re
 
 import anthropic
+import httpx
 
 from app.config import settings
 from app.utils.engineering_constants import AI_MAX_TOKENS, MILL_TOLERANCE_PERCENT
@@ -26,13 +28,21 @@ class AIGenerationError(RuntimeError):
 SYSTEM_PROMPT = """You are a senior piping materials engineer with deep expertise in:
 - ASME B31.3 (Process Piping), B36.10M (Welded/Seamless Wrought Steel Pipe), B36.19M (Stainless Steel Pipe)
 - ASME B16.5 (Flanges), B16.9 (BW Fittings), B16.11 (Forged Fittings), B16.20 (Gaskets), B16.47 (Large Flanges), B16.48 (Line Blanks)
+- API 6A (Wellhead and Tree Equipment) — pressure ratings 2000# through 20000#, temperature classes K/L/M/N/P/R/S/T/U/V, flanges, valves and fittings for high-pressure service
+- API 6D (Pipeline Valves), API 600 (Steel Gate Valves), API 602 (Compact Gate Valves)
 - ASTM material standards for CS, LTCS, SS316L, Duplex, Super Duplex, CuNi, Titanium, GRE, CPVC, Copper
 - EEMUA 234 (CuNi piping systems)
 - NACE MR-01-75 / ISO 15156 sour service requirements
 - Industrial valve specifications and coding conventions
 
-You generate PMS (Piping Material Specification) data with 100% accuracy to ASME standards.
-Return ONLY valid JSON. No markdown, no explanation, no extra text."""
+You generate PMS (Piping Material Specification) data with 100% accuracy to ASME/API standards.
+Return ONLY valid JSON. No markdown fences, no explanation, no preamble, no extra text — not even after a web search.
+Your ENTIRE response must start with { and end with }.
+
+WEB SEARCH GUIDANCE (applies when the web_search tool is available):
+- Search freely for any information that helps generate accurate, complete PMS data — engineering standards, technical specs, material datasheets, product catalogues, manufacturer data, etc.
+- Limit to 2–3 focused searches per generation.
+- If a search result contradicts the project-specific rules in this prompt, trust the project rules."""
 
 
 def _build_generation_prompt(
@@ -42,8 +52,120 @@ def _build_generation_prompt(
     service: str,
     rating: str,
     reference_entries: list[dict],
+    rag_context: str | None = None,
+    generate_pt: bool = False,
 ) -> str:
     """Build the prompt that teaches the AI the project rules and patterns."""
+
+    # Build compact pattern examples from similar catalogue classes.
+    # Shows P-T data + key specs so the AI can match the same style/values.
+    ref_section = ""
+    if reference_entries:
+        lines = ["=== SIMILAR CATALOGUE CLASSES — USE THESE AS PATTERNS ==="]
+        for e in reference_entries[:4]:
+            pt = e.get("pressure_temperature", {})
+            temps = pt.get("temperatures", [])
+            pres = pt.get("pressures", [])
+            # Compact P-T preview (first 5 points)
+            pt_preview = list(zip(temps[:5], pres[:5]))
+            suffix = "…" if len(temps) > 5 else ""
+            lines.append(
+                f"  {e.get('piping_class','?')} | {e.get('rating','?')} | "
+                f"{e.get('material','?')} | CA {e.get('corrosion_allowance','?')}"
+            )
+            if pt_preview:
+                lines.append(f"    P-T (temp°C, barg): {pt_preview}{suffix}")
+        lines.append("Use these to match the P-T style and value range for the same rating/material family.")
+        lines.append("=== END PATTERNS ===")
+        ref_section = "\n".join(lines) + "\n"
+
+    rag_section = ""
+    if rag_context:
+        rag_section = f"""
+=== RETRIEVED REFERENCE DOCUMENTS ===
+Each document below is numbered [1], [2], … Use them to confirm or refine your output.
+After generating, list the numbers of documents you actually referenced in "rag_docs_used".
+
+{rag_context}
+
+=== END OF RETRIEVED DOCUMENTS ===
+"""
+
+    if generate_pt:
+        pt_instruction = """\
+PRESSURE-TEMPERATURE DATA — generate this (custom class, no catalogue entry).
+
+═══ STEP 1: Identify the governing standard from the rating ═══
+
+  • Rating is 2500#  (G-series) → USE API 6A  (2500 psi  = 172.4 barg ≈ 172 barg)
+  • Rating is 5000#  (J-series) → USE API 6A  (5000 psi  = 344.7 barg ≈ 345 barg)
+  • Rating is 10000# (K-series) → USE API 6A  (10000 psi = 689.5 barg ≈ 690 barg)
+  • Any other rating (150#–1500#) → USE ASME B16.5 Table 2 / B31.3
+
+═══ STEP 2a — API 6A path (2500# / 5000# / 10000#) ═══
+
+  API 6A defines a CONSTANT working pressure throughout a temperature class.
+  Pressure does NOT decrease with temperature (unlike ASME B16.5).
+
+  Temperature class selection (pick the one that fits the service):
+    Class P: -29°C to 121°C    (general oilfield process service)
+    Class S: -46°C to 177°C    (elevated temperature service)
+    Class T: -46°C to 204°C    (high temperature service)
+    Class U: -46°C to 260°C    (very high temperature service)
+
+  Temperature breakpoints within the selected class range — use only:
+    -29, 50, 100, [121 or 177 or 204 per class limit]
+  Do NOT go past the temperature class limit. Do NOT repeat any temperature.
+
+  Pressure at every breakpoint = the rated working pressure (constant).
+
+  Example for 10000# Class P (-29°C to 121°C):
+    temperatures:  [-29, 50, 100, 121]
+    pressures:     [690, 690, 690, 690]
+    temp_labels:   ["-29 TO 50", "100", "121"]
+
+═══ STEP 2b — ASME B16.5 path (150# to 1500#) ═══
+
+  For ASME classes the PRESSURE MUST DECREASE as temperature increases.
+  Use ASME B16.5 Table 2 material-group allowable-stress ratios.
+
+  Temperature breakpoints (°C): -29, 50, 100, 150, 200, 250, 300
+  Trim at the material's upper service limit:
+    CS / LTCS: up to 400°C  |  SS316L: up to 300°C  |  DSS/SDSS: up to 300°C
+
+  Pressure at -29°C = the ASME B16.5 class base rating.
+  Pressure MUST be LOWER at higher temperatures (min ~30% drop from base to
+  the top of the table, distributed across temperature steps).
+
+  Example for 300# CS Group 1.1:
+    temperatures:  [-29, 50, 100, 150, 200, 250, 300, 350, 400]
+    pressures:     [51.1, 51.1, 51.1, 48.3, 46.5, 44.8, 43.1, 40.0, 37.9]
+
+═══ STEP 3 — Formatting rules ═══
+
+  • temperatures: UNIQUE values only — NO DUPLICATES whatsoever.
+  • pressures: same count as temperatures.
+  • temp_labels: "-29 TO 50" for the first entry; subsequent entries are just
+    the number as a string ("100", "150", "121", …).
+  • hydrotest_pressure: 1.5 × pressures[0] (the first/coldest pressure value), rounded to 2 decimal places.
+
+═══ WEB SEARCH HINT for P-T (if web_search tool available) ═══
+  Use web search to get the exact published table values rather than estimating:
+  • ASME B16.5 path  → search: "ASME B16.5 Table 2-1.1 {rating} pressure rating barg Group 1.1"
+    (replace 1.1 with the actual material group for the class material)
+  • API 6A path      → search: "API 6A {rating} psi rated working pressure temperature class"
+  One targeted search is enough — take the numeric values directly from the table result.
+
+Include in your JSON:
+  "pressure_temperature": {
+      "temperatures": [...],
+      "pressures": [...],
+      "temp_labels": [...]
+  },
+  "hydrotest_pressure": "<value>"
+"""
+    else:
+        pt_instruction = 'Do NOT generate P-T data or hydrotest_pressure (handled separately). Set hydrotest_pressure to "".'
 
     return f"""Generate a complete PMS JSON for:
 - Piping Class: {piping_class}
@@ -51,8 +173,8 @@ def _build_generation_prompt(
 - Material: {material}
 - Corrosion Allowance: {corrosion_allowance}
 - Service: {service}
-
-Do NOT generate P-T data or hydrotest_pressure (handled separately). Set hydrotest_pressure to "".
+{rag_section}
+{pt_instruction}
 
 === CLASS NAMING CONVENTION (3-Part System per PMS Doc) ===
 Format: [PART1][PART2][PART3]
@@ -104,6 +226,56 @@ Examples:
   T90C = 6 Mo Tubing, 325 Barg
   J1   = 5000# CS 3mm CA  (rating reserved for HP service; no class currently catalogued)
   K1   = 10000# CS 3mm CA (rating reserved for HP service; no class currently catalogued)
+
+=== API 6A HIGH-PRESSURE CLASSES (G-series 2500#, J-series 5000#, K-series 10000#) ===
+
+For G/J/K-series classes, ALL component specifications must follow API 6A,
+NOT ASME B16.5.  Key rules:
+
+PRESSURE-TEMPERATURE (catalogue entries carry this; custom classes generated per P-T block above):
+  2500# (G): 172 barg working pressure, constant within temperature class
+  5000# (J): 345 barg working pressure, constant within temperature class
+  10000# (K): 690 barg working pressure, constant within temperature class
+  Use temperature class P (-29°C to 121°C) as default unless service dictates S/T/U.
+
+FLANGES (API 6A, NOT ASME B16.5):
+  face_type:  "API 6A BX Ring Joint" (or RX for lower ratings)
+  flange_type: "Weld Neck Flange (WNRTJ) per API 6A, 6BX type"
+  standard:    "API 6A"
+  material_spec by material:
+    CS: "ASTM A 694 F65 / API 6A Material Class DD"
+    LTCS: "ASTM A 350 LF2 / API 6A Material Class EE"
+    SS316L: "ASTM A 182 F316L / API 6A Material Class FF"
+    DSS: "ASTM A 182 F51 / API 6A Material Class FF"
+
+FITTINGS (API 6A / high-pressure forged):
+  fitting_type: "Butt Weld (BW)"
+  *** NO ASME standards at all for G/J/K classes — every fitting standard must reference API 6A ***
+  For EVERY fittings_by_size entry in G/J/K-series classes — ALL sizes — set:
+      elbow_standard:   "API 6A"
+      tee_standard:     "API 6A"
+      reducer_standard: "API 6A"
+      cap_standard:     "API 6A"
+      plug_standard:    "API 6A"
+      weldolet_spec:    "Manufacturer's Std per API 6A, [material per class above]"
+
+VALVES (API 6A):
+  Gate valves: "API 6A Gate Valve, Flanged, BB (Bolted Bonnet), FE (Full Equalising)"
+  Ball valves: "API 6A Ball Valve, Flanged, Trunnion Mounted"
+  Check valves: "API 6A Check Valve"
+  Globe valves: use API 602 forged steel globe for ≤2", API 6A for larger.
+  VDS code prefix convention for J/K series: maintain project standard prefixes.
+
+BOLTS / NUTS (API 6A high-pressure):
+  Stud bolts:  "ASTM A 193 Gr. B7, XYLAR 2 + XYLAN 1070 coated"
+  Hex nuts:    "ASTM A 194 Gr. 2H, XYLAR 2 + XYLAN 1070 coated"
+
+GASKETS (API 6A BX ring joint):
+  "API 6A BX Ring Joint Gasket, Soft Iron / Low Carbon Steel"
+
+DESIGN CODE:
+  Add "API 6A" alongside ASME B31.3 in the design_code field for G/J/K classes.
+  Example: "ASME B31.3 / API 6A"
 
 === PIPE SIZES — STANDARD NPS RANGES ===
 Generate ALL standard NPS sizes for the class. Typical ranges:
@@ -442,6 +614,7 @@ FITTINGS MOC BY MATERIAL:
   Titanium (70): ASTM B 363 Gr. 2
 
 STANDARDS (apply to ALL material families unless noted):
+  EXCEPTION — G/J/K-series (2500#/5000#/10000#): ALL fitting standards = "API 6A" for every size. NO ASME fitting standards (not B16.9, not B16.11) anywhere in G/J/K classes.
   Elbow: ASME B 16.9 | Tee: ASME B 16.9 | Reducer: ASME B 16.9 | Cap: ASME B 16.9
   Plug: Hex Head Plug, ASME B 16.11 (or "Hex Head, ASME B 16.11")
   Weldolet: MSS SP 97, [flange MOC] (e.g., "MSS SP 97, ASTM A 105N" for CS)
@@ -500,7 +673,9 @@ FACE by rating / material:
   600#: "600# RF, Serrated Finish"
   900# (E-series): Small bore (0.5-1.5") = "1500#, RTJ", Larger sizes (2"+) = "900#, RTJ"
   1500# (F-series): "1500#, RTJ"
-  2500# (G-series): "2500#, RTJ"
+  2500# (G-series): "API 6A BX Ring Joint"  ← API 6A, NOT "2500#, RTJ"
+  5000# (J-series): "API 6A BX Ring Joint"
+  10000# (K-series): "API 6A BX Ring Joint"
   CuNi (A30) EEMUA: "EEMUA 20 bar, FF" (Flat Face)
   Copper (A40): "FF" — Flat Face, per ASME B 16.24 bronze flanges
   GRE (A50/A51/A52): "FF" — Flat Face, manufacturer std
@@ -566,12 +741,16 @@ PROJECT SIZE BOUNDARY (class-family specific — do NOT guess, use these rules):
   emit in spectacle_blind.standard and spectacle_blind.standard_large are
   positioned on the correct side of the cutoff automatically.
 
-For 900#/1500#/2500# (E/F/G RTJ classes), drop the "(Note 5)" suffix since
-the RTJ note-list does not include a note 5 for spectacle blinds; use
+For 900#/1500# (E/F RTJ classes), drop the "(Note 5)" suffix; use
 "Spacer and blind as per ASME B 16.48" without parenthetical.
 
-F/G series (1500#/2500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48",
-  Standard_large = "Spacer and blind as per ASME B 16.48" (ALWAYS populate this for F/G classes — the reference splits the row with B16.48 on the small-size side (≤14") and "Spacer and blind as per ASME B 16.48" on the large-size side (≥16")).
+F-series (1500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48",
+  Standard_large = "Spacer and blind as per ASME B 16.48" (split at ≤14" / ≥16").
+
+G/J/K-series (2500#/5000#/10000# — API 6A classes): *** NO ASME B16.48 ***
+  Standard       = "API 6A"
+  Standard_large = "Manufacturer's Std per API 6A"
+  MOC = same as flange MOC for the class material.
 GALV classes: MOC = "ASTM A 105N Galvanized"
 
 === BOLTS / NUTS / GASKETS ===
@@ -1068,8 +1247,11 @@ IMPORTANT:
         "dbb_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJ"}}],
         "dbb_inst_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJT"}}]
     }},
-    "notes": ["<position 1 text>", "<position 2 text>", "<position 3 text>", ...]
+    "notes": ["<position 1 text>", "<position 2 text>", "<position 3 text>", ...],
+    "rag_docs_used": [1, 3]
 }}
+// rag_docs_used: list the INTEGER NUMBERS of the retrieved documents above that you actually used.
+// Use only numbers that appear in [1], [2], … labels. Empty list [] if none were used.
 
 CRITICAL:
 1. Valve *_by_size arrays MUST have one entry per pipe size (matching pipe_data count). Use "" for sizes where valve type is not available.
@@ -1086,7 +1268,19 @@ CRITICAL:
 8. For CuNi classes, use EEMUA 234 standards throughout.
 9. For Tubing classes, use compression fitting data, NOT standard piping format.
 
-Generate PMS for class **{piping_class}** now."""
+{ref_section}
+=== WEB SEARCH STRATEGY (if web_search tool is available) ===
+Use web_search to verify exact standard values you are uncertain about. Targeted queries only:
+  • P-T table (custom class): "ASME B16.5 Table 2-1.1 {rating} bar pressure temperature group 1.1"
+    or for API 6A: "API 6A {rating} psi working pressure class P rating barg"
+  • Material allowable stress: "ASME B31.3 Appendix A {material} allowable stress table"
+  • Fitting or flange standard: "ASME B16.9 butt weld fittings {rating} {material}"
+  Search at most 2 times per generation. If your training knowledge is confident, skip the search.
+  ALWAYS obey project-specific rules in this prompt even if search results differ.
+
+Generate PMS for class **{piping_class}** now.
+IMPORTANT: Output ONLY the JSON object — no preamble, no explanation, no markdown fences.
+Start your response with {{ and end with }}."""
 
 
 async def generate_pms_with_ai(
@@ -1096,11 +1290,13 @@ async def generate_pms_with_ai(
     service: str,
     rating: str,
     reference_entries: list[dict],
+    rag_context: str | None = None,
+    generate_pt: bool = False,
 ) -> dict:
-    """Call Claude API to generate PMS data (everything except P-T).
-    Returns a dict of generated fields. Raises AIGenerationError on failure
-    with a message describing the actual cause (credit balance, rate limit,
-    auth error, model-not-found, etc.)."""
+    """Call Claude API to generate PMS data.
+    When generate_pt=True (custom classes with no catalogue P-T), the AI also
+    generates pressure_temperature and hydrotest_pressure blocks.
+    Raises AIGenerationError on failure with the actual cause."""
 
     if not settings.anthropic_api_key:
         raise AIGenerationError(
@@ -1110,28 +1306,81 @@ async def generate_pms_with_ai(
     prompt = _build_generation_prompt(
         piping_class, material, corrosion_allowance, service,
         rating, reference_entries,
+        rag_context=rag_context,
+        generate_pt=generate_pt,
     )
+
+    # Web search tool — included only when enabled in config.
+    # The Anthropic web_search_20250305 tool lets Claude query live ASME/API
+    # standard data.  Guardrail is enforced in SYSTEM_PROMPT (engineering-only
+    # queries, max 3 searches, project rules take precedence over search results).
+    tools = []
+    if settings.enable_ai_web_search:
+        tools.append({
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 3,
+        })
+        logger.info("Web search enabled for class %s", piping_class)
 
     logger.info("Calling Anthropic API for class %s with model %s", piping_class, settings.anthropic_model)
 
     response_text = ""
     try:
-        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # Use streaming to avoid Anthropic server-side timeouts.
+        # Complex classes (G/J/K-series, NACE) with web_search enabled can
+        # take 3-5 minutes. Non-streaming requests hit a server-side timeout
+        # at ~90s and fail. Streaming keeps the connection alive as tokens
+        # arrive, eliminating server-side timeouts entirely.
+        # max_retries=4 with exponential backoff covers transient failures.
+        client = anthropic.AsyncAnthropic(
+            api_key=settings.anthropic_api_key,
+            timeout=httpx.Timeout(connect=30.0, read=900.0, write=60.0, pool=60.0),
+            max_retries=4,
+        )
 
-        message = await client.messages.create(
+        create_kwargs: dict = dict(
             model=settings.anthropic_model,
             max_tokens=AI_MAX_TOKENS,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        if tools:
+            create_kwargs["tools"] = tools
 
-        response_text = message.content[0].text.strip()
+        # Stream the response — prevents server-side timeout for long
+        # generations with web search.  The async context manager yields
+        # events as they arrive and assembles the final Message at the end.
+        async with client.messages.stream(**create_kwargs) as stream:
+            message = await stream.get_final_message()
 
-        # Clean up potential markdown fences
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            response_text = "\n".join(lines)
+        # Collect ALL text blocks — web_search tool may produce intermediate
+        # blocks before the final JSON response; we want the last text block.
+        response_text = ""
+        for block in message.content:
+            if getattr(block, "type", None) == "text":
+                response_text = block.text  # keep last text block
+        response_text = response_text.strip()
+
+        # Robust JSON extraction — handles three cases the model may produce:
+        #   1. Raw JSON (ideal)
+        #   2. Markdown code fence (```json ... ``` or ``` ... ```)
+        #   3. Preamble text followed by a code fence or bare { ... }
+        #
+        # Strategy: try to find the first { … } that parses cleanly.
+        # Case 2/3: pull JSON out of a fenced code block if present
+        fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL)
+        if fence_match:
+            response_text = fence_match.group(1)
+        else:
+            # Case 3 (no fence): strip any leading prose before the first '{'
+            brace_pos = response_text.find("{")
+            if brace_pos > 0:
+                response_text = response_text[brace_pos:]
+            # Strip trailing prose after the last '}'
+            brace_end = response_text.rfind("}")
+            if brace_end != -1 and brace_end < len(response_text) - 1:
+                response_text = response_text[: brace_end + 1]
 
         data = json.loads(response_text)
         logger.info("AI successfully generated PMS data for class %s", piping_class)
@@ -1165,6 +1414,26 @@ async def generate_pms_with_ai(
         raise AIGenerationError(
             "Anthropic API rate limit reached. Please wait a minute and retry."
         ) from e
+    except anthropic.APITimeoutError as e:
+        logger.error(
+            "Anthropic API timed out for %s after all retries: %s",
+            piping_class, e,
+        )
+        raise AIGenerationError(
+            "The AI generation request timed out. This class may be too complex "
+            "for a single call. Please retry — the request will be re-attempted "
+            "with the same parameters. If this keeps happening, try disabling "
+            "web search (ENABLE_AI_WEB_SEARCH=false in .env) to speed up generation."
+        ) from e
+    except anthropic.APIConnectionError as e:
+        logger.error(
+            "Anthropic API connection error for %s: %s",
+            piping_class, e,
+        )
+        raise AIGenerationError(
+            "Could not connect to the Anthropic API. Check your network "
+            "connection and try again."
+        ) from e
     except anthropic.APIError as e:
         msg = str(e)
         logger.error("Anthropic API error for %s: %s", piping_class, msg)
@@ -1178,7 +1447,154 @@ async def generate_pms_with_ai(
             raise AIGenerationError(
                 "Anthropic service is temporarily overloaded. Please retry."
             ) from e
+        if "timed out" in low or "timeout" in low:
+            raise AIGenerationError(
+                "The AI generation request timed out. This class may be too "
+                "complex for a single call. Please retry, or disable web search "
+                "(ENABLE_AI_WEB_SEARCH=false) to speed up generation."
+            ) from e
         raise AIGenerationError(f"Anthropic API error: {msg}") from e
     except Exception as e:
         logger.error("Unexpected error in AI generation for %s: %s", piping_class, e, exc_info=True)
         raise AIGenerationError(f"Unexpected error during AI generation: {e}") from e
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Custom class-code generation
+# ──────────────────────────────────────────────────────────────────────────────
+
+_CLASS_CODE_NAMING_RULES = """\
+Project piping-class naming convention (§5.5 of 40801-SPE-80000-PP-SP-0001):
+
+PART 1 – RATING letter:
+  A=150#  B=300#  D=600#  E=900#  F=1500#  G=2500#  J=5000#  K=10000#  T=Tubing
+
+PART 2 – MATERIAL number:
+  1 =CS 3mm CA       2 =CS 6mm CA      3 =CS GALV 3mm    4 =CS GALV 1.5mm
+  5 =CS GALV 6mm     6 =CS coated      9 =SS316          10=SS316L
+  20=DSS (S31803)    25=SDSS (S32750)  30=CuNi 90/10     40=Copper
+  50=GRE             51=GRV            52=GRE special     60=CPVC
+  70=Titanium        80=SS316L Tubing  90=6Mo Tubing
+
+PART 3 – OPTIONAL suffix:
+  N=NACE/sour   L=Low-Temp   LN=Low-Temp+NACE
+  A=125 barg (tubing)   B=200 barg   C=325 barg
+
+Examples:
+  A1=150# CS 3mm  |  B1N=300# CS NACE  |  A10=150# SS316L 3mm
+  G20=2500# DSS 3mm  |  K1=10000# CS 3mm  |  F10=1500# SS316L 3mm
+"""
+
+
+def _derive_class_code_fallback(rating: str, material: str, ca: str) -> str:
+    """Deterministic fallback when the AI call fails."""
+    RATING_SERIES = {
+        '150#': 'A', '300#': 'B', '600#': 'D', '900#': 'E',
+        '1500#': 'F', '2500#': 'G', '5000#': 'J', '10000#': 'K',
+    }
+    MATERIAL_SUFFIX = {
+        'SS316L': '10', 'SS316': '9', 'SS': '10',
+        'LTCS': '1L', 'CS': '1',
+        'DSS': '20', 'SDSS': '25',
+        'CUNI': '30', 'COPPER': '40', 'GRE': '50', 'CPVC': '60', 'TITANIUM': '70',
+    }
+    series = RATING_SERIES.get(rating, rating.replace('#', '').replace(' ', ''))
+    mat_up = material.upper()
+    mat_sfx = next((v for k, v in MATERIAL_SUFFIX.items() if k in mat_up), mat_up[:4])
+    nace = 'N' if any(w in mat_up for w in ('NACE', 'H2S', 'SOUR')) else ''
+    lt   = 'L' if any(w in mat_up for w in ('LTCS', 'LT ', 'LOW TEMP')) and 'N' not in nace else ''
+    sfx  = 'LN' if (lt and nace) else (lt or nace)
+    return f"{series}{mat_sfx}{sfx}".upper()
+
+
+_CLASS_CODE_SYSTEM_PROMPT = """\
+You are a senior piping materials engineer specialising in project piping-class \
+designation systems. Your ONLY task is to assign the correct project-standard \
+piping class code for a given combination of pressure rating, material, \
+corrosion allowance, and service — following the convention in §5.5 of \
+project document 40801-SPE-80000-PP-SP-0001.
+
+Rules you MUST follow:
+1. The code is built from three parts: RATING-letter + MATERIAL-number + SUFFIX.
+2. NEVER invent a new convention. Stick strictly to the table below.
+3. If a rating has no defined letter (e.g. 10000# → K), use the letter shown.
+4. Add suffix N for NACE/sour service, L for low-temperature, LN for both.
+5. Return ONLY the code — no explanation, no punctuation, no extra words.
+"""
+
+
+async def generate_class_code_with_ai(
+    rating: str,
+    material: str,
+    corrosion_allowance: str,
+    service: str,
+    reference_entries: list[dict],
+    rag_context: str | None = None,
+) -> str:
+    """Determine the correct project-standard piping class code for a custom
+    combination not yet in the catalogue.
+
+    Dedicated small AI call (max_tokens=20) backed by:
+      • Full naming-convention rules (system prompt + user prompt)
+      • Few-shot examples from the existing catalogue
+      • RAG context from ASME standard excerpts
+
+    Falls back to deterministic derivation on any failure.
+    """
+    if not settings.anthropic_api_key:
+        logger.warning("generate_class_code_with_ai: no API key — using fallback")
+        return _derive_class_code_fallback(rating, material, corrosion_allowance)
+
+    few_shots = "\n".join(
+        f"  {e.get('piping_class','?')} = "
+        f"{e.get('rating','?')} / {e.get('material','?')} / CA {e.get('corrosion_allowance','?')}"
+        for e in reference_entries[:8]
+    )
+
+    rag_block = ""
+    if rag_context:
+        rag_block = (
+            "\n=== ASME STANDARD CONTEXT (from RAG) ===\n"
+            f"{rag_context[:1500]}\n"
+            "=== END CONTEXT ===\n"
+        )
+
+    prompt = (
+        f"{_CLASS_CODE_NAMING_RULES}\n"
+        f"=== EXISTING CATALOGUE CLASSES (few-shot examples) ===\n"
+        f"{few_shots}\n"
+        f"{rag_block}\n"
+        f"=== INPUT — assign the correct class code for: ===\n"
+        f"  Pressure Rating:     {rating}\n"
+        f"  Material:            {material}\n"
+        f"  Corrosion Allowance: {corrosion_allowance}\n"
+        f"  Service:             {service}\n\n"
+        f"Apply the naming convention exactly. "
+        f"Reply with ONLY the class code (e.g. K10 or K10N). Nothing else."
+    )
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        message = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=20,
+            system=_CLASS_CODE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        code = message.content[0].text.strip().strip('"').strip("'").split()[0]
+        if code and len(code) <= 12 and all(c.isalnum() for c in code):
+            logger.info(
+                "Class code for (%s / %s / %s) → %s  [AI]",
+                rating, material, corrosion_allowance, code,
+            )
+            return code.upper()
+        logger.warning("AI returned unexpected class code %r — using fallback", code)
+    except Exception as exc:
+        logger.warning("generate_class_code_with_ai failed (%s) — using fallback", exc)
+
+    fallback = _derive_class_code_fallback(rating, material, corrosion_allowance)
+    logger.info(
+        "Class code for (%s / %s / %s) → %s  [fallback]",
+        rating, material, corrosion_allowance, fallback,
+    )
+    return fallback

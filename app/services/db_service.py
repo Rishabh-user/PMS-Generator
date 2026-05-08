@@ -20,7 +20,8 @@ _pool: asyncpg.Pool | None = None
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS pms_cache (
-    piping_class  VARCHAR(32) PRIMARY KEY,
+    piping_class  TEXT PRIMARY KEY,
+    display_class VARCHAR(64) NOT NULL DEFAULT '',
     version       VARCHAR(8)  NOT NULL DEFAULT 'A0',
     material      VARCHAR(128) NOT NULL DEFAULT '',
     corrosion_allowance VARCHAR(32) NOT NULL DEFAULT '',
@@ -55,10 +56,12 @@ CREATE INDEX IF NOT EXISTS idx_pms_cache_updated ON pms_cache (updated_at DESC);
 MIGRATION_SQL = """
 DO $$
 DECLARE
-    has_cache_key   BOOLEAN;
-    has_id_col      BOOLEAN;
-    has_version_col BOOLEAN;
-    pk_col          TEXT;
+    has_cache_key      BOOLEAN;
+    has_id_col         BOOLEAN;
+    has_version_col    BOOLEAN;
+    has_display_class  BOOLEAN;
+    pk_col             TEXT;
+    pc_type            TEXT;
 BEGIN
     SELECT EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -72,6 +75,10 @@ BEGIN
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'pms_cache' AND column_name = 'version'
     ) INTO has_version_col;
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'pms_cache' AND column_name = 'display_class'
+    ) INTO has_display_class;
 
     -- Step 1: add version column if missing
     IF NOT has_version_col THEN
@@ -118,6 +125,25 @@ BEGIN
         END IF;
         ALTER TABLE pms_cache ADD PRIMARY KEY (piping_class);
         RAISE NOTICE 'pms_cache: piping_class is now the primary key';
+    END IF;
+
+    -- Step 5: expand piping_class column to TEXT (composite cache keys can exceed 32 chars)
+    SELECT data_type INTO pc_type
+    FROM information_schema.columns
+    WHERE table_name = 'pms_cache' AND column_name = 'piping_class';
+    IF pc_type <> 'text' THEN
+        ALTER TABLE pms_cache ALTER COLUMN piping_class TYPE TEXT;
+        RAISE NOTICE 'pms_cache: piping_class expanded to TEXT for composite cache keys';
+    END IF;
+
+    -- Step 6: add display_class column if not present
+    IF NOT has_display_class THEN
+        ALTER TABLE pms_cache ADD COLUMN display_class VARCHAR(64) NOT NULL DEFAULT '';
+        -- Backfill: existing rows store a plain class code in piping_class
+        UPDATE pms_cache SET display_class = UPPER(TRIM(LEFT(piping_class, 64)))
+        WHERE display_class = '';
+        CREATE INDEX IF NOT EXISTS idx_pms_cache_display_class ON pms_cache (display_class);
+        RAISE NOTICE 'pms_cache: added display_class column and backfilled from piping_class';
     END IF;
 END $$;
 """
@@ -223,14 +249,16 @@ async def get_cached_pms(piping_class: str) -> dict | None:
 
 async def store_pms(
     piping_class: str,
+    display_class: str,
     material: str,
     corrosion_allowance: str,
     service: str,
     response: dict,
 ) -> str | None:
-    """Store or update PMS response in DB. On conflict, bumps the version
-    (A0 → A1 → A2 …) rather than creating a new row. Returns the version
-    string that was written so callers can surface it in the response."""
+    """Store or update PMS response in DB.
+    piping_class — composite cache key (class||material||CA||service).
+    display_class — the human-readable class code (e.g. 'A1LN') shown in the UI.
+    On conflict, bumps the version (A0 → A1 → …). Returns the version written."""
     if not _pool:
         return None
     try:
@@ -239,11 +267,12 @@ async def store_pms(
             version = await conn.fetchval(
                 """
                 INSERT INTO pms_cache
-                    (piping_class, version, material, corrosion_allowance,
+                    (piping_class, display_class, version, material, corrosion_allowance,
                      service, response_json, created_at, updated_at)
-                VALUES ($1, 'A0', $2, $3, $4, $5::jsonb, NOW(), NOW())
+                VALUES ($1, $2, 'A0', $3, $4, $5, $6::jsonb, NOW(), NOW())
                 ON CONFLICT (piping_class)
                 DO UPDATE SET
+                    display_class       = EXCLUDED.display_class,
                     version             = 'A' ||
                         ((SUBSTRING(pms_cache.version FROM 2))::int + 1)::text,
                     material            = EXCLUDED.material,
@@ -253,9 +282,10 @@ async def store_pms(
                     updated_at          = NOW()
                 RETURNING version
                 """,
-                piping_class, material, corrosion_allowance, service, response_json,
+                piping_class, display_class, material, corrosion_allowance, service, response_json,
             )
-        logger.info("Stored PMS for %s in database (version=%s)", piping_class, version)
+        logger.info("Stored PMS for %s (display: %s) in database (version=%s)",
+                    piping_class, display_class, version)
         return version
     except Exception as e:
         logger.error("DB write error for %s: %s", piping_class, e)
@@ -263,24 +293,22 @@ async def store_pms(
 
 
 async def delete_cached_pms(piping_class: str) -> None:
-    """Delete a single cached PMS entry."""
+    """Delete ALL cached entries for a class code (matches display_class)."""
     if not _pool:
         return
     try:
         async with _pool.acquire() as conn:
             await conn.execute(
-                "DELETE FROM pms_cache WHERE piping_class = $1", piping_class,
+                "DELETE FROM pms_cache WHERE UPPER(TRIM(display_class)) = $1",
+                piping_class.upper().strip(),
             )
     except Exception as e:
         logger.error("DB delete error for %s: %s", piping_class, e)
 
 
 async def list_cached_classes() -> list[dict]:
-    """Return every cached PMS entry (one row per piping_class), newest first.
-
-    Used by the frontend's Piping Class Specification page to show a direct
-    download button only for classes that have a stored result — so we can
-    serve Excel without triggering an AI generation.
+    """Return every cached PMS entry, newest first.
+    piping_class in the returned dict is the display_class (human-readable code).
     """
     if not _pool:
         return []
@@ -288,7 +316,7 @@ async def list_cached_classes() -> list[dict]:
         async with _pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT piping_class, version, material, corrosion_allowance,
+                SELECT display_class, version, material, corrosion_allowance,
                        service, updated_at
                 FROM pms_cache
                 ORDER BY updated_at DESC
@@ -296,7 +324,7 @@ async def list_cached_classes() -> list[dict]:
             )
         return [
             {
-                "piping_class": r["piping_class"],
+                "piping_class": r["display_class"],
                 "version": r["version"],
                 "material": r["material"],
                 "corrosion_allowance": r["corrosion_allowance"],
@@ -527,11 +555,11 @@ async def admin_list_cache_entries(
                 pat = f"%{search.strip().lower()}%"
                 rows = await conn.fetch(
                     """
-                    SELECT piping_class, version, material, corrosion_allowance,
+                    SELECT display_class, version, material, corrosion_allowance,
                            service, created_at, updated_at,
                            octet_length(response_json::text) AS payload_bytes
                     FROM pms_cache
-                    WHERE LOWER(piping_class) LIKE $1
+                    WHERE LOWER(display_class) LIKE $1
                        OR LOWER(material) LIKE $1
                        OR LOWER(service) LIKE $1
                     ORDER BY updated_at DESC
@@ -542,7 +570,7 @@ async def admin_list_cache_entries(
             else:
                 rows = await conn.fetch(
                     """
-                    SELECT piping_class, version, material, corrosion_allowance,
+                    SELECT display_class, version, material, corrosion_allowance,
                            service, created_at, updated_at,
                            octet_length(response_json::text) AS payload_bytes
                     FROM pms_cache
@@ -553,7 +581,7 @@ async def admin_list_cache_entries(
                 )
         return [
             {
-                "piping_class": r["piping_class"],
+                "piping_class": r["display_class"],
                 "version": r["version"],
                 "material": r["material"],
                 "corrosion_allowance": r["corrosion_allowance"],
@@ -570,19 +598,22 @@ async def admin_list_cache_entries(
 
 
 async def admin_get_cache_entry(piping_class: str) -> dict | None:
-    """Fetch a full pms_cache row (including the response_json payload)
-    for the admin drawer detail view."""
+    """Fetch a full pms_cache row by display_class (most recently updated variant).
+    Used by the admin drawer detail view."""
     if not _pool:
         return None
     try:
         async with _pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT piping_class, version, material, corrosion_allowance,
+                SELECT display_class, version, material, corrosion_allowance,
                        service, response_json, created_at, updated_at
-                FROM pms_cache WHERE piping_class = $1
+                FROM pms_cache
+                WHERE UPPER(TRIM(display_class)) = $1
+                ORDER BY updated_at DESC
+                LIMIT 1
                 """,
-                piping_class,
+                piping_class.upper().strip(),
             )
         if not row:
             return None
@@ -590,7 +621,7 @@ async def admin_get_cache_entry(piping_class: str) -> dict | None:
         if isinstance(resp, str):
             resp = json.loads(resp)
         return {
-            "piping_class": row["piping_class"],
+            "piping_class": row["display_class"],
             "version": row["version"],
             "material": row["material"],
             "corrosion_allowance": row["corrosion_allowance"],
@@ -605,14 +636,15 @@ async def admin_get_cache_entry(piping_class: str) -> dict | None:
 
 
 async def admin_delete_cache_entry(piping_class: str) -> bool:
-    """Remove one pms_cache row by piping_class. Returns True iff a row
-    was deleted (False means the class didn't exist)."""
+    """Remove ALL cached entries for a class code (matches display_class).
+    Returns True iff at least one row was deleted."""
     if not _pool:
         return False
     try:
         async with _pool.acquire() as conn:
             result = await conn.execute(
-                "DELETE FROM pms_cache WHERE piping_class = $1", piping_class,
+                "DELETE FROM pms_cache WHERE UPPER(TRIM(display_class)) = $1",
+                piping_class.upper().strip(),
             )
         return result.split()[-1] != "0"
     except Exception as e:

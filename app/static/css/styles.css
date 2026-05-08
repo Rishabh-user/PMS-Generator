@@ -392,6 +392,37 @@ label.multi-select-option > span { flex: 1; }
     background: #ffffff;
 }
 
+/* ── Custom dropdown text inputs ─────────────────────────────── */
+.custom-dropdown-input {
+    width: 100%; margin-top: 8px;
+    padding: 10px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    font-family: inherit; font-size: 0.9rem;
+    color: var(--text); background: var(--bg-input);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.custom-dropdown-input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(14,58,92,0.1);
+    background: #ffffff;
+}
+.custom-dropdown-input.input-error,
+.form-group select.input-error {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220,38,38,0.12);
+    animation: shake 0.25s ease;
+}
+@keyframes shake {
+    0%,100% { transform: translateX(0); }
+    25%      { transform: translateX(-4px); }
+    75%      { transform: translateX(4px); }
+}
+.custom-error-hint {
+    display: block; font-size: 0.73rem;
+    color: #dc2626; margin-top: 4px;
+}
+
 /* ================================================================
    BUTTONS — Solid SP Energy navy style
    ================================================================ */

@@ -11,6 +11,11 @@ class PMSRequest(BaseModel):
         description="Service description",
         examples=["Flare, Corrosive HC service (Low Temp)"],
     )
+    custom_rating: Optional[str] = Field(
+        default=None,
+        description="Custom pressure rating when not in catalogue, e.g. '1000#'. "
+                    "Overrides the catalogue rating in AI generation.",
+    )
 
 
 class BulkDownloadRequest(BaseModel):
@@ -187,6 +192,14 @@ class PMSResponse(BaseModel):
     valves: ValveData = Field(default_factory=ValveData)
     branch_charts: list[BranchChart] = Field(default_factory=list, description="Branch connection charts (Appendix-1)")
     notes: list[str] = Field(default_factory=list)
+    # Maps each PMS section to its data origin: "Rule Extraction",
+    # "LLM (RAG)", or "LLM (No RAG)".  Populated on every AI generation;
+    # empty for entries loaded from cache before this feature was added.
+    data_sources: dict[str, str] = Field(default_factory=dict)
+    # AI self-annotation: maps section name to a short explanation of which
+    # standard / RAG excerpt the AI used when it generated that section.
+    # Keys mirror the data_sources keys; values are written by the AI itself.
+    data_source_notes: dict[str, str] = Field(default_factory=dict)
 
 
 class PMSListItem(BaseModel):

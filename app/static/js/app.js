@@ -389,13 +389,60 @@ function populateClassDropdown() {
         opt.textContent = rating;
         sel.appendChild(opt);
     });
+
+    // Always append Custom… as the last option
+    const customOpt = document.createElement('option');
+    customOpt.value = '__CUSTOM__';
+    customOpt.textContent = 'Custom…';
+    sel.appendChild(customOpt);
+}
+
+// ── Custom dropdown helpers ────────────────────────────────────────────────
+
+function _appendCustomOpt(select) {
+    const opt = document.createElement('option');
+    opt.value = '__CUSTOM__';
+    opt.textContent = 'Custom…';
+    select.appendChild(opt);
+}
+
+function _setCustomVisible(inputId, errorId, visible) {
+    const inp = document.getElementById(inputId);
+    const err = document.getElementById(errorId);
+    inp.style.display = visible ? '' : 'none';
+    if (!visible) { inp.value = ''; inp.classList.remove('input-error'); err.style.display = 'none'; }
+}
+
+
+function _setCustomError(inputId, errorId, msg) {
+    const inp = document.getElementById(inputId);
+    const err = document.getElementById(errorId);
+    inp.classList.add('input-error');
+    err.textContent = msg;
+    err.style.display = 'block';
+    inp.focus();
+}
+
+function _clearCustomError(inputId, errorId) {
+    const inp = document.getElementById(inputId);
+    if (inp) inp.classList.remove('input-error');
+    const err = document.getElementById(errorId);
+    if (err) err.style.display = 'none';
+}
+
+// Returns the effective value: custom text if "__CUSTOM__" is selected, else dropdown value.
+function getEffectiveValue(selectId, customInputId) {
+    const sel = document.getElementById(selectId);
+    if (sel.value === '__CUSTOM__') return document.getElementById(customInputId).value.trim();
+    return sel.value;
 }
 
 function initCascadingDropdowns() {
-    const ratingSelect = document.getElementById('pipingClass');  // Now shows ratings
+    const ratingSelect   = document.getElementById('pipingClass');
     const materialSelect = document.getElementById('material');
-    const caSelect = document.getElementById('corrosionAllowance');
-    const serviceInput = document.getElementById('service');
+    const caSelect       = document.getElementById('corrosionAllowance');
+    const ratingInput    = document.getElementById('ratingCustomInput');
+    const materialInput  = document.getElementById('materialCustomInput');
 
     // The catalogue stores tubing classes with rating "-" (their actual
     // pressure tier comes from the A/B/C suffix). When the user picks the
@@ -408,49 +455,124 @@ function initCascadingDropdowns() {
         return entry.rating === picked;
     }
 
-    // Rating changed -> populate Material dropdown (filtered by rating)
-    ratingSelect.addEventListener('change', () => {
-        const rating = ratingSelect.value;
+    // Return the effective rating string — typed value if __CUSTOM__, else the select value.
+    function effectiveRating() {
+        return ratingSelect.value === '__CUSTOM__'
+            ? (ratingInput ? ratingInput.value.trim() : '')
+            : ratingSelect.value;
+    }
+
+    // Populate the Material dropdown for a given effective rating string.
+    // If the rating matches catalogue entries show those options; otherwise
+    // show only Custom… (the typed rating is truly non-catalogue).
+    function populateMaterial(effRating) {
         materialSelect.innerHTML = '<option value="">-- Select Material --</option>';
         caSelect.innerHTML = '<option value="">-- Select CA --</option>';
-        materialSelect.disabled = true;
         caSelect.disabled = true;
-        if (!rating) return;
+        _setCustomVisible('materialCustomInput', 'materialCustomError', false);
+        _setCustomVisible('caCustomInput', 'caCustomError', false);
 
-        // Find all materials for this rating
-        const matches = indexData.filter(d => ratingMatches(d, rating));
-        const materials = [...new Set(matches.map(d => d.material))];
-        if (materials.length === 0) return;
+        if (!effRating) { materialSelect.disabled = true; return; }
 
         materialSelect.disabled = false;
-        materials.forEach(mat => {
-            const opt = document.createElement('option');
-            opt.value = mat;
-            opt.textContent = mat;
-            materialSelect.appendChild(opt);
-        });
-    });
+        const matches = indexData.filter(d => ratingMatches(d, effRating));
+        if (matches.length > 0) {
+            const materials = [...new Set(matches.map(d => d.material))];
+            materials.forEach(mat => {
+                const opt = document.createElement('option');
+                opt.value = mat; opt.textContent = mat;
+                materialSelect.appendChild(opt);
+            });
+        }
+        _appendCustomOpt(materialSelect);
+    }
 
-    // Material changed -> populate CA dropdown (filtered by rating + material)
-    materialSelect.addEventListener('change', () => {
-        const rating = ratingSelect.value;
-        const mat = materialSelect.value;
+    // Populate the CA dropdown for a given effective rating + effective material.
+    // Same rule: show catalogue options when a match exists, always append Custom….
+    function populateCA(effRating, effMat) {
         caSelect.innerHTML = '<option value="">-- Select CA --</option>';
-        caSelect.disabled = true;
-        if (!rating || !mat) return;
+        _setCustomVisible('caCustomInput', 'caCustomError', false);
 
-        const matches = indexData.filter(d => ratingMatches(d, rating) && d.material === mat);
-        const cas = [...new Set(matches.map(d => d.corrosion_allowance))];
-        if (cas.length === 0) return;
+        if (!effMat) { caSelect.disabled = true; return; }
 
         caSelect.disabled = false;
-        cas.forEach(ca => {
-            const opt = document.createElement('option');
-            opt.value = ca;
-            opt.textContent = ca;
-            caSelect.appendChild(opt);
-        });
+        const matches = indexData.filter(d => ratingMatches(d, effRating) && d.material === effMat);
+        if (matches.length > 0) {
+            const cas = [...new Set(matches.map(d => d.corrosion_allowance))];
+            cas.forEach(ca => {
+                const opt = document.createElement('option');
+                opt.value = ca; opt.textContent = ca;
+                caSelect.appendChild(opt);
+            });
+        }
+        _appendCustomOpt(caSelect);
+    }
+
+    // ── Rating select changed ──────────────────────────────────────────────
+    ratingSelect.addEventListener('change', () => {
+        const isCustomRating = ratingSelect.value === '__CUSTOM__';
+        _setCustomVisible('ratingCustomInput', 'ratingCustomError', isCustomRating);
+        _clearCustomError('ratingCustomInput', 'ratingCustomError');
+
+        if (!ratingSelect.value) {
+            materialSelect.innerHTML = '<option value="">-- Select Material --</option>';
+            caSelect.innerHTML = '<option value="">-- Select CA --</option>';
+            materialSelect.disabled = true;
+            caSelect.disabled = true;
+            _setCustomVisible('materialCustomInput', 'materialCustomError', false);
+            _setCustomVisible('caCustomInput', 'caCustomError', false);
+            return;
+        }
+
+        // When custom is selected, start with an empty typed value → show only Custom…
+        // The input listener below re-populates once the user types something.
+        populateMaterial(isCustomRating ? '' : ratingSelect.value);
     });
+
+    // ── Rating custom input typed ─────────────────────────────────────────
+    // Re-cascade Material every keystroke so that typing a value that matches
+    // a catalogue rating (e.g. "150#") immediately reveals those options.
+    if (ratingInput) {
+        ratingInput.addEventListener('input', () => {
+            ratingInput.classList.remove('input-error');
+            const typed = ratingInput.value.trim();
+            populateMaterial(typed);
+        });
+    }
+
+    // ── Material select changed ───────────────────────────────────────────
+    materialSelect.addEventListener('change', () => {
+        const isCustomMat = materialSelect.value === '__CUSTOM__';
+        _setCustomVisible('materialCustomInput', 'materialCustomError', isCustomMat);
+        _clearCustomError('materialCustomInput', 'materialCustomError');
+
+        if (!materialSelect.value) { caSelect.disabled = true; return; }
+
+        const effMat = isCustomMat ? '' : materialSelect.value;
+        // Start CA population — if material is custom and nothing typed yet, '' → Custom… only
+        populateCA(effectiveRating(), effMat);
+    });
+
+    // ── Material custom input typed ───────────────────────────────────────
+    // Re-cascade CA every keystroke so typing a known material reveals its CAs.
+    if (materialInput) {
+        materialInput.addEventListener('input', () => {
+            materialInput.classList.remove('input-error');
+            const typed = materialInput.value.trim();
+            populateCA(effectiveRating(), typed);
+        });
+    }
+
+    // ── CA select changed ─────────────────────────────────────────────────
+    caSelect.addEventListener('change', () => {
+        const isCustomCA = caSelect.value === '__CUSTOM__';
+        _setCustomVisible('caCustomInput', 'caCustomError', isCustomCA);
+        _clearCustomError('caCustomInput', 'caCustomError');
+    });
+
+    // Clear errors on typing in custom inputs (CA — rating/material handled above)
+    const caInput = document.getElementById('caCustomInput');
+    if (caInput) caInput.addEventListener('input', () => caInput.classList.remove('input-error'));
 }
 
 // Resolve piping class from rating + material + CA. Mirrors the
@@ -651,21 +773,59 @@ function initDesignInputs() {
 
 // === Step 1: Preview PMS (no AI call) ===
 async function generatePMS() {
-    const selectedRating = document.getElementById('pipingClass').value.trim();
-    const selectedMaterial = document.getElementById('material').value;
-    const selectedCA = document.getElementById('corrosionAllowance').value;
-    const selectedService = document.getElementById('service').value.trim();
+    const selectedRating   = getEffectiveValue('pipingClass', 'ratingCustomInput');
+    const selectedMaterial = getEffectiveValue('material', 'materialCustomInput');
+    const selectedCA       = getEffectiveValue('corrosionAllowance', 'caCustomInput');
+    const selectedService  = document.getElementById('service').value.trim();
+
+    // Validate custom inputs before proceeding
+    let hasError = false;
+    if (document.getElementById('pipingClass').value === '__CUSTOM__' && !selectedRating) {
+        _setCustomError('ratingCustomInput', 'ratingCustomError', 'Please enter a custom pressure rating');
+        hasError = true;
+    }
+    if (document.getElementById('material').value === '__CUSTOM__' && !selectedMaterial) {
+        _setCustomError('materialCustomInput', 'materialCustomError', 'Please enter a custom material');
+        hasError = true;
+    }
+    if (document.getElementById('corrosionAllowance').value === '__CUSTOM__' && !selectedCA) {
+        _setCustomError('caCustomInput', 'caCustomError', 'Please enter a corrosion allowance value');
+        hasError = true;
+    }
+    if (hasError) return;
 
     if (!selectedRating || !selectedMaterial) { showToast('Please select Rating and Material', 'error'); return; }
 
-    const resolvedClass = resolvePipingClass(selectedRating, selectedMaterial, selectedCA);
-    if (!resolvedClass) { showToast('No matching piping class found for this combination', 'error'); return; }
+    const anyCustom = ['pipingClass', 'material', 'corrosionAllowance']
+        .some(id => document.getElementById(id).value === '__CUSTOM__');
+
+    // Try exact catalogue match first.
+    let resolvedClass = resolvePipingClass(selectedRating, selectedMaterial, selectedCA);
+    let isCustomClass = false;
+
+    if (!resolvedClass) {
+        if (anyCustom) {
+            // Build a unique, cache-busting class code from the custom inputs so
+            // the backend never serves a stale cached result for a different class.
+            const rPart = selectedRating.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+            const mPart = selectedMaterial.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 8);
+            const cPart = selectedCA.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 5);
+            resolvedClass = ['CUST', rPart, mPart, cPart].filter(Boolean).join('-');
+            isCustomClass = true;
+        } else {
+            showToast('No matching piping class found for this combination', 'error');
+            return;
+        }
+    }
 
     const data = {
         piping_class: resolvedClass,
         material: selectedMaterial,
         corrosion_allowance: selectedCA,
         service: selectedService || 'General',
+        // Always send the effective rating as custom_rating for custom-generated
+        // class codes so the backend passes the right value to the AI prompt.
+        ...(isCustomClass ? { custom_rating: selectedRating } : {}),
     };
 
     // Save request for Step 2
@@ -676,6 +836,11 @@ async function generatePMS() {
         const res = await API.previewPMS(data);
         if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Preview failed'); }
         const preview = await res.json();
+
+        // Always sync pendingPMSRequest with whatever piping_class the backend
+        // resolved (catalogue match, AI-generated code, or CUST-* fallback).
+        // Do NOT skip this update — it is the only way Step 2 gets the right code.
+        pendingPMSRequest = { ...data, piping_class: preview.piping_class || data.piping_class };
 
         // Show banner card with "Generate Full PMS" button — no tabs yet
         renderPreviewBanner(preview);
@@ -693,6 +858,11 @@ async function generatePMS() {
 // === Step 2: Full AI Generation (triggered from card button) ===
 async function generateFullPMS() {
     if (!pendingPMSRequest) { showToast('No class selected. Please generate preview first.', 'error'); return; }
+
+    // Re-read service at the moment of full generation so any change after
+    // Step 1 preview (or a late selection in the multi-select) is captured.
+    const latestService = document.getElementById('service').value.trim();
+    if (latestService) pendingPMSRequest = { ...pendingPMSRequest, service: latestService };
 
     // Disable the generate button and show loading state on it
     const btn = document.getElementById('bannerGenerateBtn');
@@ -1044,8 +1214,6 @@ function renderScheduleTab(pms) {
     // Material-specific allowable stress from ASME B31.3 Table A-1
     const stressData = getAllowableStress(pms.material, dtVal);
     const S_psi = stressData.S_psi;
-    const S_mpa = stressData.S_mpa;
-    const P_psig = parseFloat(barg2psig(dpVal));
     const P_mpa = barg2mpa(dpVal);
     const dtF = parseFloat(c2f(dtVal));
     const isNACE = pms.material.toUpperCase().includes('NACE') || pms.design_code.toUpperCase().includes('NACE');
@@ -1226,7 +1394,6 @@ function renderScheduleTab(pms) {
     ]);
 
     // Code Factors
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
     setKVList('codeFactorsList', [
         { l: 'Pipe Standard', v: pipeStandard, bold: true },
         { l: 'Joint Type', v: document.getElementById('jointType').value, bold: true },
@@ -1329,7 +1496,6 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
     pipes.forEach(p => {
         const od_inch = mm2inch(p.od_mm);
         const wt_mm = p.wall_thickness_mm;
-        const wt_inch = mm2inch(wt_mm);
         const sizeNum = parseFloat(p.size_inch) || 0;
 
         // t_req: matches reference A1 Excel (20171-SPOG-80000-PP-CL-0001):
@@ -1387,7 +1553,6 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
 
         // t_min = WT_nom * (1 - mill%) — minimum thickness after mill tolerance (for MAWP)
         const t_min_mm = wt_mm * (1 - millFrac);
-        const t_min_inch = mm2inch(t_min_mm);
 
         // t_eff = t_min - CA — effective thickness for MAWP calculation
         const t_eff_mm = t_min_mm - caMM;

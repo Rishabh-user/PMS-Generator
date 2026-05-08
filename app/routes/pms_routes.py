@@ -21,6 +21,8 @@ from app.models.pms_agent_models import (
 )
 from app.models.validation_models import ValidationReport
 from app.services.pms_service import generate_excel, generate_pms, regenerate_pms, clear_cache
+from app.services.ai_service import generate_class_code_with_ai
+from app.services.rag_service import retrieve_context
 from app.services.thickness_service import compute_thickness
 from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.validation_service import validate as validate_pms
@@ -77,11 +79,76 @@ async def api_preview_pms(req: PMSRequest):
     lets the frontend pre-fill the form without duplicating interpolation logic.
     """
     entry = data_service.find_entry(req.piping_class)
+
+    # Custom-generated class (CUST-* code from frontend) — no catalogue entry.
+    # Call a dedicated small AI + RAG call to resolve the proper project-standard
+    # class code (e.g. "K10"), then return an empty-P-T preview so the banner
+    # displays a clean code and Step 2 can proceed with that code.
     if not entry:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Piping class '{req.piping_class}' not found in database.",
+        if not req.custom_rating:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Piping class '{req.piping_class}' not found in database.",
+            )
+        # Collect relevant few-shot reference entries for the class-code AI call.
+        # Priority: same material family first, then diverse rating examples.
+        all_entries = data_service.get_all_entries()
+        mat_up = req.material.upper()
+
+        def _mat_family(m: str) -> str:
+            m = m.upper()
+            for fam in ('SDSS', 'DSS', 'SS316L', 'SS316', 'SS', 'LTCS', 'CS',
+                        'CUNI', 'COPPER', 'GRE', 'CPVC', 'TITANIUM'):
+                if fam in m:
+                    return fam
+            return m[:4]
+
+        target_family = _mat_family(req.material)
+        same_mat  = [e for e in all_entries if _mat_family(e.get('material','')) == target_family][:4]
+        other_mat = [e for e in all_entries if e not in same_mat][:4]
+        ref_entries = same_mat + other_mat
+
+        # RAG context for the class-code determination.
+        # Use a clean query: "custom <rating> <material>" instead of the CUST-* placeholder.
+        rag_ctx = retrieve_context(
+            piping_class=f"custom {req.custom_rating} {req.material}",
+            material=req.material,
+            corrosion_allowance=req.corrosion_allowance,
+            service=req.service,
+            rating=req.custom_rating,
         )
+
+        # Ask AI to assign a proper class code based on naming conventions + RAG
+        try:
+            resolved_code = await generate_class_code_with_ai(
+                rating=req.custom_rating,
+                material=req.material,
+                corrosion_allowance=req.corrosion_allowance,
+                service=req.service,
+                reference_entries=ref_entries,
+                rag_context=rag_ctx,
+            )
+        except Exception as exc:
+            logger.warning("Class code resolution failed in preview (%s) — using placeholder", exc)
+            resolved_code = req.piping_class
+
+        logger.info(
+            "Preview: custom class '%s' resolved to '%s'",
+            req.piping_class, resolved_code,
+        )
+        return {
+            "piping_class": resolved_code,
+            "rating": req.custom_rating,
+            "material": req.material,
+            "corrosion_allowance": req.corrosion_allowance,
+            "service": req.service,
+            "hydrotest_pressure": "",
+            "pressure_temperature": {"temperatures": [], "pressures": [], "temp_labels": []},
+            "default_design_pressure_barg": None,
+            "default_design_temp_c": None,
+            "default_mdmt_c": None,
+        }
+
     pt = entry.get("pressure_temperature", {})
     pressures = pt.get("pressures", [])
     temperatures = pt.get("temperatures", [])
@@ -108,7 +175,7 @@ async def api_preview_pms(req: PMSRequest):
 
     return {
         "piping_class": req.piping_class,
-        "rating": entry.get("rating", ""),
+        "rating": req.custom_rating or entry.get("rating", ""),
         "material": req.material,
         "corrosion_allowance": req.corrosion_allowance,
         "service": req.service,
