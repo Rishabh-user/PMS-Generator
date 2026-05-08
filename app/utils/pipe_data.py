@@ -44,6 +44,18 @@ def _round2(x) -> float | None:
     return round(val, 2)
 
 
+def _round_dims(row: dict) -> None:
+    """Normalise od_mm and wall_thickness_mm to 2 decimals in place. Used at
+    every loop exit so the UI sees consistent precision regardless of which
+    code path produced the row's dimensions."""
+    od = _round2(row.get("od_mm"))
+    if od is not None:
+        row["od_mm"] = od
+    wt = _round2(row.get("wall_thickness_mm"))
+    if wt is not None:
+        row["wall_thickness_mm"] = wt
+
+
 def _parse_corrosion_allowance_mm(ca: str | float | int | None) -> float:
     """'3 mm' / 'NIL' / 0 / None → numeric mm."""
     if ca is None:
@@ -97,7 +109,10 @@ def correct_pipe_data(
     precision.
     """
     # Lazy imports to keep module-load order clean
-    from app.services.schedule_selector import select_schedule_for_thickness
+    from app.services.schedule_selector import (
+        select_schedule_for_thickness,
+        lookup_wall_thickness,
+    )
     from app.services import schedule_floor_lookup
     from app.utils.engineering import calculate_wall_thickness
     from app.utils.engineering_constants import (
@@ -108,68 +123,72 @@ def correct_pipe_data(
     ca_mm = _parse_corrosion_allowance_mm(corrosion_allowance)
     is_asme = _is_asme_pipe_code(pipe_code)
 
+    # Per the AI's "single unified MOC" rule (ai_service.py §PIPE TYPE
+    # TRANSITION), every row in a class shares the same material_spec —
+    # so the stress at design temp is loop-invariant. Resolve once here
+    # using the first row's spec (if any) with a class-material fallback,
+    # avoiding 20× redundant regex chains in `_detect_stress_table`.
+    have_design_ctx = (
+        is_asme and design_pressure_barg is not None
+        and design_temp_c is not None and material
+    )
+    s_mpa = None
+    if have_design_ctx:
+        first_spec = next(
+            ((r.get("material_spec") or "").strip() for r in pipe_data
+             if (r.get("material_spec") or "").strip()),
+            "",
+        )
+        try:
+            s_mpa = get_allowable_stress(first_spec or material, design_temp_c)["S_mpa"]
+        except Exception as e:
+            logger.warning("Stress lookup failed for %s/%s: %s", first_spec or material, design_temp_c, e)
+            have_design_ctx = False
+
     for row in pipe_data:
         nps = row.get("size_inch") or row.get("nps")
 
         # OD correction (ASME-only). Non-ASME codes return None and we
-        # skip the rest of the per-row logic.
+        # skip the rest of the per-row logic. We still need to round any
+        # AI-supplied od_mm / wall_thickness_mm before continuing.
         od = lookup_od(nps, pipe_code=pipe_code)
         if od is None:
+            _round_dims(row)
             continue
         row["od_mm"] = od
 
-        # Need the full design context to compute Eq. 3a + pick a schedule.
-        # If anything's missing, leave the AI's schedule/WT pass-through.
-        if not is_asme or design_pressure_barg is None or design_temp_c is None or not material:
+        if not have_design_ctx:
+            _round_dims(row)
             continue
 
         # Eq. 3a: P × D / (2(SEW + PY)) + CA, then × 1/(1-mill_tol)
-        # Stress table key: prefer the row's actual MOC (material_spec) — the
-        # AI assigns the real ASTM/API pipe spec there (e.g. "API 5L Gr X60
-        # PSL-2" for F1/G1 1500#-2500# classes), which has different allowable
-        # stress than the class-level designation ("CS NACE"). Fall back to
-        # the class material when the row didn't supply a spec.
-        spec_for_stress = (row.get("material_spec") or "").strip() or material
         try:
-            stress = get_allowable_stress(spec_for_stress, design_temp_c)
             calc = calculate_wall_thickness(
                 od_mm=od,
                 design_pressure_barg=design_pressure_barg,
-                allowable_stress_mpa=stress["S_mpa"],
+                allowable_stress_mpa=s_mpa,
                 joint_factor=JOINT_EFFICIENCY_E,
                 corrosion_allowance_mm=ca_mm,
             )
             t_min = calc["t_minimum_mm"]
         except Exception as e:
             logger.warning("Eq. 3a failed for NPS %s: %s — leaving AI value", nps, e)
+            _round_dims(row)
             continue
 
         # Project floor — class-conventional minimum schedule per (class, NPS).
-        # Returns None when no rule applies (custom class, NPS out of declared
-        # range, or rule explicitly "calc-only" for that size). When None, the
-        # floor is effectively 0 — only Eq. 3a applies.
+        # `floor_for` returns None when no rule applies (custom class, NPS out
+        # of declared range, or rule explicitly "calc-only"); resolve that
+        # to a 0 floor so Eq. 3a alone wins.
         floor_sched = schedule_floor_lookup.floor_for(piping_class, nps)
-        floor_wt = 0.0
-        if floor_sched:
-            from app.services.schedule_selector import _wt_table
-            from app.utils.engineering_constants import _normalize_nps
-            row_wt = (_wt_table().get(_normalize_nps(nps)) or {})
-            floor_wt = float(row_wt.get(floor_sched, 0.0) or 0.0)
+        floor_wt = lookup_wall_thickness(nps, floor_sched)
 
-        # required_wt = MAX(eq3a, floor). Pick smallest schedule meeting it.
-        required_wt = max(t_min, floor_wt)
-        chosen = select_schedule_for_thickness(nps, required_wt)
+        # required_wt = MAX(Eq. 3a, floor). Pick smallest schedule meeting it.
+        chosen = select_schedule_for_thickness(nps, max(t_min, floor_wt))
         if chosen is not None:
             row["schedule"] = chosen[0]
             row["wall_thickness_mm"] = chosen[1]
 
-    # Final 2-decimal normalisation on od_mm and wall_thickness_mm
-    for row in pipe_data:
-        rounded_od = _round2(row.get("od_mm"))
-        if rounded_od is not None:
-            row["od_mm"] = rounded_od
-        rounded_wt = _round2(row.get("wall_thickness_mm"))
-        if rounded_wt is not None:
-            row["wall_thickness_mm"] = rounded_wt
+        _round_dims(row)
 
     return pipe_data

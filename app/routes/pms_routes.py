@@ -482,24 +482,13 @@ async def api_branch_chart(chart_id: str):
 
 @router.get("/engineering-constants")
 async def api_engineering_constants():
-    """Return all engineering constants so the frontend uses the same values as backend."""
-    # Local import keeps the global imports in this module focused; the OD
-    # table is sourced from `app/data/standards/pipe_dimensions.json` so the
-    # frontend mirrors the same authoritative values used for the post-AI
-    # correction layer.
+    """Return all engineering constants so the frontend uses the same values
+    as backend. Sources the OD table from engineering_constants.ASME_PIPE_OD
+    (loaded once at import time) and the WT table from schedule_selector's
+    lru-cached `_wt_table()` — neither does I/O on this hot endpoint."""
     from app.utils.engineering_constants import ASME_PIPE_OD
-    # Wall-thickness table for the live frontend Wall Thickness Calculation
-    # Table — the JS picks the smallest schedule meeting MAX(Eq. 3a, project
-    # floor), so it needs both the WT data and the project-floor rules the
-    # backend uses.
-    import json as _json
-    from pathlib import Path as _Path
-    _pd_path = _Path(__file__).resolve().parents[1] / "data" / "standards" / "pipe_dimensions.json"
-    _pd = _json.loads(_pd_path.read_text(encoding="utf-8"))
-    asme_wall_thicknesses = _pd.get("wall_thicknesses_mm") or {}
-    # Project-conventional schedule floors per (class, NPS-range)
+    from app.services.schedule_selector import _wt_table
     from app.services import schedule_floor_lookup
-    project_schedule_floors = schedule_floor_lookup.floor_lookup_dict()
     return {
         "hydrotest_factor": HYDROTEST_FACTOR,
         "operating_pressure_factor": OPERATING_PRESSURE_FACTOR,
@@ -513,8 +502,8 @@ async def api_engineering_constants():
         "default_corrosion_allowance": DEFAULT_CORROSION_ALLOWANCE,
         "default_service": DEFAULT_SERVICE,
         "asme_pipe_od": ASME_PIPE_OD,
-        "asme_wall_thicknesses_mm": asme_wall_thicknesses,
-        "project_schedule_floors": project_schedule_floors,
+        "asme_wall_thicknesses_mm": _wt_table(),
+        "project_schedule_floors": schedule_floor_lookup.floor_lookup_dict(),
         "stress_tables": {
             "CS": STRESS_CS,
             "API5LX60": STRESS_API5LX60,
@@ -527,70 +516,6 @@ async def api_engineering_constants():
             "TITANIUM_B861_GR2": STRESS_TITANIUM_B861_GR2,
             "COPPER_C12200_H80": STRESS_COPPER_C12200_H80,
             "COPPER_C12200_H55": STRESS_COPPER_C12200_H55,
-        },
-    }
-
-
-@router.get("/pt-curve")
-async def api_pt_curve(rating: str = Query(...), material: str = Query(...)):
-    """Return the ASME B16.5 P-T curve for a (rating, material) pair.
-
-    Used by the frontend Wall Thickness Calculation panel to compute the
-    "Min T / Max P" Case 1 alongside the user's "Design Point" Case 2.
-    The min-temp row is always the bottom of the B16.5 curve — that gives
-    the highest allowable pressure (rating-defining cold-end), which often
-    governs t_press over the design-point case.
-
-    Returns 404 when:
-      • the rating isn't indexed in `pt_by_class.json` (5000#, 10000# stubs)
-      • the material doesn't map to any indexed group (exotic/AI-only)
-
-    Body shape:
-      {
-        "material_group": "1.1",
-        "temperatures_c":  [38, 50, 100, ...],
-        "pressures_barg":  [19.6, 19.6, 18.9, ...],
-        "temp_labels":     ["-29 to 38°C", ...],
-        "min_temp_row":    { "index": 0, "label": "-29 to 38°C",
-                             "temp_c": 38, "pressure_barg": 19.6 }
-      }
-    """
-    from app.services import pt_lookup
-    from app.services.class_derivation import _MATERIAL_TO_GROUP, _material_token
-
-    base_mat, _is_nace, _is_ltcs = _material_token(material)
-    group = _MATERIAL_TO_GROUP.get(base_mat)
-    if not group:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Material '{material}' has no indexed B16.5 group "
-                   f"(cleaned: '{base_mat}'). Frontend should fall back to single-case Eq. 3a.",
-        )
-
-    curve = pt_lookup.lookup_pt(group, rating)
-    if not curve:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No P-T curve for rating={rating} group={group}. "
-                   f"5000#/10000# are stubs awaiting authoritative data.",
-        )
-
-    temps = list(curve.get("temperatures_c") or [])
-    press = list(curve.get("pressures_barg") or [])
-    labels = list(curve.get("temp_labels") or [])
-    if not temps or not press or len(temps) != len(press):
-        raise HTTPException(status_code=500, detail="Malformed P-T curve in pt_by_class.json")
-
-    return {
-        "material_group": group,
-        "temperatures_c": temps,
-        "pressures_barg": press,
-        "temp_labels": labels,
-        "min_temp_row": {
-            "index": 0,
-            "label": labels[0] if labels else f"{temps[0]}°C",
-            "temp_c": temps[0],
-            "pressure_barg": press[0],
         },
     }
 

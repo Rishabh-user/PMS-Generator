@@ -89,11 +89,6 @@ def floor_for(class_code: str | None, nps) -> str | None:
     return None
 
 
-def all_classes() -> list[str]:
-    """Every class code currently indexed."""
-    return sorted(_index().keys())
-
-
 def floor_lookup_dict() -> dict[str, list[dict]]:
     """Raw class → ranges dict. Used by API endpoints that mirror the
     floor data to the frontend so the UI can compute the same floor

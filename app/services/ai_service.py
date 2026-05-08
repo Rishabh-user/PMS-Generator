@@ -1,10 +1,28 @@
 """
 Claude AI service for generating PMS data.
-Generates all PMS fields EXCEPT pressure-temperature data (which comes from JSON).
 
-The AI is trained via comprehensive prompt rules that encode the engineering patterns
-from the master spec sheets. No data is hardcoded — the AI uses its knowledge of
-ASME/ASTM standards combined with project-specific conventions taught in the prompt.
+Responsibility split with the post-processor (`app/utils/pipe_data.py`):
+
+  AI generates  — class naming, NPS size list, pipe MOC, pipe-type
+                  transitions, fittings (MOC + standards), flange
+                  (MOC + face + type), spectacle blind, bolts/nuts/
+                  gaskets, valve VDS codes, design code, pipe code,
+                  branch chart, ends, notes. For non-ASME pipe codes
+                  (EEMUA 234, ASTM B42, manufacturer GRE, ASTM F 441,
+                  ASTM A 269) the AI also emits the final OD / WT / SCH
+                  values from authoritative tables baked into the prompt.
+
+  Post-processor — for ASME-coded pipe classes (B36.10M / B36.19M only):
+                  overwrites od_mm with `pipe_dimensions.json` values,
+                  computes Eq. 3a minimum wall, looks up the project-
+                  conventional schedule floor in `project_schedule_floors.json`,
+                  and picks the smallest standard schedule meeting
+                  MAX(Eq. 3a, floor) — replacing both `schedule` and
+                  `wall_thickness_mm`. The AI's emitted values for these
+                  three fields are discarded for ASME classes.
+
+  Pressure-temperature curves come from `pt_by_class.json` (B16.5 + project
+  caps), not from the AI.
 """
 import json
 import logging
@@ -147,22 +165,10 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
     and explicitly note the assumption in the response.
   GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 36" (22 sizes — galv/epoxy ≤ 600# extended for project-wide NPS 36 support)
 
-=== NPS 36 POLICY (project, May 2026) ===
-NPS 36 is supported for ratings ≤ 600# (A-series, B-series, D-series in §5.5).
-The OD comes from app/data/standards/pipe_dimensions.json (914.4 mm).
-
-For NPS 26, 28, 30, 32, 36 sizes where a class's per-class schedule rules
-below DON'T list a specific schedule, emit `schedule = "-"`. The post-
-processor (`pipe_data.correct_pipe_data`) will compute the wall thickness
-via ASME B31.3 §304.1.2 Eq. 3a using the actual design pressure /
-temperature / material / CA, and select the smallest standard B36.10M
-or B36.19M schedule whose nominal wall meets that minimum. Emitting a
-specific schedule is a HINT (project floor — the post-processor takes
-MAX(Eq. 3a, floor)); emitting "-" lets the calculation drive entirely.
-
-For E/F/G series (≥ 900#) and J/K series (≥ 5000#): NPS 36 is NOT in
-range. Heavy-wall large-bore pipe at high rating is rarely buildable.
-  CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30" — do NOT emit those sizes)
+=== ADDITIONAL SIZE-RANGE NOTES ===
+NPS 36: supported for ratings ≤ 600# (A/B/D series). NOT in range for E/F/G
+(≥ 900#) — heavy-wall large-bore pipe at high rating is rarely buildable.
+  CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30")
   Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
   Titanium (A70): 0.5" to 6" ONLY (8 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6) — do NOT emit 8"+
   GRE (A50/A51/A52):
@@ -173,28 +179,31 @@ range. Heavy-wall large-bore pipe at high rating is rarely buildable.
 
 Standard NPS sequence: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36
 
-=== PIPE SCHEDULE & WALL THICKNESS — NO POLICY ENGINE ===
-The post-AI schedule/wall-thickness correction layer was REMOVED in the
-project's SCH/WT hard-wipe. There is currently no engineering layer
-that validates, calculates, or replaces what you emit for `schedule` or
-`wall_thickness_mm`.
+=== PIPE SCHEDULE & WALL THICKNESS — POST-PROCESSOR HANDLES ASME CLASSES ===
+For ASME-coded pipe classes (pipe_code = "ASME B 36.10M" or "ASME B 36.19M":
+CS / LTCS / GALV / SS / DSS / SDSS / Titanium) you do NOT need to think
+about schedule, wall thickness, or OD. The server-side post-processor
+(`app/utils/pipe_data.py::correct_pipe_data`) will:
+  1. Replace od_mm with the canonical value from pipe_dimensions.json.
+  2. Compute Eq. 3a minimum wall from the request's P / T / material / CA.
+  3. Look up the project-conventional schedule floor per (class, NPS)
+     from project_schedule_floors.json.
+  4. Pick the smallest standard schedule meeting MAX(Eq. 3a, floor) and
+     overwrite both `schedule` and `wall_thickness_mm`.
 
-Emit your best guess based on:
-  • the rating class and material family
-  • the standards you know (ASME B36.10M for CS/LTCS/GALV pipe, B36.19M
-    for SS/DSS/SDSS, plus the standard-specific tables for CuNi EEMUA
-    234, Copper ASTM B42, GRE manufacturer std, CPVC ASTM F441, and
-    Tubing ASTM A269 elsewhere in this prompt)
-  • whatever the user-supplied design pressure / temperature / material
-    suggest
+So for ASME classes: emit any plausible schedule and any reasonable
+wall_thickness_mm — both WILL be replaced. If unsure, emit
+`schedule = "-"` and `wall_thickness_mm = 0`.
 
-The values you emit will be used as-is. The OD column is still
-post-corrected against `pipe_dimensions.json` for ASME-rated classes;
-schedule and wall_thickness_mm pass through untouched.
-
-If you can't confidently pick a schedule for a row, emit
-`schedule = "-"` and `wall_thickness_mm = 0` rather than guessing
-wildly — leaving them blank is safer than a wrong number.
+For NON-ASME pipe codes the post-processor does NOT touch any pipe
+field — your values are final and the user sees them verbatim:
+  • CuNi A30        — pipe_code "EEMUA 234 20 BAR"
+  • Copper A40      — pipe_code "ASTM B42 (Regular)"
+  • GRE A50/A52     — pipe_code "Manufacturer's Std."
+  • GRE A51         — pipe_code "Manufacturer's Std (BONSTRAND Series 50000C)"
+  • CPVC A60        — pipe_code "ASTM F 441" (uses IPS ODs from B36.10M, SCH 80)
+  • Tubing T80/T90  — pipe_code "ASTM A 269"
+Use the exact OD/WT tables given below for these classes.
 
 CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs AND WTs (Pipe Class Sheet A30):
   A30: No ASME schedule — uses EEMUA 234 wall thickness tables. 17 sizes total.
@@ -207,16 +216,10 @@ CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs AND WTs (Pipe Class Sheet A30
     8"=4.5, 10"=5.5, 12"=7.0, 14"=8.0, 16"=9.0, 18"=9.5, 20"=11.0,
     24"=13.0, 28"=15.0
   Schedule: "-" for all (EEMUA uses its own thickness system; no ASME schedule applies).
-  IMPORTANT 1: Use the exact OD and WT values above. The post-processor does NOT
-    correct EEMUA classes (pipe_code = "EEMUA 234 20 BAR" is non-ASME), so the
-    values the AI emits are what the user sees. Get them right the first time.
-  IMPORTANT 2: Do NOT emit NPS 2.5", 22", or 30" for A30 — those sizes are not
-    in the EEMUA 234 range used by this project. The 17 sizes above are the
-    complete list.
+  Do NOT emit NPS 2.5", 22", or 30" for A30 — those sizes are not in the EEMUA
+  234 range used by this project. The 17 sizes above are the complete list.
 
-GRE (A50/A51/A52) — Manufacturer's Standard (NOT ASME). NON-ASME pipe_code,
-so post-processor does NOT correct OD or WT — the AI's values are final.
-Use these exact values:
+GRE (A50/A51/A52) — Manufacturer's Standard. Use these exact values:
 
   A50 / A52 (20 sizes 1"-40", pipe_code = "Manufacturer's Std."):
     NPS → OD (mm): 1"=34.1, 1.5"=49.1, 2"=57.8, 3"=86.4, 4"=110.6, 6"=166.6,
@@ -1044,20 +1047,14 @@ CRITICAL:
 1. Valve *_by_size arrays MUST have one entry per pipe size (matching pipe_data count). Use "" for sizes where valve type is not available.
 2. The top-level valve string fields (ball, gate, dbb, dbb_inst, etc.) are fallback descriptions — the *_by_size arrays hold the actual per-size codes.
 3. For 900#+ classes (E/F/G-series), include dbb and dbb_inst fields with DBRP prefix codes. dbb_inst code = dbb code + "T" suffix. Omit dbb/dbb_inst for 150#-600# classes.
-3. fittings_by_size count MUST match pipe_data count.
-4. fittings_welded MUST be populated (not null) if class has welded fittings.
-5. The od_mm and wall_thickness_mm fields for ASME-coded pipe classes (B36.10M / B36.19M — CS, LTCS, GALV, SS, DSS, SDSS, Titanium) are OVERWRITTEN after generation. Your ONLY job for those classes is to pick the correct SCHEDULE per the per-class rules above. Put any reasonable number in wall_thickness_mm — it WILL be replaced:
-   - When schedule maps to a standard code (SCH 160, 80S, STD, XS, etc.): post-processor looks up WT from the ASME B36.10M / B36.19M tables.
-   - When schedule is "-" (calculated WT case, e.g. F1LN 10-24", G2N 1-24"): post-processor COMPUTES WT server-side per ASME B31.3 §304.1.2 Eq. 3a using the class's design pressure (max from P-T table), design temperature (max from P-T table), material stress, joint factor E=1.0, Y=0.4, W=1.0, corrosion allowance from the request, and mill tolerance 12.5%. So your emitted WT for "-" schedule rows will ALSO be replaced — emit any plausible value.
-   For NON-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer std, CPVC ASTM F441, Tubing ASTM A269), the AI's od_mm and wall_thickness_mm ARE preserved — be accurate for those.
+4. fittings_by_size count MUST match pipe_data count. fittings_welded MUST be populated (not null) if class has welded fittings.
+5. ASME pipe codes (B36.10M / B36.19M): the post-processor overwrites od_mm, schedule, and wall_thickness_mm — emit any plausible values, they WILL be replaced. NON-ASME pipe codes (EEMUA 234, ASTM B42, manufacturer GRE, ASTM F 441, ASTM A 269): your values ARE FINAL — use the exact tables given above.
 6. Return ONLY JSON. No markdown fences, no commentary.
 7. For GALV classes, gasket is neoprene/EPDM rubber (NOT spiral wound).
 8. For CuNi classes, use EEMUA 234 standards throughout.
 9. For Tubing classes, use compression fitting data, NOT standard piping format.
 
 Generate PMS for class **{piping_class}** now."""
-
-
 async def generate_pms_with_ai(
     piping_class: str,
     material: str,

@@ -120,17 +120,14 @@ def select_schedule_for_thickness(
     return _format_schedule_label(sched_key), wt
 
 
-def list_schedules_for_nps(nps) -> dict[str, float]:
-    """Every standard schedule available at this NPS, ordered by ascending
-    wall thickness. Useful for tests and for any UI that wants to display
-    all valid schedule options for a size."""
+def lookup_wall_thickness(nps, schedule_key: str | None) -> float:
+    """Numeric wall thickness (mm) for (NPS, schedule key), or 0.0 when no
+    match. Public helper for callers that already have a schedule KEY (e.g.
+    a project-floor lookup returning '160' / 'STD' / 'XS') and just need
+    the numeric WT to compare against an Eq. 3a result."""
+    if not schedule_key:
+        return 0.0
     nps_key = _normalise_nps(nps)
     if not nps_key:
-        return {}
-    schedules = _wt_table().get(nps_key) or {}
-    return dict(sorted(schedules.items(), key=lambda kv: kv[1]))
-
-
-def all_indexed_nps() -> list[str]:
-    """Every NPS that has wall-thickness data indexed."""
-    return list(_wt_table().keys())
+        return 0.0
+    return float((_wt_table().get(nps_key) or {}).get(schedule_key, 0.0) or 0.0)

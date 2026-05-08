@@ -1734,6 +1734,28 @@ function renderScheduleTab(pms) {
     const caStr = pms.corrosion_allowance || '0';
     const caMM = caStr.toUpperCase().includes('NIL') ? 0 : (parseFloat(caStr) || 0);
 
+    // Material identity — derived once, reused throughout the function.
+    // matUpper drives the family check below; projectMaterialSpec is the
+    // AI-assigned MOC (e.g. "API 5L Gr, X60 PSL-2") that getAllowableStress
+    // needs to resolve high-rating CS classes to the correct stress curve.
+    // matFamily ordering matters: SDSS contains "DSS" contains "SS" — most-
+    // specific must come first. (The earlier `mat.includes('SS') ? 'SS' :
+    // mat.includes('DSS') ? 'DSS' : 'CS'` made the DSS branch unreachable.)
+    const matUpper = (pms.material || '').toUpperCase();
+    const projectMaterialSpec = pms.pipe_data?.[0]?.material_spec || '';
+    const matFamily = matUpper.includes('SDSS')      ? 'SDSS'
+                    : matUpper.includes('DSS')        ? 'DSS'
+                    : (matUpper.includes('SS') ||
+                       matUpper.includes('STAINLESS')) ? 'SS'
+                    : 'CS';
+    const isSS = matFamily !== 'CS';
+    // Y-coefficient family per ASME B31.3 Table 304.1.1 — ferritic steels
+    // (CS / LTCS / API 5L X-grades) use Y=0.4, austenitic / non-ferrous use
+    // a different curve but same numeric default. Used as descriptive label
+    // in the formula example and code-factors panels.
+    const yFamily = (matFamily === 'CS') ? 'ferritic/alloy steel'
+                                         : 'austenitic / non-ferrous';
+
     // ─────────────────────────────────────────────────────────────────────
     // Dual-case ASME B31.3 §304.1.2 wall thickness check
     // ─────────────────────────────────────────────────────────────────────
@@ -1748,15 +1770,6 @@ function renderScheduleTab(pms) {
     // Whichever case demands more wall, governs. Same governing case applies
     // to every NPS because t_press scales linearly with D — the case picked
     // here propagates to every row in the WT table.
-    // Per-class actual pipe MOC — sourced from the AI-assigned material_spec
-    // on the first pipe row. Per the AI prompt's "single unified MOC" rule
-    // (ai_service.py §PIPE TYPE TRANSITION), every row in a given class
-    // shares the same material_spec, so pipe_data[0] is representative. This
-    // is the spec we feed into getAllowableStress so high-rating CS classes
-    // (F1/G1 1500-2500#) correctly resolve to the API 5L X60 stress curve
-    // rather than vanilla CS A106-B.
-    const projectMaterialSpec = pms.pipe_data?.[0]?.material_spec || '';
-
     const ptTemps = pms.pressure_temperature?.temperatures || [];
     const ptPress = pms.pressure_temperature?.pressures || [];
     let case1 = null;  // null if no P-T curve attached (e.g., AI-only path)
@@ -1800,9 +1813,6 @@ function renderScheduleTab(pms) {
     const k2 = k(case2.P_mpa, case2.S_mpa);
     const case1Governs = case1 != null && k1 >= k2;
     const governing = case1Governs ? case1 : case2;
-    const governingLabel = case1Governs ? 'Case 1 (Min T / Max P)' : 'Case 2 (Design Point)';
-
-    // Stress used for per-row Eq. 3a — sourced from the governing case.
     const S_mpa = governing.S_mpa;
     const S_psi = governing.S_psi;
 
@@ -1820,13 +1830,10 @@ function renderScheduleTab(pms) {
         const t_m = t + caMM;
         const t_req = t_m / (1 - millFrac);
 
-        // Apply project-conventional schedule floor for (class, NPS).
-        // floor_wt is 0 when no rule applies — Eq. 3a alone wins.
-        // When a rule applies, required_wt = MAX(eq3a, floor_wt) so the
-        // class-conventional minimum schedule is honoured at low pressures
-        // and Eq. 3a takes over once design pressure pushes above the floor.
-        const floorKey = _projectFloorScheduleKey(pms.piping_class, nps);
-        const floorWt = _projectFloorWt(nps, floorKey);
+        // required_wt = MAX(Eq. 3a t_req, project_floor_wt). Floor wins at
+        // low pressures / small bore (project conventional minimum); Eq. 3a
+        // wins once design pressure pushes above it.
+        const floorWt = _projectFloorWt(nps, _projectFloorScheduleKey(pms.piping_class, nps));
         const required_wt = Math.max(t_req, floorWt);
 
         const picked = _selectScheduleForThickness(nps, required_wt);
@@ -1835,10 +1842,8 @@ function renderScheduleTab(pms) {
         const sel_status = (picked && picked.wt + 0.001 >= required_wt) ? 'OK' : 'SUBSTD';
         const applColor = t_applicable === 'OK' ? '#16a34a' : '#b91c1c';
         const selColor = sel_status === 'OK' ? '#16a34a' : '#b91c1c';
-        const floorDriven = floorWt > t_req + 1e-6;
 
         return { nps, D, t, t_press_1, t_press_2, d_over_6, t_applicable, t_m, t_req,
-                 floorKey, floorWt, required_wt, floorDriven,
                  sel_sch, sel_thk, sel_status, applColor, selColor };
     }).filter(r => r !== null);
 
@@ -1952,8 +1957,6 @@ function renderScheduleTab(pms) {
     designParams.push({ l: 'Material Spec', v: materialSpec });
 
     if (case1) {
-        const matFamily = (pms.material || '').toUpperCase().includes('SS') ? 'SS'
-                        : (pms.material || '').toUpperCase().includes('DSS') ? 'DSS' : 'CS';
         const stressBlock = [
             dualLine(`S @ ${case1.label}`, `${case1.S_psi.toLocaleString()} psi`,
                      `(${case1.S_mpa} MPa)`, case1Governs ? govTag : actTag),
@@ -1983,8 +1986,6 @@ function renderScheduleTab(pms) {
         }
         const odIn = (exRow.D / 25.4).toFixed(3);
         const caIn = (caMM / 25.4).toFixed(4);
-        const yNote = ['CS', 'LTCS'].some(s => (pms.material || '').toUpperCase().includes(s))
-                    ? 'ferritic/alloy steel' : 'austenitic / non-ferrous';
 
         const t1_mm = exRow.t_press_1;
         const t2_mm = exRow.t_press_2;
@@ -1996,7 +1997,7 @@ function renderScheduleTab(pms) {
         const treq_mm = exRow.t_req.toFixed(2);
 
         let html = `<strong>NPS ${exRow.nps}" example:</strong> OD = ${odIn}" `
-                 + ` | E = ${E} | W = ${W} | Y = ${Y} <span class="unit">[${yNote}]</span> `
+                 + ` | E = ${E} | W = ${W} | Y = ${Y} <span class="unit">[${yFamily}]</span> `
                  + ` | c = ${caIn}" (${caMM} mm) | mill tol = ${millTolPct}%<br>`;
         // Round psig to integer for clean spec-style display, matching the
         // Design Parameters panel above.
@@ -2045,12 +2046,8 @@ function renderScheduleTab(pms) {
     // Tables 304.1.1 / 302.3.5. Here we annotate which temperature was used —
     // that's the design temp for both factors at the project's operating
     // conditions (the cold-end Case 1 only affects S and P, not Y or W).
-    const matUpper = (pms.material || '').toUpperCase();
-    const isSS = matUpper.includes('SS') || matUpper.includes('STAINLESS')
-              || matUpper.includes('DSS') || matUpper.includes('SDSS');
     const pipeStandard = isSS ? 'ASME B36.19M' : 'ASME B36.10M';
     const jointType = document.getElementById('jointType')?.value || 'Seamless';
-    const yFamily = isSS ? 'austenitic / non-ferrous' : 'ferritic/alloy steel';
     const dt_F = c2f(dtVal);
     setKVList('codeFactorsList', [
         { l: 'Pipe Standard', v: pipeStandard, bold: true },
