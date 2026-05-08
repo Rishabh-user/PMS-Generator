@@ -94,10 +94,14 @@ STRESS_API5LX60 = {
 Breakpoints at 100, 200, 300, 400, 500, 600, 650, 700, 750, 800 °F."""
 
 STRESS_SS316L = {
-    38: 16700, 93: 16700, 149: 16700, 204: 15700, 260: 14300,
-    316: 13100, 371: 12000, 427: 10900, 482: 10100,
+    38: 16700, 93: 16700, 149: 16700, 204: 15700, 260: 14800,
+    316: 14000, 371: 13500, 427: 12700, 482: 12100,
 }
-"""SS 316L (ASTM A312 TP316L) — per ASME B31.3 Table A-1. Flat up to 149°C, drops at 204°C."""
+"""SS 316L (ASTM A312 TP316L) — per ASME B31.3 Table A-1 (PDF p. 215, 2020 edition).
+Verified row-for-row against B31.3 Table A-1 in standards-audit/phase2-full-91-class-audit.md
+(Phase 1.5 finding B31.3-1 / Phase 2 STRESS-1). Earlier values were 14-16% conservative
+at 427-482°C, which inflated calculated wall thickness AND the §345.4.2(b) hydrotest
+correction factor. Breakpoints at 100, 200, 300, 400, 500, 600, 700, 800, 900 °F."""
 
 STRESS_SS316 = {
     38: 20000, 93: 20000, 149: 19500, 204: 19300, 260: 18900,
@@ -112,11 +116,24 @@ STRESS_SS304L = {
 """SS 304L (ASTM A312 TP304L)."""
 
 STRESS_DSS = {
-    38: 31700, 93: 31000, 149: 30300, 204: 29400, 260: 28500,
-    316: 27200,
+    38: 30000, 93: 30000, 149: 28900, 204: 27800, 260: 27200,
+    316: 26900,
 }
-"""DSS — Duplex (ASTM A790 UNS S31803 / S32205) — ASME B31.3 Table A-1.
-Rated only up to 316°C (600°F) due to 475°C embrittlement risk."""
+"""DSS — Duplex Stainless Steel UNS S31803 (ASTM A790 / A789 / A928 Gr. WP-S31803).
+
+Per ASME B31.3 Table A-1 (PDF p. ~287, 2020 edition). The project standardises
+on S31803 — confirmed by reading the A20N Excel sheet in
+`Pipe Class Sheets-With Tubing.xlsx` (rows 17, 21, 27, 29, 36-38), which cites
+`UNS S31803` everywhere (verified in Phase 1.6 audit, finding B31.3-2 escalated
+to CRITICAL by Phase 2).
+
+Earlier revisions of this dict mirrored S32205 (95-ksi / 70-ksi grade) values,
+which are 5-7% HIGHER than S31803 (90-ksi / 65-ksi). For S31803-spec'd lines
+that produced non-conservative wall-thickness calculations across all 12
+DSS classes (A20/A20N/B20/B20N/D20/D20N/E20/E20N/F20/F20N/G20/G20N).
+
+Rated only up to 316°C (600°F) due to 475°C embrittlement risk — see
+get_allowable_stress() out-of-range guard in this module."""
 
 STRESS_SDSS = {
     38: 38700, 93: 38100, 149: 36700, 204: 35100, 260: 33800,
@@ -255,91 +272,38 @@ def get_allowable_stress(material: str, temp_c: float) -> dict:
 
 
 # ============================================================
-# ASME B36.10M / B36.19M — PIPE OD AND WALL THICKNESS TABLES
+# ASME B36.10M / B36.19M — PIPE OUTSIDE DIAMETERS
 # ============================================================
-# Single source of truth for standard-schedule wall thicknesses and outside
-# diameters. Used post-AI to overwrite AI-generated WT/OD with the correct
-# standard values. The AI selects the SCHEDULE per class rules in the prompt;
-# this code looks up the standard WT for that (NPS, schedule) pair.
+# Wall-thickness tables and the SCH/WT lookup machinery were removed in
+# the SCH/WT hard-wipe (project decision, May 2026). What remains:
 #
-# NPS keys are strings matching how the AI emits size_inch: "0.5", "0.75",
-# "1", "1.5", "2", "3", ... Schedule keys are the bare form ("160", "80",
-# "STD", "XS", "XXS", "5S", "10S", "40S", "80S"). The lookup helper strips
-# any "SCH " prefix from the AI's schedule string before matching.
+#   • outside_diameters_mm — single OD table, shared by B36.10M and B36.19M
+#   • lookup_od(nps, pipe_code) — the one accessor any consumer needs
 #
-# Non-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer
-# std, CPVC ASTM F441, Tubing ASTM A269) are NOT corrected — the AI's
-# values stand. Gate on pipe_code prefix in the lookup helper below.
+# Anything that previously called lookup_wall_thickness, used the
+# ASME_B3610M_WT / ASME_B3619M_WT constants, or relied on the schedule
+# selection layer must now be reworked or removed. There is no SCH/WT
+# replacement yet — sheets ship with whatever the AI emits, uncorrected.
 
-ASME_B3610M_WT = {
-    "0.5":  {"10": 1.24, "20": 1.65, "30": 2.11, "40": 2.77, "STD": 2.77, "80": 3.73, "XS": 3.73, "160": 4.78, "XXS": 7.47},
-    "0.75": {"10": 1.65, "20": 1.65, "30": 2.11, "40": 2.87, "STD": 2.87, "80": 3.91, "XS": 3.91, "160": 5.56, "XXS": 7.82},
-    "1":    {"10": 1.65, "20": 2.11, "30": 2.41, "40": 3.38, "STD": 3.38, "80": 4.55, "XS": 4.55, "160": 6.35, "XXS": 9.09},
-    "1.5":  {"10": 1.65, "20": 2.11, "30": 2.41, "40": 3.68, "STD": 3.68, "80": 5.08, "XS": 5.08, "160": 7.14, "XXS": 10.16},
-    "2":    {"10": 2.11, "20": 2.77, "30": 2.90, "40": 3.91, "STD": 3.91, "80": 5.54, "XS": 5.54, "160": 8.74, "XXS": 11.07},
-    "3":    {"10": 2.11, "20": 3.05, "30": 4.78, "40": 5.49, "STD": 5.49, "80": 7.62, "XS": 7.62, "160": 11.13, "XXS": 15.24},
-    "4":    {"10": 2.11, "20": 3.05, "30": 4.78, "40": 6.02, "STD": 6.02, "80": 8.56, "XS": 8.56, "120": 11.13, "160": 13.49, "XXS": 17.12},
-    "6":    {"10": 2.77, "20": 3.40, "30": 6.35, "40": 7.11, "STD": 7.11, "80": 10.97, "XS": 10.97, "120": 14.27, "160": 18.26, "XXS": 21.95},
-    "8":    {"10": 3.76, "20": 6.35, "30": 7.04, "40": 8.18, "STD": 8.18, "60": 10.31, "80": 12.70, "XS": 12.70, "100": 15.09, "120": 18.26, "140": 20.62, "160": 23.01, "XXS": 22.23},
-    "10":   {"10": 4.19, "20": 6.35, "30": 7.80, "40": 9.27, "STD": 9.27, "60": 12.70, "XS": 12.70, "80": 15.09, "100": 18.26, "120": 21.44, "140": 25.40, "160": 28.58, "XXS": 25.40},
-    "12":   {"10": 4.57, "20": 6.35, "30": 8.38, "STD": 9.53, "40": 10.31, "60": 14.27, "XS": 12.70, "80": 17.48, "100": 21.44, "120": 25.40, "140": 28.58, "160": 33.32, "XXS": 25.40},
-    # NPS 14-24 SCH 10/20/30 corrections: the prior values were conflated
-    # with B36.19M 10S/20S. Authoritative ASME B36.10M values below.
-    "14":   {"10": 6.35, "20": 7.92, "30": 9.53, "STD": 9.53, "40": 11.13, "60": 15.09, "XS": 12.70, "80": 19.05, "100": 23.83, "120": 27.79, "140": 31.75, "160": 35.71},
-    "16":   {"10": 6.35, "20": 7.92, "30": 9.53, "STD": 9.53, "40": 12.70, "60": 16.66, "XS": 12.70, "80": 21.44, "100": 26.19, "120": 30.96, "140": 36.53, "160": 40.49},
-    "18":   {"10": 6.35, "20": 7.92, "30": 11.13, "STD": 9.53, "40": 14.27, "60": 19.05, "XS": 12.70, "80": 23.83, "100": 29.36, "120": 34.93, "140": 39.67, "160": 45.24},
-    "20":   {"10": 6.35, "20": 9.53, "30": 12.70, "STD": 9.53, "40": 15.09, "60": 20.62, "XS": 12.70, "80": 26.19, "100": 32.54, "120": 38.10, "140": 44.45, "160": 50.01},
-    "22":   {"10": 6.35, "20": 9.53, "STD": 9.53, "60": 22.23, "XS": 12.70, "80": 28.58, "100": 34.93, "120": 41.28, "140": 47.63, "160": 53.98},
-    "24":   {"10": 6.35, "20": 9.53, "STD": 9.53, "30": 14.27, "40": 17.48, "60": 24.61, "XS": 12.70, "80": 30.96, "100": 38.89, "120": 46.02, "140": 52.37, "160": 59.54},
-    "26":   {"10": 7.92, "STD": 9.53, "20": 12.70, "XS": 12.70},
-    "28":   {"10": 7.92, "STD": 9.53, "20": 12.70, "XS": 12.70, "30": 15.88},
-    "30":   {"10": 7.92, "STD": 9.53, "20": 12.70, "XS": 12.70, "30": 15.88},
-    "32":   {"10": 7.92, "STD": 9.53, "20": 12.70, "XS": 12.70, "30": 15.88, "40": 17.48},
-    "36":   {"10": 7.92, "STD": 9.53, "20": 12.70, "XS": 12.70, "30": 15.88, "40": 19.05},
-}
-"""ASME B36.10M wall thicknesses in mm. Key: NPS string → {schedule: WT_mm}."""
+def _load_pipe_dimensions() -> dict:
+    """Load `app/data/standards/pipe_dimensions.json` at module import."""
+    import json
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "data" / "standards" / "pipe_dimensions.json"
+    with path.open(encoding="utf-8") as f:
+        return json.load(f)
 
-ASME_B3619M_WT = {
-    "0.5":  {"5S": 1.65, "10S": 2.11, "40S": 2.77, "80S": 3.73},
-    "0.75": {"5S": 1.65, "10S": 2.11, "40S": 2.87, "80S": 3.91},
-    "1":    {"5S": 1.65, "10S": 2.77, "40S": 3.38, "80S": 4.55},
-    "1.5":  {"5S": 1.65, "10S": 2.77, "40S": 3.68, "80S": 5.08},
-    "2":    {"5S": 1.65, "10S": 2.77, "40S": 3.91, "80S": 5.54},
-    "3":    {"5S": 2.11, "10S": 3.05, "40S": 5.49, "80S": 7.62},
-    "4":    {"5S": 2.11, "10S": 3.05, "40S": 6.02, "80S": 8.56},
-    "6":    {"5S": 2.77, "10S": 3.40, "40S": 7.11, "80S": 10.97},
-    "8":    {"5S": 2.77, "10S": 3.76, "40S": 8.18, "80S": 12.70},
-    "10":   {"5S": 3.40, "10S": 4.19, "40S": 9.27, "80S": 12.70},
-    "12":   {"5S": 3.96, "10S": 4.57, "40S": 9.53, "80S": 12.70},
-    # NPS 14-24: B36.19M 40S = STD = 9.53, 80S = XS = 12.70 (identical to
-    # B36.10M STD/XS values at these sizes). Needed for A10/A10N large
-    # sizes where the prompt rule uses 40S up to 20" and 24".
-    "14":   {"5S": 3.96, "10S": 4.78, "40S": 9.53, "80S": 12.70},
-    "16":   {"5S": 4.19, "10S": 4.78, "40S": 9.53, "80S": 12.70},
-    "18":   {"5S": 4.19, "10S": 4.78, "40S": 9.53, "80S": 12.70},
-    "20":   {"5S": 4.78, "10S": 5.54, "40S": 9.53, "80S": 12.70},
-    "22":   {"5S": 4.78, "10S": 5.54, "40S": 9.53, "80S": 12.70},
-    "24":   {"5S": 5.54, "10S": 6.35, "40S": 9.53, "80S": 12.70},
-    "30":   {"5S": 6.35, "10S": 7.92},
-}
-"""ASME B36.19M S-schedule wall thicknesses in mm (SS/DSS/SDSS). For non-S
-schedules (STD, XS, 40, 80, 160, etc.) on SS pipe, the lookup falls through
-to ASME_B3610M_WT — B36.19M and B36.10M share the same OD series, so
-non-S schedule WTs are identical for sizes covered by both."""
 
-ASME_PIPE_OD = {
-    "0.5": 21.3, "0.75": 26.7, "1": 33.4, "1.5": 48.3, "2": 60.3,
-    "3": 88.9, "4": 114.3, "6": 168.3, "8": 219.1, "10": 273.0,
-    "12": 323.8, "14": 355.6, "16": 406.4, "18": 457.0, "20": 508.0,
-    "22": 559.0, "24": 610.0, "26": 660.4, "28": 711.2, "30": 762.0,
-    "32": 812.8, "36": 914.4,
-}
+_PIPE_DIMS = _load_pipe_dimensions()
+
+ASME_PIPE_OD: dict[str, float] = _PIPE_DIMS["outside_diameters_mm"]
 """ASME B36.10M / B36.19M standard outside diameters in mm (identical
-between the two standards for sizes covered by both)."""
+between the two standards for sizes covered by both). Sourced from
+`app/data/standards/pipe_dimensions.json`."""
 
 
 def _normalize_nps(nps) -> str:
-    """Normalize NPS input to match the string keys used in the OD/WT tables."""
+    """Normalize NPS input to match the string keys used in the OD table."""
     if nps is None:
         return ""
     s = str(nps).strip().replace('"', "").replace("'", "").replace(" ", "")
@@ -354,51 +318,6 @@ def _normalize_nps(nps) -> str:
         return str(int(f)) if f == int(f) else str(f)
     except ValueError:
         return s
-
-
-def _normalize_schedule_key(schedule) -> str:
-    """Strip any 'SCH ' prefix and uppercase the schedule name."""
-    if schedule is None:
-        return ""
-    s = str(schedule).strip().upper()
-    # "SCH 160" / "SCH160" / "SCHEDULE 160" → "160"
-    for prefix in ("SCHEDULE ", "SCH ", "SCH"):
-        if s.startswith(prefix):
-            s = s[len(prefix):].strip()
-            break
-    return s
-
-
-def lookup_wall_thickness(nps, schedule, pipe_code: str | None = None) -> float | None:
-    """Look up standard ASME B36.10M / B36.19M wall thickness in mm.
-
-    Returns None if:
-      - schedule is "-", blank, or an unknown code (calculated WT → preserve AI value)
-      - NPS is not in the table (non-standard size)
-      - pipe_code indicates a non-ASME system (CuNi, Copper, GRE, CPVC, Tubing)
-
-    S-suffix schedules (5S, 10S, 40S, 80S) → B36.19M table.
-    Non-S schedules → B36.10M table (same OD/WT as B36.19M for covered sizes).
-    """
-    # Skip non-ASME pipe codes — their WT comes from different standards
-    code = (pipe_code or "").upper()
-    if code and not ("B 36.10M" in code or "B36.10M" in code or "B 36.19M" in code or "B36.19M" in code):
-        return None
-
-    nps_key = _normalize_nps(nps)
-    sched_key = _normalize_schedule_key(schedule)
-    if not nps_key or not sched_key or sched_key == "-":
-        return None
-
-    # S-suffix schedules = B36.19M. Be careful: "XS" ends in "S" but is
-    # NOT an S-schedule, it's B36.10M XS. The S-schedules are numeric + "S".
-    _S_SCHEDULES = {"5S", "10S", "40S", "80S"}
-    if sched_key in _S_SCHEDULES:
-        row = ASME_B3619M_WT.get(nps_key, {})
-        return row.get(sched_key)
-
-    row = ASME_B3610M_WT.get(nps_key, {})
-    return row.get(sched_key)
 
 
 def lookup_od(nps, pipe_code: str | None = None) -> float | None:

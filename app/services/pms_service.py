@@ -186,20 +186,88 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
     # the design temperature feeding the S(T) lookup.
     pressures = pt_data.get("pressures", [])
     temperatures = pt_data.get("temperatures", [])
-    if pressures:
-        max_p = max(pressures)
-        # Highest temperature with a non-zero pressure rating drives the
-        # correction. If a class lists 600 °C with P=0 (above material
-        # limit), that row should not pull the hydrotest up — pair each
-        # T with its P and pick max(T) only over rated rows.
+    is_ai_only = bool(entry.get("_ai_only"))
+
+    # AI-only path: no indexed standards data, so there's no rated-P
+    # ceiling to validate against. The user MUST supply design P/T in
+    # the request (the frontend AI-only panel makes them required). We
+    # use those values directly for the §345.4.2(b) hydrotest correction
+    # and skip the over-rating guard (no ceiling exists to compare to).
+    if is_ai_only:
+        if req.design_pressure_barg is None or req.design_temp_c is None:
+            raise RuntimeError(
+                f"AI-only generation for class {req.piping_class!r} requires "
+                f"explicit design_pressure_barg and design_temp_c in the "
+                f"request — no standards-indexed P-T table is available to "
+                f"derive a default design point."
+            )
+        # Hydrotest = 1.5 × user's design_pressure_barg, FLAT (consistent
+        # with the class-documentation convention used elsewhere). For
+        # AI-only there's no curve to read max(P) from, so the user's
+        # supplied design_pressure_barg IS the class envelope. Pass
+        # design_temp_c=38°C so the §345.4.2(b) correction collapses to
+        # 1.0 and the multiplier is a clean 1.5×.
+        from app.utils.engineering import HYDROTEST_TEST_TEMP_C
+        ht = hydrotest_pressure_corrected(
+            design_pressure=req.design_pressure_barg,
+            design_temp_c=HYDROTEST_TEST_TEMP_C,
+            material_spec=entry.get("material") or req.material or "",
+        )
+        hydrotest_str = str(ht["pressure_barg"])
+        if ht.get("correction_applied"):
+            logger.info(
+                "Hydrotest §345.4.2(b) [AI-only] for %s: %s barg "
+                "(flat 1.5·P would be %.2f, S_T/S=%.3f at T=%s°C)",
+                req.piping_class, hydrotest_str,
+                round(req.design_pressure_barg * HYDROTEST_FACTOR, 2),
+                ht["ratio_st_over_s"], req.design_temp_c,
+            )
+    elif pressures:
+        # Standards / catalogued path — has a P-T table to reason about.
         rated_temps = [
             t for t, p in zip(temperatures, pressures)
             if (p or 0) > 0 and t is not None
         ]
-        max_t = max(rated_temps) if rated_temps else (max(temperatures) if temperatures else 0)
+        ceiling_p = max(pressures)
+        ceiling_t = max(rated_temps) if rated_temps else (max(temperatures) if temperatures else 0)
+
+        # Determine the design point used by the OVER-RATING GUARD.
+        # User-supplied design conditions (from the Custom-Class panel)
+        # take precedence; otherwise fall back to the P-T-table ceiling.
+        design_p = req.design_pressure_barg if req.design_pressure_barg is not None else ceiling_p
+        design_t = req.design_temp_c if req.design_temp_c is not None else ceiling_t
+
+        # Over-rating guard: refuse design conditions above the rated
+        # allowable pressure at the design temperature. Gated on the user
+        # having supplied an explicit design point so legacy catalogue
+        # requests with no overrides aren't affected.
+        if (req.design_pressure_barg is not None
+                or req.design_temp_c is not None):
+            from app.utils.engineering import interpolate_pressure_at_temp
+            rated_at_design_t = interpolate_pressure_at_temp(
+                temperatures, pressures, design_t,
+            )
+            if design_p > rated_at_design_t * 1.001:  # 0.1% tolerance for FP
+                raise RuntimeError(
+                    f"Design pressure {design_p} barg exceeds the rated "
+                    f"allowable pressure {rated_at_design_t} barg at "
+                    f"{design_t}°C for class {req.piping_class}. "
+                    f"Pick a lower design pressure or a higher rating."
+                )
+
+        # Hydrotest = 1.5 × cold-rated, FLAT (project class-documentation
+        # convention). Independent of user design point so the value
+        # printed on the PMS spec sheet describes the CLASS envelope, not
+        # a specific line. We pass design_temp_c=38°C (test temperature)
+        # so the §345.4.2(b) S_T/S correction collapses to 1.0 — the
+        # multiplier becomes a clean 1.5×. The over-rating guard above
+        # already protects against unsafe design points; this hydrotest
+        # value is always ≥ §345.4.2(a) flat 1.5·P_design because
+        # ceiling_p ≥ any allowed design_p by construction.
+        from app.utils.engineering import HYDROTEST_TEST_TEMP_C
         ht = hydrotest_pressure_corrected(
-            design_pressure=max_p,
-            design_temp_c=max_t,
+            design_pressure=ceiling_p,
+            design_temp_c=HYDROTEST_TEST_TEMP_C,
             material_spec=entry.get("material") or req.material or "",
         )
         hydrotest_str = str(ht["pressure_barg"])
@@ -209,9 +277,9 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
                 "(flat 1.5·P would be %.2f, S_T/S=%.3f at T=%s°C)",
                 req.piping_class,
                 hydrotest_str,
-                round(max_p * HYDROTEST_FACTOR, 2),
+                round(design_p * HYDROTEST_FACTOR, 2),
                 ht["ratio_st_over_s"],
-                max_t,
+                design_t,
             )
     else:
         hydrotest_str = ai_data.get("hydrotest_pressure", "")
@@ -341,6 +409,18 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
 
     class_type = _determine_class_type(req.piping_class)
 
+    # Decide how this PMS was produced. The flags on `entry` are set by
+    # the catalogue-miss fallbacks in `_generate_from_ai`:
+    #   • catalogued lookup       → no `_derived` flag
+    #   • derive_synthetic_entry  → `_derived=True`, `_ai_only=False`
+    #   • derive_synthetic_entry_ai_only → `_derived=True`, `_ai_only=True`
+    if entry.get("_ai_only"):
+        generation_mode = "ai_only"
+    elif entry.get("_derived"):
+        generation_mode = "standards_derived"
+    else:
+        generation_mode = "catalogue"
+
     return PMSResponse(
         piping_class=req.piping_class,
         rating=entry.get("rating", ""),
@@ -369,18 +449,105 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         valves=valves,
         branch_charts=get_charts_for_class(req.piping_class),
         notes=ai_data.get("notes", []),
+        generation_mode=generation_mode,
     )
 
 
 async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
-    """Core AI generation logic — shared by generate_pms and regenerate_pms."""
-    # Find P-T data from JSON
+    """Core AI generation logic — shared by generate_pms and regenerate_pms.
+
+    Two paths:
+      1. Catalogue hit  → use the curated `pipe_classes.json` entry
+         (existing behaviour for the 91 catalogued classes).
+      2. Catalogue miss → derive a synthetic entry from §5.5 + B16.5 via
+         `class_derivation.derive_synthetic_entry()`. The derived entry
+         has the same shape as a catalogue entry, so the rest of this
+         function and the AI generation path don't care which way the
+         data came from.
+
+    The catalogue is the fast path AND the source of truth for the
+    91 hand-curated classes. Derivation only kicks in when the user
+    explicitly asks for a class that isn't in the catalogue (typically
+    after the frontend's opt-in prompt: "this combination isn't
+    catalogued — generate from standards?").
+    """
+    # Find P-T data from JSON catalogue first
     entry = data_service.find_entry(req.piping_class)
+
+    # Catalogue miss — try standards-derivation, then AI-only fallback.
     if not entry:
-        raise RuntimeError(
-            f"Piping class '{req.piping_class}' not found in database. "
-            "Only classes with P-T data in the system can be generated."
-        )
+        try:
+            from app.services.class_derivation import (
+                derive_synthetic_entry, derive_synthetic_entry_ai_only,
+                rating_from_class_code, DerivationError,
+            )
+            # PMSRequest doesn't carry an explicit `rating` field — it
+            # was historically derived from the catalogue entry. For
+            # uncatalogued classes, reverse-derive the rating from the
+            # class code's §5.5 first letter (A→150#, B→300#, F→1500#,…).
+            # If the class code isn't a §5.5 letter, derivation fails
+            # cleanly with the DerivationError below.
+            rating = rating_from_class_code(req.piping_class)
+            if not rating:
+                raise DerivationError(
+                    f"Class code {req.piping_class!r} doesn't start with a "
+                    f"§5.5 rating letter (A/B/D/E/F/G/J/K/T). Cannot derive "
+                    f"the rating; please use a valid §5.5 class code."
+                )
+            # Try standards-derivation first (Slice 1 fast path with full
+            # B16.5 P-T data). If that's not available for this combo
+            # (e.g. 5000#/J-series, SS316L pre-Slice-2, etc.), fall back
+            # to AI-only mode — the §5.5 class code is still valid, the
+            # AI just has to fill in the P-T from its training data
+            # rather than from indexed standards. We mark the response
+            # as `_ai_only` so the frontend can show the user a clear
+            # "this output isn't standards-verified" notice.
+            try:
+                entry = derive_synthetic_entry(
+                    rating=rating,
+                    material=req.material,
+                    corrosion_allowance=req.corrosion_allowance,
+                    service=req.service,
+                )
+            except DerivationError as standards_gap:
+                logger.info(
+                    "Standards data missing for %s (rating=%s material=%s "
+                    "CA=%s) — falling back to AI-only generation. Reason: %s",
+                    req.piping_class, rating, req.material,
+                    req.corrosion_allowance, standards_gap,
+                )
+                entry = derive_synthetic_entry_ai_only(
+                    rating=rating,
+                    material=req.material,
+                    corrosion_allowance=req.corrosion_allowance,
+                    service=req.service,
+                )
+            # Sanity-check: the user-supplied class code should match what
+            # §5.5 derives from the inputs. If not, the request is internally
+            # inconsistent (e.g. user said class=A2 but inputs say A1) — we
+            # return what the inputs derive, so downstream code uses the
+            # correctly-named class. The frontend should be syncing inputs
+            # → class code BEFORE calling this endpoint.
+            if entry["piping_class"] != (req.piping_class or "").upper().strip():
+                logger.info(
+                    "Class %s not in catalogue; derived %s from §5.5 inputs "
+                    "(rating=%s material=%s CA=%s)",
+                    req.piping_class, entry["piping_class"],
+                    req.rating, req.material, req.corrosion_allowance,
+                )
+                # Update the request's class code to the derived one so the
+                # downstream cache key + Excel filename match.
+                req.piping_class = entry["piping_class"]
+        except DerivationError as e:
+            raise RuntimeError(
+                f"Piping class '{req.piping_class}' is not in the catalogue, "
+                f"and cannot be derived from §5.5 / B16.5 standards: {e}"
+            ) from e
+        except Exception as e:  # noqa: BLE001 — defensive
+            raise RuntimeError(
+                f"Piping class '{req.piping_class}' not found in database, "
+                f"and standards-derivation failed: {e}"
+            ) from e
 
     # Get reference entries for AI context
     all_entries = data_service.get_all_entries()
@@ -441,6 +608,7 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             design_pressure_barg=design_pressure,
             design_temp_c=design_temp,
             corrosion_allowance=req.corrosion_allowance,
+            piping_class=req.piping_class,
         )
         logger.info(
             "Corrected pipe_data for %s (pipe_code='%s', material='%s', "
@@ -479,6 +647,11 @@ async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
             corrosion_allowance=req.corrosion_allowance,
             service=req.service,
             response=pms.model_dump(),
+            # Tag the row with how this PMS was produced so the admin DB
+            # browser can badge derived / AI-only entries differently
+            # from catalogued ones. Default falls through to 'catalogue'
+            # if pms.generation_mode isn't set (older response objects).
+            generation_mode=getattr(pms, "generation_mode", "catalogue"),
         )
         if synced_version:
             pms.version = synced_version

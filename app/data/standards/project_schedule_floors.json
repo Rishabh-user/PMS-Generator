@@ -1,0 +1,395 @@
+{
+  "_doc": "Project-conventional minimum schedules per (class, NPS-range). Used by pipe_data.correct_pipe_data as the floor: required_wt = MAX(eq3a_wt, floor_wt). Sourced from project Pipe Wall Thickness Calculation workbook (20171-SPOG-80000-PP-CL-0001 Rev 03), 'Selected Thickness' columns. Each rule's `schedule` is a B36.10M / B36.19M key from pipe_dimensions.json; null means 'no floor — Eq. 3a alone'.",
+
+  "rules": [
+    {
+      "applies_to": ["A1", "A1N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 6,   "schedule": "80" },
+        { "from": 8,    "to": 28,  "schedule": "STD" },
+        { "from": 30,   "to": 36,  "schedule": "XS" }
+      ]
+    },
+    {
+      "applies_to": ["B1", "B1N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 6,   "schedule": "80" },
+        { "from": 8,    "to": 20,  "schedule": "40" },
+        { "from": 22,   "to": 22,  "schedule": null  },
+        { "from": 24,   "to": 24,  "schedule": "40" }
+      ]
+    },
+    {
+      "applies_to": ["D1", "D1N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "160" },
+        { "from": 3,    "to": 24,  "schedule": "80" }
+      ]
+    },
+    {
+      "applies_to": ["E1", "E1N"],
+      "ranges": [
+        { "from": 0.5,  "to": 3,   "schedule": "160" },
+        { "from": 4,    "to": 24,  "schedule": "120" }
+      ]
+    },
+    {
+      "applies_to": ["F1", "F1N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 6,   "schedule": "160" },
+        { "from": 8,    "to": 8,   "schedule": "XXS" },
+        { "from": 10,   "to": 10,  "schedule": "140" },
+        { "from": 12,   "to": 14,  "schedule": "160" },
+        { "from": 16,   "to": 16,  "schedule": "140" },
+        { "from": 18,   "to": 18,  "schedule": "160" },
+        { "from": 20,   "to": 20,  "schedule": "140" },
+        { "from": 22,   "to": 22,  "schedule": "160" },
+        { "from": 24,   "to": 24,  "schedule": "140" }
+      ]
+    },
+    {
+      "applies_to": ["G1", "G1N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 2,   "schedule": null  },
+        { "from": 3,    "to": 3,   "schedule": "XXS" },
+        { "from": 4,    "to": 24,  "schedule": null  }
+      ]
+    },
+
+    {
+      "applies_to": ["A1L", "A1LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 28,  "schedule": "XS" },
+        { "from": 30,   "to": 30,  "schedule": "30" }
+      ]
+    },
+    {
+      "applies_to": ["B1L", "B1LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 6,   "schedule": "XS" },
+        { "from": 8,    "to": 20,  "schedule": "40" },
+        { "from": 22,   "to": 22,  "schedule": null  },
+        { "from": 24,   "to": 24,  "schedule": "40" }
+      ]
+    },
+    {
+      "applies_to": ["D1L", "D1LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "160" },
+        { "from": 3,    "to": 8,   "schedule": "XS" },
+        { "from": 10,   "to": 24,  "schedule": "80" }
+      ]
+    },
+    {
+      "applies_to": ["E1L", "E1LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 3,   "schedule": "160" },
+        { "from": 4,    "to": 24,  "schedule": "120" }
+      ]
+    },
+    {
+      "applies_to": ["F1L", "F1LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 8,   "schedule": "XXS" },
+        { "from": 10,   "to": 24,  "schedule": null  }
+      ]
+    },
+    {
+      "applies_to": ["G1L", "G1LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 1,   "schedule": "XXS" },
+        { "from": 1.5,  "to": 24,  "schedule": null  }
+      ]
+    },
+
+    {
+      "applies_to": ["A2N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 2,   "schedule": "160" },
+        { "from": 3,    "to": 6,   "schedule": "80" },
+        { "from": 8,    "to": 8,   "schedule": "60" },
+        { "from": 10,   "to": 16,  "schedule": "40" },
+        { "from": 18,   "to": 18,  "schedule": "30" },
+        { "from": 20,   "to": 24,  "schedule": "XS" }
+      ]
+    },
+    {
+      "applies_to": ["A2LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 2,   "schedule": "160" },
+        { "from": 3,    "to": 28,  "schedule": "XS" },
+        { "from": 30,   "to": 30,  "schedule": "30" }
+      ]
+    },
+    {
+      "applies_to": ["B2N", "B2LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 3,   "schedule": "160" },
+        { "from": 4,    "to": 4,   "schedule": "120" },
+        { "from": 6,    "to": 10,  "schedule": "XS" },
+        { "from": 12,   "to": 24,  "schedule": "60" }
+      ]
+    },
+    {
+      "applies_to": ["D2N", "D2LN"],
+      "ranges": [
+        { "from": 0.5,  "to": 0.75,"schedule": null  },
+        { "from": 1,    "to": 2,   "schedule": "XXS" },
+        { "from": 3,    "to": 4,   "schedule": "160" },
+        { "from": 6,    "to": 8,   "schedule": "120" },
+        { "from": 10,   "to": 24,  "schedule": "100" }
+      ]
+    },
+    {
+      "applies_to": ["E2N", "E2LN"],
+      "ranges": [
+        { "from": 1,    "to": 4,   "schedule": "XXS" },
+        { "from": 6,    "to": 6,   "schedule": "160" },
+        { "from": 8,    "to": 16,  "schedule": "140" },
+        { "from": 18,   "to": 24,  "schedule": "120" }
+      ]
+    },
+    {
+      "applies_to": ["F2N", "F2LN"],
+      "ranges": [
+        { "from": 3,    "to": 6,   "schedule": "XXS" },
+        { "from": 8,    "to": 10,  "schedule": null  },
+        { "from": 12,   "to": 24,  "schedule": "160" }
+      ]
+    },
+    {
+      "applies_to": ["G2N", "G2LN"],
+      "ranges": [
+        { "from": 1,    "to": 24,  "schedule": null  }
+      ]
+    },
+
+    {
+      "applies_to": ["A10", "A10N"],
+      "ranges": [
+        { "from": 0.5,  "to": 0.75,"schedule": "160" },
+        { "from": 1,    "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 20,  "schedule": "40S" },
+        { "from": 22,   "to": 22,  "schedule": "STD" },
+        { "from": 24,   "to": 24,  "schedule": "40S" }
+      ]
+    },
+    {
+      "applies_to": ["B10", "B10N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 18,  "schedule": "40S" },
+        { "from": 20,   "to": 20,  "schedule": "80S" },
+        { "from": 22,   "to": 22,  "schedule": "XS" },
+        { "from": 24,   "to": 24,  "schedule": "80S" }
+      ]
+    },
+    {
+      "applies_to": ["D10", "D10N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 10,  "schedule": "80S" },
+        { "from": 12,   "to": 20,  "schedule": "60" },
+        { "from": 22,   "to": 22,  "schedule": null  },
+        { "from": 24,   "to": 24,  "schedule": "60" }
+      ]
+    },
+    {
+      "applies_to": ["E10", "E10N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 6,   "schedule": "80S" },
+        { "from": 8,    "to": 24,  "schedule": "100" }
+      ]
+    },
+    {
+      "applies_to": ["F10", "F10N"],
+      "ranges": [
+        { "from": 0.5,  "to": 24,  "schedule": "160" }
+      ]
+    },
+    {
+      "applies_to": ["G10", "G10N"],
+      "ranges": [
+        { "from": 0.5,  "to": 3,   "schedule": "XXS" },
+        { "from": 4,    "to": 12,  "schedule": null  }
+      ]
+    },
+
+    {
+      "applies_to": ["A20", "A20N", "A25", "A25N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 24,  "schedule": "10S" },
+        { "from": 26,   "to": 28,  "schedule": "10" },
+        { "from": 30,   "to": 30,  "schedule": "10S" },
+        { "from": 32,   "to": 32,  "schedule": "10" }
+      ]
+    },
+    {
+      "applies_to": ["B20", "B20N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 10,  "schedule": "10S" },
+        { "from": 12,   "to": 12,  "schedule": "20" },
+        { "from": 14,   "to": 16,  "schedule": "10" },
+        { "from": 18,   "to": 18,  "schedule": "20" },
+        { "from": 20,   "to": 20,  "schedule": "40S" },
+        { "from": 22,   "to": 22,  "schedule": "STD" },
+        { "from": 24,   "to": 24,  "schedule": "40S" },
+        { "from": 26,   "to": 26,  "schedule": "STD" },
+        { "from": 28,   "to": 32,  "schedule": "XS" }
+      ]
+    },
+    {
+      "applies_to": ["B25", "B25N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 16,  "schedule": "10S" },
+        { "from": 18,   "to": 22,  "schedule": "10" },
+        { "from": 24,   "to": 24,  "schedule": "40S" },
+        { "from": 26,   "to": 32,  "schedule": "STD" }
+      ]
+    },
+    {
+      "applies_to": ["D20", "D20N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 12,  "schedule": "40S" },
+        { "from": 14,   "to": 14,  "schedule": "40" },
+        { "from": 16,   "to": 16,  "schedule": "80S" },
+        { "from": 18,   "to": 20,  "schedule": "40" },
+        { "from": 22,   "to": 22,  "schedule": null  },
+        { "from": 24,   "to": 24,  "schedule": "40" }
+      ]
+    },
+    {
+      "applies_to": ["D25", "D25N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 6,   "schedule": "40S" },
+        { "from": 8,    "to": 10,  "schedule": "20" },
+        { "from": 12,   "to": 16,  "schedule": "40S" },
+        { "from": 18,   "to": 20,  "schedule": "80S" },
+        { "from": 22,   "to": 22,  "schedule": "XS" },
+        { "from": 24,   "to": 24,  "schedule": "30" }
+      ]
+    },
+    {
+      "applies_to": ["E20", "E20N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 6,   "schedule": "40S" },
+        { "from": 8,    "to": 8,   "schedule": "60" },
+        { "from": 10,   "to": 10,  "schedule": "80S" },
+        { "from": 12,   "to": 24,  "schedule": "60" }
+      ]
+    },
+    {
+      "applies_to": ["E25", "E25N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 10,  "schedule": "40S" },
+        { "from": 12,   "to": 14,  "schedule": "80S" },
+        { "from": 16,   "to": 24,  "schedule": "60" }
+      ]
+    },
+    {
+      "applies_to": ["F20", "F20N"],
+      "ranges": [
+        { "from": 0.5,  "to": 4,   "schedule": "80S" },
+        { "from": 6,    "to": 6,   "schedule": "120" },
+        { "from": 8,    "to": 8,   "schedule": "100" },
+        { "from": 10,   "to": 24,  "schedule": "120" }
+      ]
+    },
+    {
+      "applies_to": ["F25", "F25N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 3,   "schedule": "40S" },
+        { "from": 4,    "to": 8,   "schedule": "80S" },
+        { "from": 10,   "to": 14,  "schedule": "80" },
+        { "from": 16,   "to": 24,  "schedule": "100" }
+      ]
+    },
+    {
+      "applies_to": ["G20", "G20N"],
+      "ranges": [
+        { "from": 0.5,  "to": 1,   "schedule": "80S" },
+        { "from": 1.5,  "to": 10,  "schedule": "160" },
+        { "from": 12,   "to": 12,  "schedule": null  },
+        { "from": 14,   "to": 14,  "schedule": "120" }
+      ]
+    },
+    {
+      "applies_to": ["G25", "G25N"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "80S" },
+        { "from": 3,    "to": 3,   "schedule": "160" },
+        { "from": 4,    "to": 4,   "schedule": "120" },
+        { "from": 6,    "to": 6,   "schedule": "160" },
+        { "from": 8,    "to": 20,  "schedule": "140" },
+        { "from": 22,   "to": 24,  "schedule": "160" }
+      ]
+    },
+
+    {
+      "applies_to": ["A3", "A4"],
+      "ranges": [
+        { "from": 0.5,  "to": 0.5, "schedule": "XXS" },
+        { "from": 0.75, "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 6,   "schedule": "80" },
+        { "from": 8,    "to": 24,  "schedule": "STD" }
+      ]
+    },
+    {
+      "applies_to": ["A5", "A6"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "XXS" },
+        { "from": 2,    "to": 2,   "schedule": "160" },
+        { "from": 3,    "to": 6,   "schedule": "80" },
+        { "from": 8,    "to": 8,   "schedule": "60" },
+        { "from": 10,   "to": 16,  "schedule": "40" },
+        { "from": 18,   "to": 18,  "schedule": "30" },
+        { "from": 20,   "to": 24,  "schedule": "XS" }
+      ]
+    },
+    {
+      "applies_to": ["B4"],
+      "ranges": [
+        { "from": 0.5,  "to": 1.5, "schedule": "160" },
+        { "from": 2,    "to": 6,   "schedule": "80" },
+        { "from": 8,    "to": 20,  "schedule": "40" },
+        { "from": 22,   "to": 22,  "schedule": null  },
+        { "from": 24,   "to": 24,  "schedule": "40" }
+      ]
+    },
+    {
+      "applies_to": ["D4"],
+      "ranges": [
+        { "from": 0.5,  "to": 2,   "schedule": "160" },
+        { "from": 3,    "to": 24,  "schedule": "80" }
+      ]
+    },
+
+    {
+      "applies_to": ["A70"],
+      "ranges": [
+        { "from": 0.5,  "to": 3,   "schedule": "40" },
+        { "from": 4,    "to": 6,   "schedule": "10" }
+      ]
+    }
+  ]
+}

@@ -19,6 +19,17 @@ let ENG = {
     small_bore_cutoff_nps: 2.0,
     default_corrosion_allowance: "3 mm",
     default_service: "General",
+    // ASME B36.10M / B36.19M outside diameters in mm. Overwritten on page
+    // load with the authoritative values from app/data/standards/pipe_dimensions.json
+    // via /api/engineering-constants. The defaults here just keep the UI
+    // probe usable if the API call fails (offline, slow, etc).
+    asme_pipe_od: {
+        "0.5": 21.3, "0.75": 26.7, "1": 33.4, "1.5": 48.3, "2": 60.3,
+        "3": 88.9, "4": 114.3, "6": 168.3, "8": 219.1, "10": 273.0,
+        "12": 323.8, "14": 355.6, "16": 406.4, "18": 457.0, "20": 508.0,
+        "22": 559.0, "24": 610.0, "26": 660.4, "28": 711.2, "30": 762.0,
+        "32": 812.8, "36": 914.4,
+    },
     stress_tables: {
         CS:     { 38: 20000, 50: 20000, 100: 20000, 150: 18900, 200: 17700, 250: 16500, 300: 15600, 350: 14800, 400: 12100 },
         SS316L: { 38: 16700, 50: 16700, 100: 16700, 150: 14500, 200: 13300, 250: 12500, 300: 11800, 350: 11300, 400: 10900 },
@@ -39,6 +50,12 @@ const API = {
     indexData: () => fetch('/api/index-data'),
     engineeringConstants: () => fetch('/api/engineering-constants'),
     services: () => fetch('/api/services'),
+    // Spec-driven dropdown options — independent of the catalogue.
+    // Lets all three dropdowns render the full standards list at page
+    // load even when no class is catalogued for that combination.
+    optionsRatings: () => fetch('/api/options/ratings'),
+    optionsMaterials: () => fetch('/api/options/materials'),
+    optionsCorrosionAllowances: () => fetch('/api/options/corrosion-allowances'),
     health: () => fetch('/health'),
 };
 
@@ -77,6 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
     initValvesheetSync();
     checkAPI();
     loadBrowseData();
+    // Spec-driven dropdowns first — independent of the catalogue, so the
+    // form is usable even before /api/index-data resolves (or if it 404s).
+    loadSpecDropdowns();
+    // Catalogue index still loaded for the resolution fast-path
+    // (`resolvePipingClass`); it's no longer needed for dropdown population.
     loadIndexData();
     loadEngineeringConstants();
 });
@@ -334,123 +356,156 @@ async function loadIndexData() {
     } catch {}
 }
 
-// Canonical PART-1 rating order from §5.5 of the project PMS doc
-// (40801-SPE-80000-PP-SP-0001 Rev A0, page 18). The dropdown always
-// shows this exact order so the user sees every spec-defined rating —
-// including 5000# (J) and 10000# (K) which currently have no catalogue
-// entry. Picking a rating with no matching class leaves the Material
-// dropdown empty (an honest signal that no class is curated yet).
-const SPEC_RATINGS_ORDER = [
-    '150#', '300#', '600#', '900#', '1500#', '2500#', '5000#', '10000#',
+// Spec-driven dropdown options. Sourced at page load from:
+//   • /api/options/ratings              -> pressure_ratings.json
+//   • /api/options/materials            -> spec_options.SPEC_MATERIALS
+//   • /api/options/corrosion-allowances -> spec_options.SPEC_CORROSION_ALLOWANCES
+//
+// Backend is the single source of truth — these fallback constants just
+// avoid an empty UI if the API call fails (offline, slow, etc.). Keep them
+// in lock-step with `app/data/spec_options.py` and `app/data/pressure_ratings.json`.
+const SPEC_RATINGS_FALLBACK = [
+    '150#', '300#', '600#', '900#', '1500#', '2500#', '5000#', '10000#', 'Tubing',
 ];
-// Non-§5.5 ratings that show up in the catalogue (EEMUA for A30, "Tubing"
-// alias for the T80*/T90* family whose catalogue rating is "-").
-const NON_SPEC_RATINGS = ['EEMUA 20 bar', 'Tubing'];
+const SPEC_MATERIALS_FALLBACK = [
+    'CS', 'CS NACE', 'LTCS', 'LTCS NACE', 'CS GALV', 'CS - Epoxy Lined',
+    'SS316', 'SS316L', 'SS316L NACE', 'DSS', 'DSS NACE', 'SDSS', 'SDSS NACE',
+    'CuNi', 'Copper', 'GRE', 'CPVC', 'TITANIUM',
+];
+const SPEC_CAS_FALLBACK = ['NIL', '1.5 mm', '3 mm', '6 mm'];
 
-function populateClassDropdown() {
-    const sel = document.getElementById('pipingClass');
-    sel.innerHTML = '<option value="">-- Select Rating --</option>';
+// Re-exposed for downstream code that still references the legacy names.
+const SPEC_RATINGS_ORDER = SPEC_RATINGS_FALLBACK.filter(r => r !== 'Tubing');
+const SPEC_MATERIALS = SPEC_MATERIALS_FALLBACK;
+const SPEC_CAS = SPEC_CAS_FALLBACK;
 
-    if (!indexData.length) {
-        sel.innerHTML = '<option value="">-- No Data Available --</option>';
-        return;
-    }
-
-    // Build the rating set: every §5.5 rating, then any non-§5.5 ratings
-    // present in the catalogue. The "-" rating used by tubing classes is
-    // mapped to a friendly "Tubing" label so the user actually knows what
-    // to pick (rating="-" is invisible-looking and confusing in the UI).
-    const present = new Set(
-        indexData.map(d => d.rating || '').filter(r => r && r !== '-')
-    );
-    // Rating "-" with class name starting with T means the entry is tubing
-    // — surface it as "Tubing" instead.
-    if (indexData.some(d => (d.rating || '') === '-' &&
-                            (d.piping_class || '').toUpperCase().startsWith('T'))) {
-        present.add('Tubing');
-    }
-
-    // Always render the full §5.5 rating list — including ratings the
-    // catalogue doesn't have yet (e.g. 5000# / 10000#). Picking one with
-    // no matching class leaves the Material dropdown empty, which is an
-    // honest signal to the user without polluting the option label.
-    SPEC_RATINGS_ORDER.forEach(rating => {
+// Populate one <select> with placeholder + the supplied options.
+function _fillSelect(sel, placeholder, options) {
+    sel.innerHTML = `<option value="">${placeholder}</option>`;
+    options.forEach(value => {
         const opt = document.createElement('option');
-        opt.value = rating;
-        opt.textContent = rating;
-        sel.appendChild(opt);
-    });
-    // Tail-on the non-§5.5 ratings that exist in the catalogue, in a stable
-    // order so the dropdown layout is reproducible.
-    NON_SPEC_RATINGS.forEach(rating => {
-        if (!present.has(rating)) return;
-        const opt = document.createElement('option');
-        opt.value = rating;
-        opt.textContent = rating;
+        opt.value = value;
+        opt.textContent = value;
         sel.appendChild(opt);
     });
 }
 
-function initCascadingDropdowns() {
-    const ratingSelect = document.getElementById('pipingClass');  // Now shows ratings
-    const materialSelect = document.getElementById('material');
-    const caSelect = document.getElementById('corrosionAllowance');
-    const serviceInput = document.getElementById('service');
-
-    // The catalogue stores tubing classes with rating "-" (their actual
-    // pressure tier comes from the A/B/C suffix). When the user picks the
-    // friendly "Tubing" label in the rating dropdown, treat any catalogue
-    // entry whose class code starts with "T" as a match.
-    function ratingMatches(entry, picked) {
-        if (picked === 'Tubing') {
-            return (entry.piping_class || '').toUpperCase().startsWith('T');
+// Fetch a list endpoint with graceful fallback to a hardcoded constant.
+async function _fetchOptions(apiCall, fallback) {
+    try {
+        const res = await apiCall();
+        if (res.ok) {
+            const list = await res.json();
+            if (Array.isArray(list) && list.length) return list;
         }
-        return entry.rating === picked;
+    } catch (e) {
+        console.warn('Spec options fetch failed; using fallback:', e);
+    }
+    return fallback;
+}
+
+// Page-load: fetch all three option lists in parallel and populate the
+// Rating / Material / CA dropdowns. Each dropdown is INDEPENDENT — no
+// cascading off the catalogue. The Custom-Class panel handles every
+// combination (catalogued => fast path, otherwise standards / AI).
+async function loadSpecDropdowns() {
+    const ratingSel   = document.getElementById('pipingClass');
+    const materialSel = document.getElementById('material');
+    const caSel       = document.getElementById('corrosionAllowance');
+
+    const [ratings, materials, cas] = await Promise.all([
+        _fetchOptions(API.optionsRatings,            SPEC_RATINGS_FALLBACK),
+        _fetchOptions(API.optionsMaterials,          SPEC_MATERIALS_FALLBACK),
+        _fetchOptions(API.optionsCorrosionAllowances, SPEC_CAS_FALLBACK),
+    ]);
+
+    _fillSelect(ratingSel,   '-- Select Rating --',   ratings);
+    _fillSelect(materialSel, '-- Select Material --', materials);
+    _fillSelect(caSel,       '-- Select CA --',       cas);
+
+    // All three are pickable from page-load — no disabled-then-enabled dance.
+    materialSel.disabled = false;
+    caSel.disabled = false;
+}
+
+// Legacy shim: kept so existing call-sites (loadIndexData) compile. The
+// rating dropdown is now populated by loadSpecDropdowns at page-load.
+function populateClassDropdown() { /* no-op — handled by loadSpecDropdowns */ }
+
+// SPEC_MATERIALS / SPEC_CAS were declared earlier in this file (next to
+// the FALLBACK constants used by `loadSpecDropdowns`). The data values
+// now live in `app/data/spec_options.py` on the backend; the frontend
+// constants are just fallbacks for when the API call fails.
+
+// Default cold-rated design pressure per ASME class — used by the
+// AI-only panel to pre-fill the Design Pressure input so the user
+// doesn't have to type a value. Two regimes:
+//
+//   • B16.5 territory (150#–2500#): values are the cold-rated barg of
+//     B16.5 Group 1.1 (carbon steel) at 38 °C — a safe default for
+//     any non-tubing material since most B16.5 groups have very
+//     similar cold ratings within ~10%.
+//
+//   • API 6A territory (5000# / 10000#): the class number IS the cold-
+//     rated pressure in psig, so we convert directly.
+//
+// User can override either input on the panel; this is just the
+// no-input default so the form is one-click usable.
+const RATING_DEFAULT_PRESSURE_BARG = {
+    '150#':    19.6,     // B16.5 G1.1 cold rating
+    '300#':    51.1,
+    '600#':   102.1,
+    '900#':   153.2,
+    '1500#':  255.3,
+    '2500#':  425.5,
+    '5000#':  344.7,     // API 6A: 5000 psig × 0.06895
+    '10000#': 689.5,     // API 6A: 10000 psig × 0.06895
+};
+const AI_ONLY_DEFAULT_DESIGN_TEMP_C = 38;   // B16.5 cold-endpoint convention
+
+function initCascadingDropdowns() {
+    const ratingSelect   = document.getElementById('pipingClass');
+    const materialSelect = document.getElementById('material');
+    const caSelect       = document.getElementById('corrosionAllowance');
+    const serviceInput   = document.getElementById('service');
+
+    // Dropdown population now happens once at page load via
+    // `loadSpecDropdowns()`. Each dropdown is INDEPENDENT — picking a
+    // rating no longer narrows the Material list. The user can pick any
+    // of the three in any order; resolution fires when all three are set.
+    //
+    // Resolution flow (unchanged behaviour):
+    //   1. (rating, material, CA) all set
+    //   2. Try the catalogue (`resolvePipingClass`) — fast path.
+    //   3. Miss? Hit /api/preview-custom-class for the standards-derived
+    //      preview and render the Custom-Class opt-in panel.
+
+    function tryResolve() {
+        clearCustomClassPanel();
+        const rating = ratingSelect.value;
+        const mat    = materialSelect.value;
+        const ca     = caSelect.value;
+        if (!rating || !mat || !ca) return;
+
+        const cataloguedMatch = resolvePipingClass(rating, mat, ca);
+        if (cataloguedMatch) {
+            // Fast path — this combination is in the catalogue. The
+            // existing form-submit handler picks up the class from the
+            // dropdown selections and proceeds normally.
+            return;
+        }
+        // Catalogue miss — fetch derivation preview from the backend
+        // and render the opt-in panel. Don't block the form: the user
+        // chooses whether to opt in to standards-driven generation.
+        renderCustomClassPanel({ rating, material: mat, ca });
     }
 
-    // Rating changed -> populate Material dropdown (filtered by rating)
-    ratingSelect.addEventListener('change', () => {
-        const rating = ratingSelect.value;
-        materialSelect.innerHTML = '<option value="">-- Select Material --</option>';
-        caSelect.innerHTML = '<option value="">-- Select CA --</option>';
-        materialSelect.disabled = true;
-        caSelect.disabled = true;
-        if (!rating) return;
-
-        // Find all materials for this rating
-        const matches = indexData.filter(d => ratingMatches(d, rating));
-        const materials = [...new Set(matches.map(d => d.material))];
-        if (materials.length === 0) return;
-
-        materialSelect.disabled = false;
-        materials.forEach(mat => {
-            const opt = document.createElement('option');
-            opt.value = mat;
-            opt.textContent = mat;
-            materialSelect.appendChild(opt);
-        });
-    });
-
-    // Material changed -> populate CA dropdown (filtered by rating + material)
-    materialSelect.addEventListener('change', () => {
-        const rating = ratingSelect.value;
-        const mat = materialSelect.value;
-        caSelect.innerHTML = '<option value="">-- Select CA --</option>';
-        caSelect.disabled = true;
-        if (!rating || !mat) return;
-
-        const matches = indexData.filter(d => ratingMatches(d, rating) && d.material === mat);
-        const cas = [...new Set(matches.map(d => d.corrosion_allowance))];
-        if (cas.length === 0) return;
-
-        caSelect.disabled = false;
-        cas.forEach(ca => {
-            const opt = document.createElement('option');
-            opt.value = ca;
-            opt.textContent = ca;
-            caSelect.appendChild(opt);
-        });
-    });
+    // Resolution fires whenever any of the three dropdowns changes —
+    // doesn't matter which one the user picks last. The guard inside
+    // `tryResolve` exits cleanly while they're still mid-selection.
+    ratingSelect.addEventListener('change', tryResolve);
+    materialSelect.addEventListener('change', tryResolve);
+    caSelect.addEventListener('change', tryResolve);
 }
 
 // Resolve piping class from rating + material + CA. Mirrors the
@@ -464,6 +519,425 @@ function resolvePipingClass(rating, material, ca) {
         return ratingOk && d.material === material && d.corrosion_allowance === ca;
     });
     return match ? match.piping_class : null;
+}
+
+
+// ── Custom-class (standards-derived) opt-in panel ─────────────────
+//
+// When the user picks (rating, material, CA) that doesn't resolve to a
+// catalogued class, we don't block the form. Instead we render an
+// inline panel under the form that:
+//
+//   1. shows the §5.5-derived class code (e.g. "A2")
+//   2. previews the B16.5-derived P-T table (read-only)
+//   3. exposes optional Design Pressure / Design Temperature inputs
+//      so the user can specify operating conditions explicitly
+//      (used for the §345.4.2(b) hydrotest correction)
+//   4. asks the user to opt-in: "Yes — generate from standards" or
+//      they can change inputs to a catalogued combination instead.
+//
+// Backend hookup: the panel calls /api/preview-custom-class to fetch
+// the derived class + P-T data. On opt-in, the form-submit handler
+// (initFormHandler in app.js) picks up the derived class code from
+// `customClassState.classCode` and the design P/T from the input
+// fields, and POSTs to /api/generate-pms as a normal request.
+
+let customClassState = null;  // {classCode, designP, designT, derivedPt} | null
+
+function clearCustomClassPanel() {
+    customClassState = null;
+    const panel = document.getElementById('customClassPanel');
+    if (panel) panel.innerHTML = '';
+}
+
+async function renderCustomClassPanel({ rating, material, ca }) {
+    const panel = ensureCustomClassPanel();
+    panel.innerHTML = `
+        <div class="custom-class-loading">
+            <span>Checking standards for ${escapeHtml(rating)} / ${escapeHtml(material)} / ${escapeHtml(ca)}…</span>
+        </div>
+    `;
+    // Bring the panel into view so the user sees the standards-derived
+    // result land. Nice-to-have but high-impact: without this, the panel
+    // is below the form and users miss it entirely.
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    let resp;
+    try {
+        const r = await fetch('/api/preview-custom-class', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rating, material, corrosion_allowance: ca,
+            }),
+        });
+        resp = await r.json();
+    } catch (e) {
+        panel.innerHTML = `
+            <div class="custom-class-error">
+                <strong>Could not check the standards.</strong>
+                Network error: ${escapeHtml(String(e))}
+            </div>
+        `;
+        return;
+    }
+
+    // Backend returns `mode`: 'catalogued' | 'standards_derived' | 'ai_only' |
+    // 'unsupported'. Render the appropriate panel for each case.
+    const mode = resp.mode;
+
+    if (mode === 'unsupported') {
+        // §5.5 itself can't make sense of this combo — usually means the
+        // material/CA pair isn't in the digit table. Show why so the user
+        // can fix the inputs; no opt-in offered.
+        panel.innerHTML = `
+            <div class="custom-class-error">
+                <strong>This combination doesn't fit the §5.5 naming convention.</strong>
+                <p>${escapeHtml(resp.reason)}</p>
+                <p class="hint">Pick a different material or CA, or stick with a catalogued combination (no <em>(via standards)</em> tag).</p>
+            </div>
+        `;
+        customClassState = null;
+        return;
+    }
+
+    if (mode === 'catalogued') {
+        // Combination resolved to a catalogue class. The dropdowns must
+        // have lost sync somehow — keep the panel quiet so the form
+        // submits normally.
+        clearCustomClassPanel();
+        return;
+    }
+
+    if (mode === 'standards_derived') {
+        renderStandardsPanel(panel, resp);
+        return;
+    }
+    if (mode === 'ai_only') {
+        renderAiOnlyPanel(panel, resp);
+        return;
+    }
+
+    // Unknown mode — defensive fallback.
+    panel.innerHTML = `
+        <div class="custom-class-error">
+            <strong>Unexpected response from the standards check.</strong>
+            <p>Mode: <code>${escapeHtml(String(mode))}</code></p>
+        </div>
+    `;
+    customClassState = null;
+}
+
+
+// ── Renderer: standards-derived custom class (Slice 1 fast path) ──
+// Used when the §5.5 class code resolves AND we have B16.5 P-T data
+// for that material group. Shows the full standards-grounded preview.
+
+function renderStandardsPanel(panel, resp) {
+    const preview = resp.preview;
+    const pt = preview.pressure_temperature;
+    // The "design point" we pre-fill is the highest rated temperature
+    // and the rated pressure AT THAT TEMPERATURE (which is the lowest
+    // pressure in a monotonically-decreasing P-T table). This is a
+    // consistent design point — the line is genuinely rated for that
+    // pressure at that temperature. Pre-filling with `(max P at max T)`
+    // would be inconsistent (max P only applies at min T) and would
+    // trip the backend's §345.4.2(b) over-rating guard.
+    const idxMaxT = pt.temperatures.indexOf(Math.max(...pt.temperatures));
+    const defaultT = pt.temperatures[idxMaxT];
+    const defaultP = pt.pressures[idxMaxT];
+    const ceilingP = Math.max(...pt.pressures);
+    const ceilingT = Math.max(...pt.temperatures);
+
+    customClassState = {
+        classCode: resp.class_code,
+        designP:   defaultP,
+        designT:   defaultT,
+        aiOnly:    false,
+        derivedPt: pt,
+    };
+
+    panel.innerHTML = `
+        <div class="custom-class-card">
+            <div class="cc-header">
+                <span class="cc-badge">CUSTOM CLASS — DERIVED FROM STANDARDS</span>
+                <h3>${escapeHtml(resp.class_code)}</h3>
+                <p class="cc-reason">${escapeHtml(resp.reason)}</p>
+            </div>
+
+            <div class="cc-section">
+                <h4>Pressure-Temperature table (from ASME B16.5)</h4>
+                <table class="cc-pt-table">
+                    <thead>
+                        <tr>
+                            <th>Temperature (°C)</th>
+                            ${pt.temperatures.map(t => `<th>${formatTemp(t, pt.temp_labels)}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Pressure (barg)</strong></td>
+                            ${pt.pressures.map(p => `<td>${p}</td>`).join('')}
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="cc-hint">Cold-rated point: <strong>${ceilingP} barg @ ${pt.temperatures[pt.pressures.indexOf(ceilingP)]}°C</strong> · Hottest rated: <strong>${defaultP} barg @ ${defaultT}°C</strong></p>
+            </div>
+
+            <div class="cc-section">
+                <h4>Design conditions (auto-filled from the P-T table — edit to override)</h4>
+                <div class="cc-design-inputs">
+                    <label>
+                        Design Pressure (barg)
+                        <input type="number" id="ccDesignP" step="0.1" min="0" value="${defaultP}">
+                    </label>
+                    <label>
+                        Design Temperature (°C)
+                        <input type="number" id="ccDesignT" step="1" value="${defaultT}">
+                    </label>
+                </div>
+                <p class="cc-hint">Defaults to the hottest rated point (most conservative). Change Design Temperature and Design Pressure auto-syncs to the rated value at that temp. Drives the §345.4.2(b) hydrotest correction.</p>
+            </div>
+
+            <div class="cc-confirm">
+                <label class="cc-confirm-line">
+                    <input type="checkbox" id="ccOptIn">
+                    <span>Generate <strong>${escapeHtml(resp.class_code)}</strong> using §5.5 + ASME B16.5 standards (this combination is not in the catalogue).</span>
+                </label>
+            </div>
+        </div>
+    `;
+    wireCustomClassInputs(/* aiOnly */ false, /* ptForAutoSync */ pt);
+}
+
+
+// ── Renderer: AI-only custom class (no indexed standards data) ────
+// Used when the §5.5 class code is valid but no B16.5 / API 6A / etc.
+// data is indexed for this rating-material combination yet (e.g. 5000#
+// J-series, SS316L pre-Slice-2). The AI generates everything from its
+// own training knowledge.
+//
+// Differences from the standards panel:
+//   • Yellow/warning colour scheme + clear "AI-only" tag.
+//   • No P-T preview (AI builds it at generation time).
+//   • Design Pressure + Design Temperature are REQUIRED inputs (no
+//     rated ceiling to default to). The opt-in checkbox stays disabled
+//     until both are filled.
+//   • Stronger opt-in language: "I understand the AI-only output is
+//     not standards-verified — I will review carefully."
+
+function renderAiOnlyPanel(panel, resp) {
+    // Read the rating directly from the form so we can look up the
+    // appropriate cold-rated default pressure. The preview-custom-class
+    // response doesn't echo the rating back, but we can re-derive it
+    // from the §5.5 class code's first letter via the same lookup the
+    // backend uses (rating_from_class_code).
+    const ratingPicked = document.getElementById('pipingClass').value.trim();
+    const defaultP = RATING_DEFAULT_PRESSURE_BARG[ratingPicked] ?? null;
+    const defaultT = AI_ONLY_DEFAULT_DESIGN_TEMP_C;
+
+    customClassState = {
+        classCode: resp.class_code,
+        designP:   defaultP,
+        designT:   defaultT,
+        aiOnly:    true,
+        derivedPt: null,
+    };
+
+    // Hint text shown beneath the design inputs — varies by whether we
+    // could pre-fill a sensible default for the chosen rating.
+    const designHint = defaultP !== null
+        ? `Auto-filled with the cold-rated default for ${escapeHtml(ratingPicked)} (${defaultP} barg at ${defaultT} °C). Edit either field to change the design point. Drives the §345.4.2(b) hydrotest correction.`
+        : `No standard default exists for ${escapeHtml(ratingPicked)} — enter the line's actual design pressure and temperature. Drives the §345.4.2(b) hydrotest correction.`;
+
+    panel.innerHTML = `
+        <div class="custom-class-card cc-ai-only">
+            <div class="cc-header">
+                <span class="cc-badge cc-badge-warn">CUSTOM CLASS — AI-ONLY (NO STANDARDS GROUNDING)</span>
+                <h3>${escapeHtml(resp.class_code)}</h3>
+                <p class="cc-reason">${escapeHtml(resp.reason)}</p>
+            </div>
+
+            <div class="cc-section">
+                <h4>What this means</h4>
+                <p class="cc-warn-text">
+                    The standards engine doesn't have indexed P-T / material data
+                    for this combination. The AI will generate the full PMS from
+                    its training knowledge of ASME / API / NACE conventions, but
+                    the output is <strong>not verified against an indexed
+                    standard</strong>. Review every value before use.
+                </p>
+            </div>
+
+            <div class="cc-section">
+                <h4>Design conditions (auto-filled — edit to override)</h4>
+                <div class="cc-design-inputs">
+                    <label>
+                        Design Pressure (barg)
+                        <input type="number" id="ccDesignP" step="0.1" min="0.1"
+                               value="${defaultP !== null ? defaultP : ''}"
+                               placeholder="${defaultP !== null ? defaultP : 'e.g. 345 for 5000# CS'}">
+                    </label>
+                    <label>
+                        Design Temperature (°C)
+                        <input type="number" id="ccDesignT" step="1"
+                               value="${defaultT}"
+                               placeholder="${defaultT}">
+                    </label>
+                </div>
+                <p class="cc-hint">${designHint}</p>
+            </div>
+
+            <div class="cc-confirm">
+                <label class="cc-confirm-line">
+                    <input type="checkbox" id="ccOptIn"${defaultP !== null ? '' : ' disabled'}>
+                    <span>I understand the output for <strong>${escapeHtml(resp.class_code)}</strong> is AI-only and not standards-verified. I will review every field before use.</span>
+                </label>
+            </div>
+        </div>
+    `;
+    wireCustomClassInputs(/* aiOnly */ true);
+}
+
+
+// Linear-interpolate a P-T table at a target temperature. Mirrors the
+// backend's `interpolate_pressure_at_temp` in app/utils/engineering.py
+// so the auto-sync behaviour the user sees in the panel matches what
+// the §345.4.2(b) hydrotest correction will compute server-side.
+function interpolatePressureAtTemp(temperatures, pressures, targetT) {
+    if (!temperatures.length || !pressures.length) return 0;
+    const pairs = temperatures
+        .map((t, i) => [Number(t), Number(pressures[i])])
+        .sort((a, b) => a[0] - b[0]);
+    if (targetT <= pairs[0][0]) return pairs[0][1];
+    if (targetT >= pairs[pairs.length - 1][0]) return pairs[pairs.length - 1][1];
+    for (let i = 0; i < pairs.length - 1; i++) {
+        const [t1, p1] = pairs[i];
+        const [t2, p2] = pairs[i + 1];
+        if (t1 <= targetT && targetT <= t2) {
+            const f = (targetT - t1) / (t2 - t1);
+            return p1 + f * (p2 - p1);
+        }
+    }
+    return pairs[pairs.length - 1][1];
+}
+
+
+// Wire opt-in checkbox + design inputs to customClassState.
+//
+//   • aiOnly=true:  Opt-in box stays disabled until both design fields
+//                   have valid values (no rated ceiling to fall back on).
+//
+//   • aiOnly=false + ptForAutoSync supplied: Standards-derived mode.
+//                   Pre-filled values land on first render via the
+//                   `value=...` HTML attributes; in addition we wire
+//                   the Design Temperature input so any change auto-
+//                   recomputes Design Pressure as the interpolated
+//                   rated pressure at the new temperature. The user
+//                   can override Design Pressure afterwards if they
+//                   want to design below the rated value.
+function wireCustomClassInputs(aiOnly, ptForAutoSync) {
+    const optInBox = document.getElementById('ccOptIn');
+    const dpInput = document.getElementById('ccDesignP');
+    const dtInput = document.getElementById('ccDesignT');
+
+    // Tracks whether the user has manually edited Design Pressure since
+    // the panel rendered (or since the last temp-driven auto-fill). When
+    // false, changing Design Temperature also overwrites Design Pressure
+    // with the new rated value. Once the user types in the Design Pressure
+    // field, we stop overwriting so their value survives subsequent T
+    // edits — that's the "I want to design below rating" workflow.
+    let dpUserEdited = false;
+
+    function syncState() {
+        const dp = parseFloat(dpInput.value);
+        const dt = parseFloat(dtInput.value);
+        customClassState.designP = isNaN(dp) ? null : dp;
+        customClassState.designT = isNaN(dt) ? null : dt;
+        customClassState.optedIn = optInBox.checked;
+
+        if (aiOnly) {
+            // Opt-in only allowed once both design fields have valid values.
+            const ready = customClassState.designP !== null && customClassState.designP > 0
+                       && customClassState.designT !== null;
+            optInBox.disabled = !ready;
+            if (!ready && optInBox.checked) {
+                optInBox.checked = false;
+                customClassState.optedIn = false;
+            }
+        }
+    }
+
+    optInBox.addEventListener('change', syncState);
+    dpInput.addEventListener('input', () => {
+        dpUserEdited = true;     // user took manual control of Design P
+        syncState();
+    });
+    dtInput.addEventListener('input', () => {
+        // Standards-derived mode: when the user changes Design T and
+        // hasn't manually edited Design P, recompute Design P as the
+        // rated value at the new temperature. The auto-fill happens in
+        // the input field directly so the user sees what's about to
+        // be submitted; they can still override afterwards.
+        if (!aiOnly && ptForAutoSync && !dpUserEdited) {
+            const newT = parseFloat(dtInput.value);
+            if (!isNaN(newT)) {
+                const ratedP = interpolatePressureAtTemp(
+                    ptForAutoSync.temperatures, ptForAutoSync.pressures, newT,
+                );
+                // Round to one decimal so the field looks tidy
+                dpInput.value = (Math.round(ratedP * 10) / 10).toFixed(1);
+            }
+        }
+        syncState();
+    });
+    syncState();
+}
+
+function ensureCustomClassPanel() {
+    let panel = document.getElementById('customClassPanel');
+    if (panel) return panel;
+    panel = document.createElement('div');
+    panel.id = 'customClassPanel';
+    // `custom-class-panel full-width` keeps the panel as a single grid
+    // cell that spans every column of the form's CSS grid (the same
+    // class the multi-select Service field uses for the same reason).
+    panel.className = 'custom-class-panel full-width';
+
+    // Insert the panel as the LAST child of the form's grid that
+    // precedes `.form-actions`. End result: dropdowns → panel → Generate
+    // button, all in one continuous form. This keeps the warning panel
+    // visually tied to the form and ensures the user sees it BEFORE
+    // they see the submit button — the previous layout placed the
+    // panel below the button, which led to users clicking Generate
+    // without realising the warning existed.
+    const form = document.getElementById('pmsForm');
+    const actions = form ? form.querySelector('.form-actions') : null;
+    if (form && actions) {
+        form.insertBefore(panel, actions);
+    } else if (form) {
+        form.appendChild(panel);
+    } else {
+        document.body.appendChild(panel);
+    }
+    return panel;
+}
+
+function formatTemp(t, labels) {
+    // P-T tables sometimes store a label like "-29 to 38" for the cold
+    // endpoint. Use it when present, otherwise fall back to the numeric
+    // temp.
+    if (labels && labels.length) {
+        const i = labels.indexOf(String(t));
+        if (i >= 0) return labels[i];
+    }
+    return String(t);
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
 }
 
 // === Service Description Multi-Select ===
@@ -658,8 +1132,117 @@ async function generatePMS() {
 
     if (!selectedRating || !selectedMaterial) { showToast('Please select Rating and Material', 'error'); return; }
 
-    const resolvedClass = resolvePipingClass(selectedRating, selectedMaterial, selectedCA);
-    if (!resolvedClass) { showToast('No matching piping class found for this combination', 'error'); return; }
+    // Try to resolve via the catalogue first.
+    let resolvedClass = resolvePipingClass(selectedRating, selectedMaterial, selectedCA);
+
+    // Catalogue miss → route through the standards-derivation path.
+    // The Custom-Class panel below the form shows the user what's about
+    // to be derived (or why it can't be) and asks for explicit opt-in.
+    // The submit handler reads that panel's state to decide whether to
+    // proceed, refuse with context, or guide the user back to the panel.
+    if (!resolvedClass) {
+        const panel = document.getElementById('customClassPanel');
+        const isLoading = !!(panel && panel.querySelector('.custom-class-loading'));
+        const hasError  = !!(panel && panel.querySelector('.custom-class-error'));
+        const hasOptIn  = !!(panel && panel.querySelector('#ccOptIn'));
+
+        if (!panel || !panel.children.length) {
+            // No panel at all — most likely the preview-custom-class
+            // call hasn't been triggered yet. Re-trigger and ask the
+            // user to wait.
+            renderCustomClassPanel({
+                rating: selectedRating, material: selectedMaterial, ca: selectedCA,
+            });
+            showToast(
+                'Checking the standards for this combination — please retry in a moment.',
+                'warning',
+            );
+            return;
+        }
+        if (isLoading) {
+            showToast(
+                'Still checking the standards — give it a second and try again.',
+                'info',
+            );
+            return;
+        }
+        if (hasError) {
+            // Combination isn't supported. Scroll the panel into view so
+            // the user sees the actual reason rather than a generic toast.
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            showToast(
+                'This combination isn\'t supported by the standards engine yet. '
+                + 'See the panel below the form for the reason.',
+                'error',
+            );
+            return;
+        }
+        if (hasOptIn && (!customClassState || !customClassState.optedIn)) {
+            // Panel is rendered with an opt-in box but the user hasn't
+            // ticked it. Two sub-cases:
+            //   (a) The checkbox is enabled — user just needs to tick.
+            //   (b) The checkbox is DISABLED (AI-only mode, design P/T
+            //       not filled in) — telling the user to "tick the box"
+            //       is misleading because they can't. Send them to the
+            //       design inputs instead.
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const box = document.getElementById('ccOptIn');
+            const dpInput = document.getElementById('ccDesignP');
+            const dtInput = document.getElementById('ccDesignT');
+
+            if (box && box.disabled) {
+                // AI-only mode — the box is locked until both design
+                // fields are filled. Highlight the design inputs and
+                // focus the first empty one so the user can start
+                // typing immediately.
+                const target = (!dpInput.value || parseFloat(dpInput.value) <= 0)
+                    ? dpInput
+                    : (!dtInput.value ? dtInput : dpInput);
+                if (target) {
+                    target.focus();
+                    target.style.transition = 'background 0.3s, border-color 0.3s';
+                    target.style.background = '#fff3cd';
+                    target.style.borderColor = '#d68d00';
+                    setTimeout(() => {
+                        target.style.background = '';
+                        target.style.borderColor = '';
+                    }, 2500);
+                }
+                showToast(
+                    'Fill in the Design Pressure and Design Temperature in the '
+                    + 'panel below — then the opt-in checkbox unlocks and you '
+                    + 'can confirm.',
+                    'warning',
+                );
+                return;
+            }
+
+            // Standards-derived mode — checkbox is enabled, user just
+            // hasn't ticked it.
+            if (box) {
+                box.focus();
+                const line = box.closest('.cc-confirm-line');
+                if (line) {
+                    line.style.transition = 'background 0.3s';
+                    line.style.background = '#fff3cd';
+                    line.style.padding = '8px';
+                    line.style.borderRadius = '4px';
+                    setTimeout(() => {
+                        line.style.background = '';
+                        line.style.padding = '';
+                    }, 2000);
+                }
+            }
+            showToast(
+                'Almost there — tick the "Generate from standards" checkbox in the '
+                + 'highlighted panel below to confirm, then click Generate again.',
+                'warning',
+            );
+            return;
+        }
+        // Opt-in confirmed; carry on with the derived class code.
+        resolvedClass = customClassState.classCode;
+    }
 
     const data = {
         piping_class: resolvedClass,
@@ -667,6 +1250,18 @@ async function generatePMS() {
         corrosion_allowance: selectedCA,
         service: selectedService || 'General',
     };
+    // Carry the Custom-Class panel's design P/T into the request so the
+    // §345.4.2(b) hydrotest correction uses the user's operating point
+    // rather than the rated P-T ceiling. Catalogued generations don't
+    // need these — pms_service falls back to the ceiling automatically.
+    if (customClassState && customClassState.optedIn) {
+        if (customClassState.designP !== null && customClassState.designP !== undefined) {
+            data.design_pressure_barg = customClassState.designP;
+        }
+        if (customClassState.designT !== null && customClassState.designT !== undefined) {
+            data.design_temp_c = customClassState.designT;
+        }
+    }
 
     // Save request for Step 2
     pendingPMSRequest = data;
@@ -995,14 +1590,38 @@ function renderPTTable(pms, designTemp) {
 // === TAB 2: Schedule & Wall Thickness
 // ============================================================
 // === ASME B31.3 Table A-1: Allowable Stress S(T) by material family (psi) ===
-// Tables loaded from backend via ENG.stress_tables — single source of truth
-function getAllowableStress(material, tempC) {
-    const mat = material.toUpperCase();
+// Tables loaded from backend via ENG.stress_tables — single source of truth.
+//
+// `materialSpec` (optional, e.g. "API 5L Gr, X60 PSL-2", "ASTM A 312 TP 316L")
+// — the actual pipe MOC assigned by the AI at the row level. When supplied,
+// it's checked FIRST because it carries the real stress identity. The class-
+// level `material` ("CS NACE") only labels the §5.5 family and would yield
+// the wrong S for high-rating classes (F1/G1 1500-2500#) where regular CS
+// can't withstand the cold-end allowable pressure and the AI substitutes
+// API 5L X60 PSL-2 (S=25 ksi vs A106-B's 20 ksi at 38°C).
+function getAllowableStress(material, tempC, materialSpec) {
+    const mat = (material || '').toUpperCase();
+    const spec = (materialSpec || '').toUpperCase();
     const tables = ENG.stress_tables;
-
-    // Determine which table to use
     let table = tables.CS;  // default
-    if (mat.includes('SDSS') || mat.includes('S32750') || mat.includes('SUPER DUPLEX')) {
+
+    // ── 1. Spec-driven detection (highest priority — overrides class material) ──
+    // Mirrors backend `_detect_stress_table` logic in engineering_constants.py.
+    if (/API\s*5L.*X\s*?60|X60\s*PSL|\bX60\b/.test(spec)) {
+        table = tables.API5LX60;
+    } else if (/SDSS|S32750|SUPER\s*DUPLEX/.test(spec)) {
+        table = tables.SDSS;
+    } else if (/S31803|S32205|\bDUPLEX\b/.test(spec)) {
+        table = tables.DSS;
+    } else if (/TP\s*316L|\b316L\b/.test(spec)) {
+        table = tables.SS316L;
+    } else if (/TP\s*304L|\b304L\b/.test(spec)) {
+        table = tables.SS304L;
+    } else if (/TP\s*316\b/.test(spec)) {
+        table = tables.SS316;
+    }
+    // ── 2. Class-material fallback (when spec didn't match anything specific) ──
+    else if (mat.includes('SDSS') || mat.includes('S32750') || mat.includes('SUPER DUPLEX')) {
         table = tables.SDSS;
     } else if (mat.includes('DSS') || mat.includes('S31803') || mat.includes('DUPLEX')) {
         table = tables.DSS;
@@ -1035,430 +1654,199 @@ function getAllowableStress(material, tempC) {
     return { S_psi: 20000, S_mpa: 137.9 };  // fallback
 }
 
+// === Schedule & Wall Thickness tab ===
+// Renders the Wall Thickness Calculation Table for the current PMS.
+// Computes per-NPS:
+//   • t        — pressure thickness from ASME B31.3 §304.1.2 Eq. 3a
+//   • D/6      — applicability cap for the thin-wall equation
+//   • t < D/6  — pass/fail check
+//   • t_m      — t + corrosion allowance
+//   • Calc Thk T = t_m / (1 − mill_tolerance)
+//   • SCH / Sel Thk — smallest standard B36.10M schedule whose nominal
+//     wall ≥ Calc Thk T. Schedule data comes from
+//     `ENG.asme_wall_thicknesses_mm` (loaded from pipe_dimensions.json
+//     via /api/engineering-constants).
+//
+// Picks the schedule per ASME B36.10M-2018 Table 2-1. When two schedules
+// tie on wall thickness (e.g. STD = 40 = 2.77 mm at NPS 0.5″), prefer the
+// alias listed earlier in the JSON's per-NPS object (STD over 40, XS over
+// 80, XXS where defined) — matches typical project spec convention.
+function _selectScheduleForThickness(nps, t_calc_mm) {
+    const table = ENG.asme_wall_thicknesses_mm || {};
+    const row = table[String(nps)];
+    if (!row || !(t_calc_mm > 0)) return null;
+
+    const entries = Object.entries(row).sort((a, b) => a[1] - b[1]);
+    for (const [schedKey, wt] of entries) {
+        if (wt + 1e-6 >= t_calc_mm) {
+            return { schedule: _formatScheduleLabel(schedKey), wt };
+        }
+    }
+    const [k, w] = entries[entries.length - 1];
+    return { schedule: _formatScheduleLabel(k), wt: w };
+}
+
+// Project-conventional schedule floor for (class, NPS), sourced from
+// `ENG.project_schedule_floors` (mirrors app/data/standards/project_schedule_floors.json).
+// Returns the schedule key (e.g. '160', 'STD', '80S'), or null when no rule
+// applies — meaning the row falls back to Eq. 3a alone with no floor.
+function _projectFloorScheduleKey(classCode, nps) {
+    if (!classCode) return null;
+    const rules = (ENG.project_schedule_floors || {})[classCode.toUpperCase()];
+    if (!rules) return null;
+    const npsF = parseFloat(nps);
+    if (!isFinite(npsF)) return null;
+    for (const r of rules) {
+        if ((r.from - 1e-6) <= npsF && npsF <= (r.to + 1e-6)) {
+            return r.schedule;  // may be null — explicit "calc-only" entry
+        }
+    }
+    return null;
+}
+
+// Resolve a floor schedule key to its numeric WT in the B36.10M / B36.19M
+// wall-thickness table. Returns 0 if the key isn't found (e.g. 80S is
+// B36.19M but the WT data here is B36.10M).
+function _projectFloorWt(nps, schedKey) {
+    if (!schedKey) return 0;
+    const row = (ENG.asme_wall_thicknesses_mm || {})[String(nps)];
+    if (!row) return 0;
+    return Number(row[schedKey] || 0);
+}
+
+function _formatScheduleLabel(schedKey) {
+    if (schedKey === 'STD' || schedKey === 'XS' || schedKey === 'XXS') return schedKey;
+    return `SCH ${schedKey}`;
+}
+
 function renderScheduleTab(pms) {
+    const target = document.getElementById('enhancedPipeTable');
+    if (!target) return;
+
     const dpVal = parseFloat(document.getElementById('designPressure').value) || 0;
     const dtVal = parseFloat(document.getElementById('designTemperature').value) || 0;
-    const E = ENG.joint_efficiency_E;
-    const W = ENG.weld_strength_W;
-    const Y = ENG.y_coefficient;
-    // Material-specific allowable stress from ASME B31.3 Table A-1
-    const stressData = getAllowableStress(pms.material, dtVal);
-    const S_psi = stressData.S_psi;
-    const S_mpa = stressData.S_mpa;
-    const P_psig = parseFloat(barg2psig(dpVal));
-    const P_mpa = barg2mpa(dpVal);
-    const dtF = parseFloat(c2f(dtVal));
-    const isNACE = pms.material.toUpperCase().includes('NACE') || pms.design_code.toUpperCase().includes('NACE');
-    const isLTCS = pms.material.toUpperCase().includes('LT');
-    const isDSS = pms.material.toUpperCase().includes('DSS') || pms.material.toUpperCase().includes('DUPLEX');
-    const isSDSS = pms.material.toUpperCase().includes('SDSS') || pms.material.toUpperCase().includes('SUPER DUPLEX') || pms.material.toUpperCase().includes('S32750');
-    const isSS = pms.material.toUpperCase().includes('SS') || pms.material.toUpperCase().includes('STAINLESS');
-    const millTol = parseFloat(pms.mill_tolerance) || ENG.mill_tolerance_percent;
-    const millFrac = millTol / 100;
+    const E = ENG.joint_efficiency_E ?? 1.0;
+    const W = ENG.weld_strength_W ?? 1.0;
+    const Y = ENG.y_coefficient ?? 0.4;
+    const millTolPct = parseFloat(pms.mill_tolerance) || ENG.mill_tolerance_percent || 12.5;
+    const millFrac = millTolPct / 100;
 
-    // Parse CA in mm — respect NIL / 0 corrosion allowance
     const caStr = pms.corrosion_allowance || '0';
     const caMM = caStr.toUpperCase().includes('NIL') ? 0 : (parseFloat(caStr) || 0);
-    const caInch = mm2inch(caMM);
 
-    // Determine pipe standard and Y coefficient description based on material
-    const pipeStandard = (isSS || isDSS || isSDSS) ? 'ASME B36.19M' : 'ASME B36.10M';
-    const yMatDesc = (isDSS || isSDSS) ? 'duplex/austenitic-ferritic steel' : (isSS ? 'austenitic stainless steel' : 'ferritic/alloy steel');
+    // ─────────────────────────────────────────────────────────────────────
+    // Dual-case ASME B31.3 §304.1.2 wall thickness check
+    // ─────────────────────────────────────────────────────────────────────
+    // Pipe wall must contain BOTH:
+    //   • Case 1 (Min T / Max P) — the rating's allowable pressure at the
+    //     coldest temperature in the B16.5 P-T curve. This is the worst-case
+    //     overpressure during cold-startup or pressure-spike scenarios. S is
+    //     evaluated at the same low temperature (where it's largest).
+    //   • Case 2 (Design Point) — the user's design pressure at design temp.
+    //     S is evaluated at design temp (smaller than at cold end).
+    //
+    // Whichever case demands more wall, governs. Same governing case applies
+    // to every NPS because t_press scales linearly with D — the case picked
+    // here propagates to every row in the WT table.
+    // Per-class actual pipe MOC — sourced from the AI-assigned material_spec
+    // on the first pipe row. Per the AI prompt's "single unified MOC" rule
+    // (ai_service.py §PIPE TYPE TRANSITION), every row in a given class
+    // shares the same material_spec, so pipe_data[0] is representative. This
+    // is the spec we feed into getAllowableStress so high-rating CS classes
+    // (F1/G1 1500-2500#) correctly resolve to the API 5L X60 stress curve
+    // rather than vanilla CS A106-B.
+    const projectMaterialSpec = pms.pipe_data?.[0]?.material_spec || '';
 
-    // Formula example with NPS 6" if available — aligned with reference A1 Excel:
-    //   t  = MAX(Case1, Case2) × OD    (pressure thickness only)
-    //   tm = t + CA
-    //   T  = tm / (1 - mill_tol)       ← displayed tREQ
-    const ref6 = pms.pipe_data.find(p => p.size_inch === '6' || p.size_inch === '6"');
-    if (ref6) {
-        const od6 = mm2inch(ref6.od_mm).toFixed(3);
-        const _t = pms.pressure_temperature.temperatures || [];
-        const _p = pms.pressure_temperature.pressures || [];
-        let _lo = 0;
-        for (let i = 1; i < _t.length; i++) {
-            if (parseFloat(_t[i]) < parseFloat(_t[_lo])) _lo = i;
+    const ptTemps = pms.pressure_temperature?.temperatures || [];
+    const ptPress = pms.pressure_temperature?.pressures || [];
+    let case1 = null;  // null if no P-T curve attached (e.g., AI-only path)
+    if (ptTemps.length && ptPress.length && ptTemps.length === ptPress.length) {
+        // Find the lowest-temp index — that's the rating-defining cold end.
+        let idx = 0;
+        for (let i = 1; i < ptTemps.length; i++) {
+            if (ptTemps[i] < ptTemps[idx]) idx = i;
         }
-        const Tlow = parseFloat(_t[_lo]);
-        const Pmax = parseFloat(_p[_lo]);
-
-        // Case 1: use override if present, else convert P-T max from barg
-        const case1Ov = document.getElementById('case1PressurePsig');
-        const case1OvVal = case1Ov ? parseFloat(case1Ov.value) : NaN;
-        const P1_psig = (!isNaN(case1OvVal) && case1OvVal > 0) ? case1OvVal : parseFloat(barg2psig(Pmax));
-
-        // Case 2: user's design conditions (P from psig field, T from design-temp field)
-        const Tuser = (dtVal > 0) ? dtVal : Math.max(..._t.map(parseFloat));
-        const dpPsigField2 = document.getElementById('designPressurePsig');
-        const P2_psig = dpPsigField2 ? (parseFloat(dpPsigField2.value) || parseFloat(barg2psig(interpolatePressure(_t, _p, Tuser))))
-                                      : parseFloat(barg2psig(interpolatePressure(_t, _p, Tuser)));
-        // Stress overrides (leave blank for auto)
-        const s1F = document.getElementById('case1StressPsi');
-        const s2F = document.getElementById('case2StressPsi');
-        const s1OvVal = s1F ? parseFloat(s1F.value) : NaN;
-        const s2OvVal = s2F ? parseFloat(s2F.value) : NaN;
-        const S1_psi = (!isNaN(s1OvVal) && s1OvVal > 0) ? s1OvVal : getAllowableStress(pms.material, Tlow).S_psi;
-        const S2_psi = (!isNaN(s2OvVal) && s2OvVal > 0) ? s2OvVal : getAllowableStress(pms.material, Tuser).S_psi;
-        // Pressure thickness per case (no CA yet)
-        const t1_p = (P1_psig * parseFloat(od6)) / (2 * (S1_psi * E * W + P1_psig * Y));
-        const t2_p = (P2_psig * parseFloat(od6)) / (2 * (S2_psi * E * W + P2_psig * Y));
-        const t_press = Math.max(t1_p, t2_p);
-        const tm_inch = t_press + caInch;
-        const T_req_inch = tm_inch / (1 - millFrac);
-        const gov = (t1_p >= t2_p) ? 'Case 1 (Min T / Max P)' : 'Case 2 (Design Point)';
-        document.getElementById('formulaExample').innerHTML =
-            `<strong>NPS 6" example:</strong> OD = ${od6}" | E = ${E} | W = ${W} | Y = ${Y} ` +
-            `<span style="color:var(--text-muted)">[${yMatDesc}]</span> | c = ${caMM > 0 ? caInch.toFixed(4) + '" (' + caMM + ' mm)' : 'NIL'} | mill tol = ${(millFrac*100).toFixed(1)}%<br>` +
-            `<strong>Case 1 (Min T / Max P @ ${Tlow}\u00b0C):</strong> P = ${P1_psig.toFixed(1)} psig, S = ${S1_psi.toLocaleString()} psi ` +
-            `\u2192 t<sub>press</sub> = <strong>${t1_p.toFixed(4)}"</strong>${t1_p >= t2_p ? ' \u2190 GOVERNS' : ''}<br>` +
-            `<strong>Case 2 (Design Point @ ${Tuser}\u00b0C):</strong> P = ${P2_psig.toFixed(1)} psig, S = ${S2_psi.toLocaleString()} psi ` +
-            `\u2192 t<sub>press</sub> = <strong>${t2_p.toFixed(4)}"</strong>${t2_p > t1_p ? ' \u2190 GOVERNS' : ''}<br>` +
-            `<span style="color:#b91c1c"><strong>Using ${gov}: t = ${t_press.toFixed(4)}" \u2192 tm = t+c = ${tm_inch.toFixed(4)}" \u2192 ` +
-            `T<sub>REQ</sub> = tm/(1\u2212${millFrac}) = ${T_req_inch.toFixed(4)}" (${inch2mm(T_req_inch).toFixed(2)} mm)</strong></span>`;
-    } else {
-        document.getElementById('formulaExample').innerHTML = '';
+        const t1 = ptTemps[idx];
+        const p1 = ptPress[idx];
+        const s1 = getAllowableStress(pms.material, t1, projectMaterialSpec);
+        const labels = pms.pressure_temperature.temp_labels || [];
+        case1 = {
+            label: labels[idx] || `${t1}°C`,
+            temp_c: t1,
+            P_barg: p1,
+            P_psig: parseFloat(barg2psig(p1)),
+            P_mpa: p1 * 0.1,
+            S_psi: s1.S_psi,
+            S_mpa: s1.S_mpa,
+        };
     }
 
-    // Service Tags
-    const tags = [];
-    const svc = pms.service.toLowerCase();
-    if (isNACE || svc.includes('sour') || svc.includes('h2s')) tags.push({ label: 'Sour / H\u2082S', color: '#b91c1c' });
-    if (svc.includes('steam')) tags.push({ label: 'Steam', color: '#1e3a5f' });
-    if (isLTCS || svc.includes('low temp')) tags.push({ label: 'Low Temperature', color: '#0369a1' });
-    if (svc.includes('corrosive') || svc.includes('acid')) tags.push({ label: 'Corrosive', color: '#92400e' });
-    if (svc.includes('hydrogen') || svc.includes('h2')) tags.push({ label: 'Hydrogen', color: '#6d28d9' });
-    if (tags.length === 0) tags.push({ label: pms.service, color: '#1e3a5f' });
-
-    document.getElementById('serviceTags').innerHTML =
-        '<span style="margin-right:8px;color:var(--text-muted);font-size:0.85rem">Service:</span>' +
-        tags.map(t => `<span class="service-tag" style="background:${t.color}">${t.label}</span>`).join('');
-
-    // Design Parameters — TWO-CASE envelope analysis:
-    //   Case 1 (Min T / Max P): P-T table's LOWEST temperature (burst/high-stress case)
-    //   Case 2 (Max T / Min P): P-T table's HIGHEST temperature (reduced-stress case)
-    // User can override pressures via Case1/Case2 psig override fields.
-    const materialSpec = pms.pipe_data.length ? pms.pipe_data[0].material_spec : '\u2014';
-
-    const ptTemps = pms.pressure_temperature.temperatures || [];
-    const ptPress = pms.pressure_temperature.pressures || [];
-    const ptLabels = pms.pressure_temperature.temp_labels || [];
-
-    // Find min-temp and max-temp indices from P-T table
-    let tMinI = 0, tMaxI = 0;
-    for (let i = 1; i < ptTemps.length; i++) {
-        if (parseFloat(ptTemps[i]) < parseFloat(ptTemps[tMinI])) tMinI = i;
-        if (parseFloat(ptTemps[i]) > parseFloat(ptTemps[tMaxI])) tMaxI = i;
-    }
-
-    // Case 1 — min temp, max pressure (from P-T table)
-    const T_low       = parseFloat(ptTemps[tMinI]);
-    const P_max       = parseFloat(ptPress[tMinI]);
-    const T_low_label = ptLabels[tMinI] || `${T_low}`;
-
-    // Case 2 — max temp, pressure at that temp (from P-T table)
-    // If user provided Design Pressure (psig) override, use it; else auto from P-T table.
-    const T_high       = parseFloat(ptTemps[tMaxI]);
-    const P_at_Tmax    = parseFloat(ptPress[tMaxI]);
-    const T_high_label = ptLabels[tMaxI] || `${T_high}`;
-
-    // Use P-T envelope max as Case 2 by default; user's design pressure psig can override
-    const dpPsigField = document.getElementById('designPressurePsig');
-    const userPsig = dpPsigField ? parseFloat(dpPsigField.value) : NaN;
-    const userBarg = (!isNaN(userPsig) && userPsig > 0) ? userPsig / 14.5038 : NaN;
-    // Only treat as override if user's barg differs significantly from envelope P_at_Tmax
-    const case2Overridden = !isNaN(userBarg) && Math.abs(userBarg - P_at_Tmax) > 0.5;
-    const P_case2_barg = case2Overridden ? userBarg : P_at_Tmax;
-    const P_case2_psig = P_case2_barg * 14.5038;
-    // Case 2 temperature: use P-T max by default; user's Design Temperature can override
-    const T_case2 = (dtVal > 0 && Math.abs(dtVal - T_high) > 0.5) ? dtVal : T_high;
-    const T_case2_label = case2Overridden || (dtVal > 0 && Math.abs(dtVal - T_high) > 0.5)
-                          ? `${T_case2} (user input)`
-                          : T_high_label;
-
-    // Allowable stress at each case temp
-    const S_atTlow  = getAllowableStress(pms.material, T_low);
-    const S_atCase2 = getAllowableStress(pms.material, T_case2);
-
-    // Expose to other render helpers (e.g. enhanced pipe table)
-    pms._designEnvelope = {
-        T_low,              T_high: T_case2,
-        P_max,              P_min:  P_case2_barg,
-        S_low:  S_atTlow,   S_high: S_atCase2
+    const s2 = getAllowableStress(pms.material, dtVal, projectMaterialSpec);
+    const case2 = {
+        label: `${dtVal}°C`,
+        temp_c: dtVal,
+        P_barg: dpVal,
+        P_psig: parseFloat(barg2psig(dpVal)),
+        P_mpa: dpVal * 0.1,
+        S_psi: s2.S_psi,
+        S_mpa: s2.S_mpa,
     };
 
-    // Determine the governing case for a sample NPS (e.g., 6") so we can label it in the display
-    const case1OvInput = document.getElementById('case1PressurePsig');
-    const case1OvVal = case1OvInput ? parseFloat(case1OvInput.value) : NaN;
-    const case1OvValid = !isNaN(case1OvVal) && case1OvVal > 0;
-    const case1_psig = case1OvValid ? case1OvVal : parseFloat(barg2psig(P_max));
-    const case1_barg = case1_psig / 14.5038;
+    // Per-NPS coefficient k = P / (2(SEW + PY)) → t = k × D.
+    // Compare k values to decide which case governs (D cancels out, so the
+    // governing case is identical across all NPS).
+    const k = (P_mpa, S_mpa) => P_mpa / (2 * (S_mpa * E * W + P_mpa * Y));
+    const k1 = case1 ? k(case1.P_mpa, case1.S_mpa) : 0;
+    const k2 = k(case2.P_mpa, case2.S_mpa);
+    const case1Governs = case1 != null && k1 >= k2;
+    const governing = case1Governs ? case1 : case2;
+    const governingLabel = case1Governs ? 'Case 1 (Min T / Max P)' : 'Case 2 (Design Point)';
 
-    // Quick governing-case probe using NPS 6" (representative)
-    const probeOdIn = 168.3 / 25.4;
-    const t1_probe = (case1_psig * probeOdIn) / (2 * (S_atTlow.S_psi * E * W + case1_psig * Y));
-    const t2_probe = (P_case2_psig * probeOdIn) / (2 * (S_atCase2.S_psi * E * W + P_case2_psig * Y));
-    const case1Gov = t1_probe >= t2_probe;
+    // Stress used for per-row Eq. 3a — sourced from the governing case.
+    const S_mpa = governing.S_mpa;
+    const S_psi = governing.S_psi;
 
-    const gov1 = case1Gov ? ' <span style="color:#16a34a;font-weight:700">[GOVERNS]</span>'
-                          : ' <span style="color:var(--text-muted)">[active]</span>';
-    const gov2 = case1Gov ? ' <span style="color:var(--text-muted)">[active]</span>'
-                          : ' <span style="color:#16a34a;font-weight:700">[GOVERNS]</span>';
+    const rows = (pms.pipe_data || []).map(p => {
+        const nps = p.size_inch;
+        const D = p.od_mm;
+        if (!D) return null;
 
-    const designPressureDisplay =
-        `<strong>Min T / Max P:</strong> ${case1_psig.toFixed(1)} psig (${case1_barg.toFixed(2)} barg) <span class="unit">@ ${T_low_label}\u00b0C</span>${gov1}<br>` +
-        `<strong>Design Point:</strong> ${P_case2_psig.toFixed(1)} psig (${P_case2_barg.toFixed(2)} barg) <span class="unit">@ ${T_case2_label}\u00b0C</span>${gov2}<br>` +
-        `<span class="unit" style="font-size:0.85em;color:var(--text-muted)">t<sub>REQ</sub> uses MAX(Case 1, Case 2) per size</span>`;
+        // Compute t_press for both cases at this NPS, take the larger.
+        const t_press_1 = case1 ? k1 * D : 0;
+        const t_press_2 = k2 * D;
+        const t = Math.max(t_press_1, t_press_2);
+        const d_over_6 = D / 6;
+        const t_applicable = t < d_over_6 ? 'OK' : 'ALERT';
+        const t_m = t + caMM;
+        const t_req = t_m / (1 - millFrac);
 
-    const designTempDisplay =
-        `<strong>Min:</strong> ${T_low_label}\u00b0C (${c2f(T_low)}\u00b0F) <span class="unit">[P-T min]</span>${gov1}<br>` +
-        `<strong>Max (Design):</strong> ${T_case2_label}\u00b0C (${c2f(T_case2)}\u00b0F) <span class="unit">[design]</span>${gov2}`;
+        // Apply project-conventional schedule floor for (class, NPS).
+        // floor_wt is 0 when no rule applies — Eq. 3a alone wins.
+        // When a rule applies, required_wt = MAX(eq3a, floor_wt) so the
+        // class-conventional minimum schedule is honoured at low pressures
+        // and Eq. 3a takes over once design pressure pushes above the floor.
+        const floorKey = _projectFloorScheduleKey(pms.piping_class, nps);
+        const floorWt = _projectFloorWt(nps, floorKey);
+        const required_wt = Math.max(t_req, floorWt);
 
-    const stressDisplay =
-        `<strong>S @ ${T_low}\u00b0C:</strong> ${S_atTlow.S_psi.toLocaleString()} psi (${S_atTlow.S_mpa} MPa)${gov1}<br>` +
-        `<strong>S @ ${T_case2}\u00b0C:</strong> ${S_atCase2.S_psi.toLocaleString()} psi (${S_atCase2.S_mpa} MPa)${gov2}<br>` +
-        `<span class="unit">per ASME B31.3 Table A-1 [${pms.material}]</span>`;
+        const picked = _selectScheduleForThickness(nps, required_wt);
+        const sel_sch = picked ? picked.schedule : (p.schedule || '-');
+        const sel_thk = picked ? picked.wt : (p.wall_thickness_mm || 0);
+        const sel_status = (picked && picked.wt + 0.001 >= required_wt) ? 'OK' : 'SUBSTD';
+        const applColor = t_applicable === 'OK' ? '#16a34a' : '#b91c1c';
+        const selColor = sel_status === 'OK' ? '#16a34a' : '#b91c1c';
+        const floorDriven = floorWt > t_req + 1e-6;
 
-    setKVList('designParamsList', [
-        { l: 'PMS Class', v: `<strong>${pms.piping_class}</strong> (${pms.rating})` },
-        { l: 'Design Pressure (P)', v: designPressureDisplay },
-        { l: 'Design Temperature', v: designTempDisplay },
-        { l: 'Material Spec', v: materialSpec },
-        { l: 'Allowable Stress S(T)', v: stressDisplay },
-    ]);
+        return { nps, D, t, t_press_1, t_press_2, d_over_6, t_applicable, t_m, t_req,
+                 floorKey, floorWt, required_wt, floorDriven,
+                 sel_sch, sel_thk, sel_status, applColor, selColor };
+    }).filter(r => r !== null);
 
-    // Code Factors
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
-    setKVList('codeFactorsList', [
-        { l: 'Pipe Standard', v: pipeStandard, bold: true },
-        { l: 'Joint Type', v: document.getElementById('jointType').value, bold: true },
-        { l: 'Joint Efficiency (E)', v: E.toString() },
-        { l: 'Y Coefficient', v: `${Y} <span class="unit">(ASME B31.3 Table 304.1.1 @ ${dtF}\u00b0F (${yMatDesc}))</span>` },
-        { l: 'W-factor (Weld Str.)', v: `${W} <span class="unit">(ASME B31.3 Table 302.3.5 @ ${dtF}\u00b0F (W=1.0))</span>` },
-        { l: 'Corrosion Allow. (c)', v: caMM > 0 ? `${caMM} mm` : '<strong>NIL</strong> (no corrosion allowance)', bold: true },
-        { l: 'Mill Undertolerance', v: `${millTol}%` },
-    ]);
-
-    // Engineering Flags
-    renderEngineeringFlags(pms, dpVal, isNACE, isLTCS);
-
-    // Enhanced Pipe Table with calculations
-    renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millFrac, isNACE, isLTCS);
-}
-
-// === Engineering Flags ===
-// Fetches the canonical flag list from POST /api/compute-thickness so the
-// standalone HTML UI and the Valvesheet frontend always show the same
-// engineering rules. The flag-generation logic lives in
-// thickness_service.py::_build_engineering_flags() — single source of truth.
-//
-// Fallback: if the endpoint is unreachable, render a one-line notice rather
-// than a stale local copy of the rules (which would drift over time).
-async function renderEngineeringFlags(pms, dpVal /* , isNACE, isLTCS unused */) {
-    const container = document.getElementById('engineeringFlags');
-    container.innerHTML = '<p style="color:var(--text-muted);padding:12px">Loading engineering requirements…</p>';
-
-    const designTempC = parseFloat(document.getElementById('designTemperature').value) || 0;
-
-    try {
-        const res = await fetch('/api/compute-thickness', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                piping_class: pms.piping_class,
-                material: pms.material,
-                corrosion_allowance: pms.corrosion_allowance,
-                service: pms.service,
-                design_pressure_barg: dpVal,
-                design_temp_c: designTempC,
-            }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const flags = (data.engineering_flags || []).map(f => ({
-            level: _flagKindToLevel(f.kind),
-            badge: f.label,
-            title: f.title,
-            body: f.body,
-        }));
-        if (flags.length === 0) {
-            container.innerHTML = '<p style="color:var(--text-muted);padding:12px">No special engineering flags for this specification.</p>';
-            return;
-        }
-        container.innerHTML = flags.map(f => `
-            <div class="flag-card ${f.level}">
-                <div class="flag-header">
-                    <span class="flag-badge ${f.level}">${f.badge}</span>
-                    <span class="flag-title">${f.title}</span>
-                </div>
-                <p class="flag-body">${f.body}</p>
-            </div>
-        `).join('');
-    } catch (e) {
-        console.warn('[flags] API unreachable, showing fallback notice:', e);
-        container.innerHTML = `
-            <div class="flag-card note">
-                <div class="flag-header">
-                    <span class="flag-badge note">NOTE</span>
-                    <span class="flag-title">Engineering flags unavailable</span>
-                </div>
-                <p class="flag-body">The /api/compute-thickness endpoint is not reachable. Engineering requirements are computed server-side; refresh once the backend is running to see them.</p>
-            </div>`;
-    }
-}
-
-// Map backend EngineeringFlag.kind to the legacy CSS class names used by
-// .flag-card / .flag-badge (critical / mandatory / warning / note).
-function _flagKindToLevel(kind) {
-    if (kind === 'mandatory') return 'mandatory';
-    if (kind === 'project-spec') return 'warning';
-    if (kind === 'note') return 'note';
-    return 'note';
-}
-
-// === Enhanced Pipe Table ===
-function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millFrac, isNACE, isLTCS) {
-    const pipes = pms.pipe_data;
-    if (!pipes.length) {
-        document.getElementById('enhancedPipeTable').innerHTML = '<p style="color:var(--text-muted)">No pipe data available</p>';
-        document.getElementById('summaryStats').innerHTML = '';
+    if (rows.length === 0) {
+        target.innerHTML = '<p style="color:var(--text-muted);padding:12px">No pipe data available.</p>';
         return;
     }
 
-    const P_psig = parseFloat(barg2psig(dpVal));
-    const results = [];
-
-    pipes.forEach(p => {
-        const od_inch = mm2inch(p.od_mm);
-        const wt_mm = p.wall_thickness_mm;
-        const wt_inch = mm2inch(wt_mm);
-        const sizeNum = parseFloat(p.size_inch) || 0;
-
-        // t_req: matches reference A1 Excel (20171-SPOG-80000-PP-CL-0001):
-        //   t  (pressure)  = MAX(t1, t2) × OD     (t1, t2 are t/D ratios per case)
-        //   tm             = t + CA
-        //   T  (displayed) = tm / (1 - mill_tolerance)   ← this is what column "tREQ (mm)" shows
-        // Adequacy check becomes:  nominal WT ≥ T
-        // Case 1: Max P @ Min T (higher P, higher S)
-        // Case 2: User design-temp P @ Design T (interpolated)
-        const env = pms._designEnvelope;
-        let t_pressure_inch;
-        if (env) {
-            // BOTH CASES always calculated; tREQ uses the GOVERNING (larger) one.
-            //
-            // Case 1 (Min T / Max P):
-            //   Pressure = Case 1 Override if user provided it, else P-T envelope max pressure
-            //   Stress   = Case 1 Stress Override if provided, else S(T_low) from material table
-            //   Temperature = P-T envelope min temp
-            const case1OverrideField = document.getElementById('case1PressurePsig');
-            const case1Override = case1OverrideField ? parseFloat(case1OverrideField.value) : NaN;
-            const P1_psig = (!isNaN(case1Override) && case1Override > 0)
-                           ? case1Override
-                           : parseFloat(barg2psig(env.P_max));
-            const s1OvField = document.getElementById('case1StressPsi');
-            const s1Ov = s1OvField ? parseFloat(s1OvField.value) : NaN;
-            const S1 = (!isNaN(s1Ov) && s1Ov > 0) ? s1Ov : env.S_low.S_psi;
-            const t1_p = (P1_psig * od_inch) / (2 * (S1 * E * W + P1_psig * Y));
-
-            // Case 2 (Max T / Design T):
-            //   Pressure = user's Design Pressure (psig input, auto-interpolated from P-T at Design T)
-            //   Stress   = Case 2 Stress Override if provided, else S(T_case2) from material table
-            //   Temperature = user's Design Temperature
-            const dpPsigField = document.getElementById('designPressurePsig');
-            const P2_psig = dpPsigField ? (parseFloat(dpPsigField.value) || parseFloat(barg2psig(env.P_min)))
-                                         : parseFloat(barg2psig(env.P_min));
-            const s2OvField = document.getElementById('case2StressPsi');
-            const s2Ov = s2OvField ? parseFloat(s2OvField.value) : NaN;
-            const S2 = (!isNaN(s2Ov) && s2Ov > 0) ? s2Ov : env.S_high.S_psi;
-            const t2_p = (P2_psig * od_inch) / (2 * (S2 * E * W + P2_psig * Y));
-
-            // tREQ uses whichever case produces THICKER required wall
-            t_pressure_inch = Math.max(t1_p, t2_p);
-        } else {
-            t_pressure_inch = (P_psig * od_inch) / (2 * (S_psi * E * W + P_psig * Y));
-        }
-        const t_pressure_mm = inch2mm(t_pressure_inch);        // "t" column — pressure thickness
-        const tm_inch = t_pressure_inch + caInch;              // "tm" column — t + CA
-        const tm_mm = inch2mm(tm_inch);
-        const t_req_inch = tm_inch / (1 - millFrac);           // "T" column — tm / (1 - mill_tol)
-        const t_req_mm = inch2mm(t_req_inch);
-
-        // D/6 and t<D/6 applicability check (thin-wall equation validity)
-        const d_over_6_mm = p.od_mm / 6;
-        const t_applicable = (t_pressure_mm < d_over_6_mm) ? 'OK' : 'ALERT';
-
-        // t_min = WT_nom * (1 - mill%) — minimum thickness after mill tolerance (for MAWP)
-        const t_min_mm = wt_mm * (1 - millFrac);
-        const t_min_inch = mm2inch(t_min_mm);
-
-        // t_eff = t_min - CA — effective thickness for MAWP calculation
-        const t_eff_mm = t_min_mm - caMM;
-        const t_eff_inch = mm2inch(t_eff_mm);
-
-        // MAWP = [2 * S * E * W * t_eff] / [OD - 2 * Y * t_eff]   (in psi, then convert to barg)
-        let mawp_psi = 0;
-        let mawp_barg = 0;
-        if (t_eff_inch > 0 && (od_inch - 2 * Y * t_eff_inch) > 0) {
-            mawp_psi = (2 * S_psi * E * W * t_eff_inch) / (od_inch - 2 * Y * t_eff_inch);
-            mawp_barg = mawp_psi / 14.5038;
-        }
-
-        const margin = dpVal > 0 ? ((mawp_barg - dpVal) / dpVal * 100) : 0;
-        const utilization = mawp_barg > 0 ? (dpVal / mawp_barg * 100) : 100;
-
-        // Determine schedule tags and governs
-        let tags = [];
-        let governs = '';
-        const matUpper = pms.material.toUpperCase();
-        const isCSNACE = isNACE && matUpper.includes('CS') && !matUpper.includes('DSS') && !matUpper.includes('SS') && !matUpper.includes('SDSS');
-        if (isNACE && isCSNACE) {
-            tags.push('NACE');
-            if (sizeNum <= 1.5) {
-                governs = `PMS minimum \u2014 Sch 160 (NPS \u2264 1\u00bd")`;
-            } else if (sizeNum <= 6) {
-                governs = `PMS minimum \u2014 Sch 80 (NPS 2"\u20136")`;
-            } else {
-                governs = `PMS minimum \u2014 XS (NPS \u2265 ${sizeNum}")`;
-            }
-        } else if (isNACE) {
-            tags.push('NACE');
-            governs = 'Design calculation governs';
-        } else if (isLTCS) {
-            tags.push('LTCS');
-            governs = 'Low-temperature service minimum governs';
-        }
-
-        if (!governs) {
-            // t_req now includes (1 / (1 - mill_tol)) factor — compare directly to nominal WT
-            if (t_req_mm > wt_mm) {
-                governs = 'Pressure governs';
-                tags.push('Pressure');
-            } else {
-                governs = 'PMS minimum schedule governs';
-            }
-        }
-
-        results.push({
-            size: p.size_inch,
-            od: p.od_mm,
-            schedule: p.schedule,
-            wt_nom: wt_mm,
-            t_pressure: t_pressure_mm,      // pressure thickness only ("t" in Excel)
-            d_over_6: d_over_6_mm,           // D/6
-            t_applicable: t_applicable,      // OK/ALERT for t<D/6
-            tm: tm_mm,                       // t + CA ("tm" in Excel)
-            t_req: t_req_mm,                 // tm / (1 - mill_tol) ("T" in Excel — displayed tREQ)
-            t_min: t_min_mm,
-            t_eff: t_eff_mm,
-            mawp: mawp_barg,
-            margin: margin,
-            utilization: utilization,
-            tags: tags,
-            governs: governs,
-        });
-    });
-
-    // Build table — column layout matches reference Excel A1 sheet
-    // (20171-SPOG-80000-PP-CL-0001_Rev03.xlsx → A1 sheet)
-    const millPct = (millFrac * 100).toFixed(1);
     let html = `<table><thead><tr>
         <th>NPS</th>
         <th>D<br>(mm)</th>
@@ -1468,74 +1856,282 @@ function renderEnhancedPipeTable(pms, dpVal, S_psi, E, W, Y, caInch, caMM, millF
         <th>t<sub>m</sub><br>(mm)</th>
         <th>Mill<br>Tol.</th>
         <th>Calc. Thk<br>T (mm)</th>
-        <th>Sel. Thk<br>(mm)</th>
         <th>SCH</th>
+        <th>Sel. Thk<br>(mm)</th>
         <th>Sel. Thk<br>Status</th>
-        <th>MAWP<br>(barg)</th>
-        <th>Margin</th>
-        <th>Governs</th>
     </tr></thead><tbody>`;
 
-    results.forEach(r => {
-        const tagHtml = r.tags.map(t => {
-            const cls = t === 'NACE' ? 'nace' : t === 'LTCS' ? 'ltcs' : t === 'Pressure' ? 'pressure' : 'default';
-            return `<span class="pipe-tag ${cls}">${t}</span>`;
-        }).join(' ');
-
-        // Status: OK if nominal WT >= tREQ
-        const selOK = r.wt_nom >= r.t_req ? 'OK' : 'NOT OK';
-        const selColor = selOK === 'OK' ? '#16a34a' : '#b91c1c';
-        const applColor = r.t_applicable === 'OK' ? '#16a34a' : '#b91c1c';
-
-        // Sel. Thk = pipe_data.wall_thickness_mm (the actual installable wall):
-        // ASME schedules → B36.10M/B36.19M lookup; ASME calc-WT → real schedule
-        // chosen by correct_pipe_data; non-ASME (Copper B42, CuNi EEMUA 234,
-        // GRE, CPVC, Tubing A269) → AI-emitted standard value. Matches Excel.
-        const selThkDisplay = r.wt_nom;
-
+    rows.forEach(r => {
+        // SUBSTD rows: every standard B36.10M schedule for this NPS is too
+        // thin to meet Eq. 3a / project-floor requirement. Report the row
+        // honestly — blank SCH (no buyable schedule satisfies it) and
+        // Sel. Thk = the calculated minimum (rounded), so the engineer
+        // sees the wall they actually need to procure (custom-machined or
+        // via material-spec upgrade).
+        const isSubstd = r.sel_status === 'SUBSTD';
+        const schCell  = isSubstd ? '—' : r.sel_sch;
+        const thkCell  = isSubstd ? r.t_req.toFixed(2) : r.sel_thk;
         html += `<tr>
-            <td><strong>${r.size}"</strong></td>
-            <td>${r.od}</td>
-            <td>${r.t_pressure.toFixed(3)}</td>
+            <td><strong>${r.nps}"</strong></td>
+            <td>${r.D}</td>
+            <td>${r.t.toFixed(3)}</td>
             <td>${r.d_over_6.toFixed(2)}</td>
-            <td style="color:${applColor};font-weight:600">${r.t_applicable}</td>
-            <td>${r.tm.toFixed(3)}</td>
-            <td>${millPct}%</td>
+            <td style="color:${r.applColor};font-weight:600">${r.t_applicable}</td>
+            <td>${r.t_m.toFixed(3)}</td>
+            <td>${millTolPct}%</td>
             <td><strong>${r.t_req.toFixed(3)}</strong></td>
-            <td>${selThkDisplay}</td>
-            <td><strong>${r.schedule}</strong> ${tagHtml}</td>
-            <td style="color:${selColor};font-weight:600">${selOK}</td>
-            <td>${r.mawp.toFixed(1)}</td>
-            <td>${r.margin.toFixed(1)}%</td>
-            <td class="governs-cell">${r.governs}</td>
+            <td><strong>${schCell}</strong></td>
+            <td>${thkCell}</td>
+            <td style="color:${r.selColor};font-weight:600">${r.sel_status}</td>
         </tr>`;
     });
     html += '</tbody></table>';
+    target.innerHTML = html;
 
-    document.getElementById('enhancedPipeTable').innerHTML = html;
+    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * (ENG.hydrotest_factor ?? 1.5));
+    const summaryEl = document.getElementById('summaryStats');
+    if (summaryEl) {
+        setKVList('summaryStats', [
+            { l: 'Hydrotest Pressure (1.5×P)', v: `<strong>${ht.toFixed(1)} barg</strong>`, bold: true },
+            { l: 'Total NPS Sizes', v: `${rows.length}` },
+        ]);
+    }
 
-    // Summary Stats
-    const mawps = results.map(r => r.mawp).filter(m => m > 0);
-    const margins = results.map(r => r.margin).filter(m => m > 0);
-    const ht = pms.hydrotest_pressure ? parseFloat(pms.hydrotest_pressure) : (dpVal * ENG.hydrotest_factor);
+    // ── Design Parameters panel — dual rows with GOVERNS flag ──
+    // Each of {Pressure, Temperature, Allowable Stress S(T)} shows both
+    // Case 1 (Min T / Max P from B16.5 cold-end) and Case 2 (Design Point
+    // from form). The case that drives more wall thickness is tagged
+    // [GOVERNS] (green); the other is tagged [active] (grey). When no P-T
+    // curve is attached (AI-only path), Case 1 is omitted and only the
+    // Design Point row renders.
+    const materialSpec = pms.pipe_data?.[0]?.material_spec || pms.material || '—';
 
-    setKVList('summaryStats', [
-        { l: 'Min MAWP', v: `${Math.min(...mawps).toFixed(1)} barg` },
-        { l: 'Max MAWP', v: `${Math.max(...mawps).toFixed(1)} barg` },
-        { l: 'Min Pressure Margin', v: `${Math.min(...margins).toFixed(1)}%` },
-        { l: 'Hydrotest Pressure (1.5\u00d7P)', v: `<strong>${ht.toFixed(1)} barg</strong>`, bold: true },
-        { l: 'Total NPS Sizes', v: `${results.length}` },
+    const govTag = `<span style="color:#16a34a;font-weight:700">[GOVERNS]</span>`;
+    const actTag = `<span style="color:#6b7280;font-style:italic">[active]</span>`;
+    const dualLine = (label, val, unit, tag) =>
+        `<div><strong>${label}: ${val}</strong> <span class="unit">${unit}</span> ${tag}</div>`;
+
+    const designParams = [
+        { l: 'PMS Class', v: `<strong>${pms.piping_class}</strong> (${pms.rating})` },
+    ];
+
+    if (case1) {
+        // Round to clean spec values: psig → integer, barg → 1 decimal.
+        // Standard piping-spec convention; avoids the false-precision look
+        // of "6171.4 psig (425.50 barg)" — engineers read the integer.
+        const fmtPress = (psig, barg) =>
+            `${Math.round(psig).toLocaleString()} psig (${barg.toFixed(1)} barg)`;
+        const pressureBlock = [
+            dualLine('Min T / Max P', fmtPress(case1.P_psig, case1.P_barg),
+                     `@ ${case1.label}`, case1Governs ? govTag : actTag),
+            dualLine('Design Point', fmtPress(case2.P_psig, case2.P_barg),
+                     `@ ${case2.label}`, case1Governs ? actTag : govTag),
+            `<div class="unit" style="font-size:0.85em;margin-top:4px">t<sub>REQ</sub> uses MAX(Case 1, Case 2) per size</div>`,
+        ].join('');
+        designParams.push({ l: 'Design Pressure (P)', v: pressureBlock });
+
+        const tempBlock = [
+            dualLine('Min', `${case1.label} (${c2f(case1.temp_c)}°F)`,
+                     '[P-T min]', case1Governs ? govTag : actTag),
+            dualLine('Max (Design)', `${case2.temp_c}°C (${c2f(case2.temp_c)}°F)`,
+                     '[design]', case1Governs ? actTag : govTag),
+        ].join('');
+        designParams.push({ l: 'Design Temperature', v: tempBlock });
+    } else {
+        designParams.push({
+            l: 'Design Pressure (P)',
+            v: `<strong>${dpVal} barg</strong> <span class="unit">(${barg2psig(dpVal)} psig)</span>`,
+        });
+        designParams.push({
+            l: 'Design Temperature',
+            v: `<strong>${dtVal}°C</strong> <span class="unit">(${c2f(dtVal)}°F)</span>`,
+        });
+    }
+
+    designParams.push({ l: 'Material', v: pms.material || '—' });
+    designParams.push({ l: 'Material Spec', v: materialSpec });
+
+    if (case1) {
+        const matFamily = (pms.material || '').toUpperCase().includes('SS') ? 'SS'
+                        : (pms.material || '').toUpperCase().includes('DSS') ? 'DSS' : 'CS';
+        const stressBlock = [
+            dualLine(`S @ ${case1.label}`, `${case1.S_psi.toLocaleString()} psi`,
+                     `(${case1.S_mpa} MPa)`, case1Governs ? govTag : actTag),
+            dualLine(`S @ ${case2.temp_c}°C`, `${case2.S_psi.toLocaleString()} psi`,
+                     `(${case2.S_mpa} MPa)`, case1Governs ? actTag : govTag),
+            `<div class="unit" style="font-size:0.85em;margin-top:4px">per ASME B31.3 Table A-1 [${matFamily}]</div>`,
+        ].join('');
+        designParams.push({ l: 'Allowable Stress S(T)', v: stressBlock });
+    } else {
+        designParams.push({
+            l: 'Allowable Stress S(T)',
+            v: `<strong>${S_psi.toLocaleString()} psi</strong> <span class="unit">(${S_mpa} MPa) — ASME B31.3 Table A-1</span>`,
+        });
+    }
+
+    setKVList('designParamsList', designParams);
+
+    // ── Formula example: pick a representative NPS and show the dual-case calc ──
+    // Prefer NPS 6" if present (canonical engineering example), otherwise the
+    // largest NPS in the spec (worst case scales with D so big NPS shows the
+    // full effect).
+    const exampleEl = document.getElementById('formulaExample');
+    if (exampleEl && rows.length > 0) {
+        let exRow = rows.find(r => parseFloat(r.nps) === 6);
+        if (!exRow) {
+            exRow = rows.reduce((a, b) => parseFloat(b.nps) > parseFloat(a.nps) ? b : a, rows[0]);
+        }
+        const odIn = (exRow.D / 25.4).toFixed(3);
+        const caIn = (caMM / 25.4).toFixed(4);
+        const yNote = ['CS', 'LTCS'].some(s => (pms.material || '').toUpperCase().includes(s))
+                    ? 'ferritic/alloy steel' : 'austenitic / non-ferrous';
+
+        const t1_mm = exRow.t_press_1;
+        const t2_mm = exRow.t_press_2;
+        const t1_in = (t1_mm / 25.4).toFixed(4);
+        const t2_in = (t2_mm / 25.4).toFixed(4);
+        const t_in  = (exRow.t / 25.4).toFixed(4);
+        const tm_in = (exRow.t_m / 25.4).toFixed(4);
+        const treq_in = (exRow.t_req / 25.4).toFixed(4);
+        const treq_mm = exRow.t_req.toFixed(2);
+
+        let html = `<strong>NPS ${exRow.nps}" example:</strong> OD = ${odIn}" `
+                 + ` | E = ${E} | W = ${W} | Y = ${Y} <span class="unit">[${yNote}]</span> `
+                 + ` | c = ${caIn}" (${caMM} mm) | mill tol = ${millTolPct}%<br>`;
+        // Round psig to integer for clean spec-style display, matching the
+        // Design Parameters panel above.
+        const p1Int = case1 ? Math.round(case1.P_psig).toLocaleString() : '';
+        const p2Int = Math.round(case2.P_psig).toLocaleString();
+        if (case1) {
+            html += `<strong>Case 1 (Min T / Max P @ ${case1.label}):</strong> `
+                  + `P = ${p1Int} psig, S = ${case1.S_psi.toLocaleString()} psi → `
+                  + `t<sub>press</sub> = ${t1_in}"`
+                  + (case1Governs ? ` <span style="color:#16a34a;font-weight:700">— GOVERNS</span>` : ``)
+                  + `<br>`;
+            html += `<strong>Case 2 (Design Point @ ${case2.temp_c}°C):</strong> `
+                  + `P = ${p2Int} psig, S = ${case2.S_psi.toLocaleString()} psi → `
+                  + `t<sub>press</sub> = ${t2_in}"`
+                  + (!case1Governs ? ` <span style="color:#16a34a;font-weight:700">— GOVERNS</span>` : ``)
+                  + `<br>`;
+            html += `<span style="color:#b91c1c;font-weight:600">`
+                  + `Using ${case1Governs ? 'Case 1 (Min T / Max P)' : 'Case 2 (Design Point)'}: `
+                  + `t = ${t_in}" → t<sub>m</sub> = t+c = ${tm_in}" → `
+                  + `T<sub>REQ</sub> = t<sub>m</sub>/(1−${(millFrac).toFixed(3)}) = ${treq_in}" `
+                  + `(${treq_mm} mm)</span>`;
+        } else {
+            html += `<strong>Single-case (Design Point @ ${case2.temp_c}°C):</strong> `
+                  + `P = ${p2Int} psig, S = ${case2.S_psi.toLocaleString()} psi → `
+                  + `t = ${t_in}" → t<sub>m</sub> = ${tm_in}" → T<sub>REQ</sub> = ${treq_in}" (${treq_mm} mm)`;
+        }
+        exampleEl.innerHTML = html;
+    }
+
+    // ── Service tag (above the two-col panels) ──
+    // Inline styles instead of a CSS class — the project CSS doesn't define
+    // .service-tag, and falling through to default styling rendered the
+    // text invisible against the page background. Use the same dark navy
+    // pill as the table headers so it reads at a glance.
+    const serviceTagsEl = document.getElementById('serviceTags');
+    if (serviceTagsEl) {
+        const svc = pms.service || 'General';
+        serviceTagsEl.innerHTML =
+            `<span style="color:var(--text-muted);font-weight:500;margin-right:10px">Service:</span>`
+          + `<span style="display:inline-block;padding:4px 14px;background:#0f2a52;`
+          +   `color:#fff;font-weight:600;border-radius:4px;font-size:0.9em">${svc}</span>`;
+    }
+
+    // ── Fabrication & Code Factors panel ──
+    // Y coefficient and W factor are temperature-dependent per ASME B31.3
+    // Tables 304.1.1 / 302.3.5. Here we annotate which temperature was used —
+    // that's the design temp for both factors at the project's operating
+    // conditions (the cold-end Case 1 only affects S and P, not Y or W).
+    const matUpper = (pms.material || '').toUpperCase();
+    const isSS = matUpper.includes('SS') || matUpper.includes('STAINLESS')
+              || matUpper.includes('DSS') || matUpper.includes('SDSS');
+    const pipeStandard = isSS ? 'ASME B36.19M' : 'ASME B36.10M';
+    const jointType = document.getElementById('jointType')?.value || 'Seamless';
+    const yFamily = isSS ? 'austenitic / non-ferrous' : 'ferritic/alloy steel';
+    const dt_F = c2f(dtVal);
+    setKVList('codeFactorsList', [
+        { l: 'Pipe Standard', v: pipeStandard, bold: true },
+        { l: 'Joint Type', v: jointType, bold: true },
+        { l: 'Joint Efficiency (E)', v: E.toString() },
+        { l: 'Y Coefficient', v: `${Y} <span class="unit">(ASME B31.3 Table 304.1.1 @ ${dt_F}°F (${yFamily}))</span>` },
+        { l: 'W-factor (Weld Str.)', v: `${W} <span class="unit">(ASME B31.3 Table 302.3.5 @ ${dt_F}°F (W=${W}))</span>` },
+        { l: 'Corrosion Allow. (c)', v: caMM > 0 ? `${caMM} mm` : '<strong>NIL</strong> (no corrosion allowance)', bold: true },
+        { l: 'Mill Undertolerance', v: `${millTolPct}%` },
     ]);
 
-    // Tag Legend
-    const legendItems = [];
-    if (isNACE) legendItems.push({ tag: 'nace', label: 'NACE', desc: 'NACE MR0175 / ISO 15156 minimum schedule governs' });
-    if (isLTCS) legendItems.push({ tag: 'ltcs', label: 'LTCS', desc: 'Low-temperature service minimum governs' });
-    legendItems.push({ tag: 'pressure', label: 'Pressure', desc: 'ASME B31.3 Eq. 3a governs' });
+    // ── Engineering Requirements & Flags ──
+    // Derived client-side from the class code + material — no backend call.
+    const cls = pms.piping_class || '';
+    const isNACE = cls.includes('N') || matUpper.includes('NACE');
+    const isLTCS = cls.includes('L') || matUpper.includes('LTCS');
+    const isHighRating = ['1500#', '2500#', '5000#', '10000#'].includes(pms.rating);
+    const isGalv = matUpper.includes('GALV');
+    const isCoated = matUpper.includes('EPOXY') || matUpper.includes('COATED');
 
-    document.getElementById('tagLegend').innerHTML = legendItems.map(item =>
-        `<div class="legend-row"><span class="pipe-tag ${item.tag}">${item.label}</span> <span class="legend-desc">${item.desc}</span></div>`
-    ).join('');
+    const flags = [];
+    if (isNACE) flags.push({
+        level: 'mandatory', badge: 'NACE',
+        title: 'Sour-Service Requirements (NACE MR-01-75 / ISO 15156)',
+        body: 'Material hardness limits, heat-treatment certification, and HIC/SSC qualification required. Maximum service temperature 250°C per project policy.',
+    });
+    if (isLTCS) flags.push({
+        level: 'mandatory', badge: 'LTCS',
+        title: 'Low-Temperature Service',
+        body: 'Charpy V-notch impact testing per ASTM A350 LF2 / A333 Gr.6. Verify minimum design metal temperature (MDMT) is within material allowable range.',
+    });
+    if (isHighRating) flags.push({
+        level: 'warning', badge: 'HP',
+        title: 'High-Pressure Rating (' + pms.rating + ')',
+        body: 'Hydrotest pressure exceeds 250 barg in many configurations. Verify test fixture and gauge ranges. Welder qualification per ASME IX required.',
+    });
+    if (isGalv) flags.push({
+        level: 'warning', badge: 'GALV',
+        title: 'Galvanized Coating Temperature Limit',
+        body: 'Hot-dip galvanizing degrades above ~150°C. Confirm operating temperature does not exceed coating limit. Consider field-applied repair where galvanizing is damaged at fittings/welds.',
+    });
+    if (isCoated) flags.push({
+        level: 'note', badge: 'COATED',
+        title: 'Internal Coating Notice',
+        body: 'Internal epoxy / lining requires holiday testing per project spec. Damaged coating at field welds must be repaired per coating manufacturer instructions.',
+    });
+
+    const flagsEl = document.getElementById('engineeringFlags');
+    if (flagsEl) {
+        if (flags.length === 0) {
+            flagsEl.innerHTML = '<p style="color:var(--text-muted);padding:12px">No special engineering flags for this specification.</p>';
+        } else {
+            flagsEl.innerHTML = flags.map(f => `
+                <div class="flag-card ${f.level}">
+                    <div class="flag-header">
+                        <span class="flag-badge ${f.level}">${f.badge}</span>
+                        <span class="flag-title">${f.title}</span>
+                    </div>
+                    <p class="flag-body">${f.body}</p>
+                </div>`).join('');
+        }
+    }
+
+    // ── Tag Legend (pipe-row colour codes used in the WT table) ──
+    const legendItems = [];
+    if (rows.some(r => r.sel_status === 'SUBSTD')) legendItems.push({
+        tag: 'pressure', label: 'SUBSTD', desc: 'Selected schedule does not meet calculated minimum — upgrade required',
+    });
+    if (isNACE) legendItems.push({ tag: 'nace', label: 'NACE', desc: 'NACE MR-01-75 / ISO 15156 sour-service requirements' });
+    if (isLTCS) legendItems.push({ tag: 'ltcs', label: 'LTCS', desc: 'Low-temperature service per ASTM A350 LF2 / A333 Gr.6' });
+
+    const legendEl = document.getElementById('tagLegend');
+    if (legendEl) {
+        if (legendItems.length === 0) {
+            legendEl.innerHTML = '<p style="color:var(--text-muted);padding:8px;font-size:0.9em">No row-level tags for this class.</p>';
+        } else {
+            legendEl.innerHTML = legendItems.map(item =>
+                `<div class="legend-row"><span class="pipe-tag ${item.tag}">${item.label}</span> <span class="legend-desc">${item.desc}</span></div>`
+            ).join('');
+        }
+    }
 }
 
 // ============================================================

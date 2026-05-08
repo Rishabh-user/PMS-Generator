@@ -145,17 +145,18 @@ def build_tubing_pms(req: PMSRequest) -> PMSResponse:
         pressures=pressures,
         temp_labels=temp_lbls,
     )
-    # Hydrotest per ASME B31.3 §345.4.2(b). Tubing rarely sees high
-    # temperatures (instrumentation lines), so the correction usually
-    # collapses to flat 1.5·P; but the helper is used so the moment a
-    # tubing class is rated for hot service, the correction kicks in
-    # automatically without a tubing-specific code path.
+    # Hydrotest = 1.5 × cold-rated, FLAT (project class-documentation
+    # convention — same rule used by the standards / catalogued / AI-only
+    # paths in pms_service). max_p is the cold-rated tubing pressure
+    # (highest point on the curve). Passing test_temp_c=38°C makes the
+    # §345.4.2(b) S_T/S correction collapse to 1.0, so the multiplier is
+    # a clean 1.5×. The over-rating guard is enforced by pt_lookup at
+    # request time; this hydrotest documents the class envelope.
+    from app.utils.engineering import HYDROTEST_TEST_TEMP_C
     max_p = max(pressures) if pressures else 0.0
-    rated_temps = [t for t, p in zip(temps, pressures) if (p or 0) > 0 and t is not None]
-    max_t = max(rated_temps) if rated_temps else (max(temps) if temps else 0)
     ht = hydrotest_pressure_corrected(
         design_pressure=max_p,
-        design_temp_c=max_t,
+        design_temp_c=HYDROTEST_TEST_TEMP_C,
         material_spec=material,
     )
     hydrotest = ht["pressure_barg"]
@@ -271,4 +272,5 @@ def build_tubing_pms(req: PMSRequest) -> PMSResponse:
         valves=valves,
         branch_charts=[],
         notes=notes,
+        generation_mode="tubing",
     )

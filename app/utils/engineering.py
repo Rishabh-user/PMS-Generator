@@ -240,26 +240,31 @@ def calculate_wall_thickness(
     mill_tolerance: float = MILL_TOLERANCE_FRACTION,
     coefficient_y: float = Y_COEFFICIENT,
 ) -> dict:
+    """Minimum required wall thickness per ASME B31.3 §304.1.2 Eq. 3a.
+
+        t       = (P × D) / (2 × (S × E × W + P × Y))   ← pressure thickness
+        t_m     = t + c                                  ← + corrosion allowance
+        t_min   = t_m / (1 − mill_tolerance)             ← + mill undertolerance
+
+    Returns a dict with each intermediate value so the frontend table
+    can show the breakdown (t / t_m / Calc Thk T columns). The selected
+    schedule + nominal wall come from `schedule_selector` — this helper
+    only computes the bare Eq. 3a value; it doesn't pick a schedule.
     """
-    Calculate minimum wall thickness per ASME B31.3 Eq. 3a.
-    t = (P × D) / (2 × (S × E × W + P × Y)) + c
-    where c = corrosion allowance, and add mill tolerance.
-    """
-    P = design_pressure_barg * 0.1  # Convert barg to MPa
+    P = design_pressure_barg * 0.1   # barg → MPa
     D = od_mm
     S = allowable_stress_mpa
     E = joint_factor
-    W = WELD_STRENGTH_W  # Weld strength reduction factor per ASME B31.3 Table 302.3.5
+    W = WELD_STRENGTH_W
     Y = coefficient_y
 
-    # Minimum required thickness
     t_calc = (P * D) / (2 * (S * E * W + P * Y))
     t_with_ca = t_calc + corrosion_allowance_mm
-    t_with_mill = t_with_ca / (1 - mill_tolerance)
+    t_min = t_with_ca / (1 - mill_tolerance)
 
     return {
         "t_calculated_mm": round(t_calc, 3),
-        "t_with_ca_mm": round(t_with_ca, 3),
-        "t_minimum_mm": round(t_with_mill, 3),
-        "formula": "ASME B31.3 Eq. 3a: t = (P×D)/(2×(S×E×W + P×Y)) + CA",
+        "t_with_ca_mm":    round(t_with_ca, 3),
+        "t_minimum_mm":    round(t_min, 3),
+        "formula":         "ASME B31.3 §304.1.2 Eq. 3a: t = (P×D)/(2×(S×E×W + P×Y)) + CA, then ÷(1−mill_tol)",
     }

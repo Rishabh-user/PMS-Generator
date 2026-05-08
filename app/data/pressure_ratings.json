@@ -1,0 +1,13 @@
+{
+  "ratings": [
+    { "label": "150#",   "letter": "A" },
+    { "label": "300#",   "letter": "B" },
+    { "label": "600#",   "letter": "D" },
+    { "label": "900#",   "letter": "E" },
+    { "label": "1500#",  "letter": "F" },
+    { "label": "2500#",  "letter": "G" },
+    { "label": "5000#",  "letter": "J" },
+    { "label": "10000#", "letter": "K" },
+    { "label": "Tubing", "letter": "T" }
+  ]
+}

@@ -22,7 +22,9 @@ import re
 
 from app.models.pms_models import PMSResponse
 from app.models.validation_models import ValidationFinding, ValidationReport
-from app.utils.engineering import calculate_wall_thickness
+from app.services import rating_lookup
+# calculate_wall_thickness removed in SCH/WT hard-wipe — the WT adequacy
+# check below is dead code; left as a no-op until the validator is reworked.
 from app.utils.engineering_constants import (
     JOINT_EFFICIENCY_E,
     MILL_TOLERANCE_FRACTION,
@@ -32,16 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 # ── Naming-convention rules (project internal) ────────────────────
-
-# PART 1 (rating letter) → ASME class. Verbatim from §5.5 of the project
-# Piping Material Specification (40801-SPE-80000-PP-SP-0001 Rev A0,
-# page 18). The spec deliberately skips letter C in PART 1 — C only
-# appears in PART 3 as a pressure suffix (325 Barg). Do NOT add C here.
-_RATING_LETTER = {
-    "A": "150#",  "B": "300#",  "D": "600#",   "E": "900#",
-    "F": "1500#", "G": "2500#", "J": "5000#",  "K": "10000#",
-    "T": "Tubing",
-}
+# PART 1 (rating letter) ↔ ASME class label is owned by `rating_lookup`,
+# which reads `app/data/pressure_ratings.json`. The spec deliberately
+# skips letter C in PART 1 — C only appears in PART 3 as a pressure
+# suffix (325 Barg). The data file already excludes C; nothing to do
+# here unless a new rating is added/removed.
 
 # PART 3 (optional identifier) → human-readable label.
 # Letters that appear after the material digits. Multiple letters can stack
@@ -96,7 +93,7 @@ def _parse_class_code(cls: str) -> dict:
 
 def _check_class_code_vs_rating(pms: PMSResponse) -> list[ValidationFinding]:
     parsed = _parse_class_code(pms.piping_class)
-    expected = _RATING_LETTER.get(parsed["letter"])
+    expected = rating_lookup.letter_to_label(parsed["letter"])
     if not expected:
         return [ValidationFinding(
             kind="warning",
@@ -104,20 +101,22 @@ def _check_class_code_vs_rating(pms: PMSResponse) -> list[ValidationFinding]:
             title="Class code does not match naming convention",
             detail=(
                 f"Class '{pms.piping_class}' — first character '{parsed['letter']}' "
-                "is not in the set A/B/D/E/F/G/J/K/T (per §5.5 of the PMS doc; "
-                "C is a PART-3 suffix, not a PART-1 rating)."
+                f"is not in the set {'/'.join(rating_lookup.all_letters())} "
+                "(per §5.5 of the PMS doc; C is a PART-3 suffix, not a "
+                "PART-1 rating)."
             ),
         )]
     if pms.rating and expected != pms.rating and expected != "Tubing":
+        pairs_str = ", ".join(f"{ltr}={lbl}" for ltr, lbl in rating_lookup.all_pairs())
         return [ValidationFinding(
             kind="error",
             rule="CLASS_CODE_VS_RATING",
             title=f"Class letter '{parsed['letter']}' implies {expected}, "
                   f"but rating reported is {pms.rating}",
             detail=(
-                f"Per naming convention: A=150#, B=300#, D=600#, E=900#, F=1500#, "
-                f"G=2500#, J=5000#, K=10000#. Class '{pms.piping_class}' starts with "
-                f"'{parsed['letter']}' → expected {expected} but PMS shows '{pms.rating}'."
+                f"Per naming convention: {pairs_str}. "
+                f"Class '{pms.piping_class}' starts with '{parsed['letter']}' "
+                f"→ expected {expected} but PMS shows '{pms.rating}'."
             ),
         )]
     return [ValidationFinding(
@@ -178,79 +177,14 @@ def _parse_ca_mm(ca: str) -> float:
 
 
 def _check_wt_pressure_adequacy(pms: PMSResponse) -> list[ValidationFinding]:
-    """For each pipe row, verify the selected WT is adequate for the class's
-    maximum P-T pressure per ASME B31.3 Eq. 3a. Uses the representative
-    ambient-temp stress (first P-T breakpoint, typically 38 °C)."""
-    findings: list[ValidationFinding] = []
+    """WT-adequacy check removed in the SCH/WT hard-wipe.
 
-    pt = pms.pressure_temperature
-    pressures = pt.pressures or []
-    temps = pt.temperatures or []
-    if not pressures or not temps:
-        return [ValidationFinding(
-            kind="warning",
-            rule="WT_PRESSURE_ADEQUACY",
-            title="No P-T data available to verify wall-thickness adequacy",
-            detail="Skipping ASME B31.3 Eq. 3a check.",
-        )]
-
-    p_max_barg = max(pressures)
-    t_ref_c = temps[0]
-    material_spec = (
-        pms.pipe_data[0].material_spec if pms.pipe_data else pms.material
-    )
-    stress = get_allowable_stress(material_spec or "", t_ref_c)
-    s_mpa = stress["S_mpa"]
-    ca_mm = _parse_ca_mm(pms.corrosion_allowance)
-
-    for p in pms.pipe_data:
-        if not p.od_mm:
-            continue
-        calc = calculate_wall_thickness(
-            od_mm=p.od_mm,
-            design_pressure_barg=p_max_barg,
-            allowable_stress_mpa=s_mpa,
-            joint_factor=JOINT_EFFICIENCY_E,
-            corrosion_allowance_mm=ca_mm,
-        )
-        t_min_required = calc["t_minimum_mm"]
-        # NOTE: B31.3 Eq. 3a shortfall warnings have been suppressed at the
-        # owner's direction — many genuine large-bore / high-pressure /
-        # high-CA combinations exceed every standard schedule's nominal wall
-        # (e.g. F-class 16"/20"/24" at 1500# with 6 mm CA). The thickness
-        # service still computes margins for the Wall Thickness table; this
-        # validator no longer emits the cell-level "Upgrade schedule" error.
-        # Re-enable by uncommenting the block below if a future review
-        # decides to surface the signal again.
-        if p.wall_thickness_mm + 0.001 < t_min_required:
-            # shortfall = round(t_min_required - p.wall_thickness_mm, 3)
-            # findings.append(ValidationFinding(
-            #     kind="error",
-            #     rule="WT_PRESSURE_ADEQUACY",
-            #     title=f"{p.size_inch}\": WT {p.wall_thickness_mm} mm below B31.3 Eq. 3a minimum {t_min_required} mm",
-            #     detail=(
-            #         f"At {p_max_barg} barg / {t_ref_c} °C with S={stress['S_psi']} psi, "
-            #         f"c={ca_mm} mm, mill tol 12.5%: required t_min = {t_min_required} mm. "
-            #         f"PMS schedule {p.schedule} gives {p.wall_thickness_mm} mm — "
-            #         f"short by {shortfall} mm. Upgrade schedule."
-            #     ),
-            #     size_inch=p.size_inch,
-            # ))
-            pass
-        else:
-            margin = round(p.wall_thickness_mm - t_min_required, 3)
-            findings.append(ValidationFinding(
-                kind="ok",
-                rule="WT_PRESSURE_ADEQUACY",
-                title=f"{p.size_inch}\": WT adequate for pressure per B31.3 Eq. 3a",
-                detail=(
-                    f"t_req={t_min_required} mm at P_max={p_max_barg} barg, "
-                    f"S={stress['S_psi']} psi. PMS WT={p.wall_thickness_mm} mm "
-                    f"(margin {margin} mm)."
-                ),
-                size_inch=p.size_inch,
-            ))
-    return findings
+    The check called `calculate_wall_thickness` (B31.3 §304.1.2 Eq. 3a),
+    which was deleted along with the rest of the SCH/WT logic. Returning
+    an empty list here keeps the validator's other checks intact. If WT
+    validation is reintroduced, rebuild the helper and uncomment the
+    full implementation in git history."""
+    return []
 
 
 # ── VDS code structure — strict letter vocabulary ─────────────────

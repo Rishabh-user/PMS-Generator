@@ -12,7 +12,11 @@ import logging
 import anthropic
 
 from app.config import settings
-from app.utils.engineering_constants import AI_MAX_TOKENS, MILL_TOLERANCE_PERCENT
+from app.utils.engineering_constants import (
+    AI_MAX_TOKENS,
+    ASME_PIPE_OD,
+    MILL_TOLERANCE_PERCENT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,27 @@ class AIGenerationError(RuntimeError):
     describes the actual failure mode (credits, rate limit, auth, etc.) so
     the frontend can show something useful instead of a generic 'check your
     API key'."""
+
+
+# Build prompt fragments from the canonical pipe-dimensions JSON so the AI
+# always sees values consistent with `app/data/standards/pipe_dimensions.json`.
+# Keeps the prompt narrative fixed but lets the data float with the source
+# of truth — when an engineer adds NPS 42" or fixes an OD rounding, the
+# prompt updates on the next module reload, no string surgery required.
+def _format_od_inline(max_nps_inch: float | None = None) -> str:
+    """Render ASME_PIPE_OD as a prompt-friendly inline list:
+    '0.5"=21.3, 0.75"=26.7, 1"=33.4, ...'. If `max_nps_inch` is given,
+    only sizes ≤ that NPS are included (e.g. CPVC tops out at 8")."""
+    items = ASME_PIPE_OD.items()
+    if max_nps_inch is not None:
+        items = [(n, od) for n, od in items if float(n) <= max_nps_inch]
+    return ", ".join(f'{nps}"={od}' for nps, od in items)
+
+
+_ASME_OD_FOR_CPVC = _format_od_inline(max_nps_inch=8)
+"""ASME B36.10M (= IPS) ODs in the size range CPVC pipe uses (0.5"-8").
+Spliced into the CPVC section of SYSTEM_PROMPT so the prompt agrees with
+pipe_dimensions.json without needing the engineer to update both."""
 
 SYSTEM_PROMPT = """You are a senior piping materials engineer with deep expertise in:
 - ASME B31.3 (Process Piping), B36.10M (Welded/Seamless Wrought Steel Pipe), B36.19M (Stainless Steel Pipe)
@@ -108,19 +133,35 @@ Examples:
 === PIPE SIZES — STANDARD NPS RANGES ===
 Generate ALL standard NPS sizes for the class. Typical ranges:
   A-series 150# CS (1/1N): 0.5" to 36" (22 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36)
-  A-series 150# LTCS (1L/1LN): 0.5" to 30" (20 sizes)
-  A-series 150# SS/DSS/SDSS (10/20/25): 0.5" to 24-32" (17-21 sizes)
-  A-series 150# 2-series (A2/A2N): 0.5" to 30" (20 sizes)
-  B-series 300#: 0.5" to 24" (17 sizes) — for DSS/SDSS up to 32" (21 sizes)
-  D-series 600#: 0.5" to 24" (17 sizes)
-  E-series 900#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
-  F-series 1500#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes)
-  G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14)
+  A-series 150# LTCS (1L/1LN): 0.5" to 36" (22 sizes — extended for project-wide NPS 36 support)
+  A-series 150# SS/DSS/SDSS (10/20/25): 0.5" to 36" (22 sizes — extended for project-wide NPS 36 support)
+  A-series 150# 2-series (A2/A2N): 0.5" to 36" (22 sizes — extended for project-wide NPS 36 support)
+  B-series 300# (all materials): 0.5" to 36" (22 sizes — extended for project-wide NPS 36 support)
+  D-series 600# (all materials): 0.5" to 36" (22 sizes — extended for project-wide NPS 36 support)
+  E-series 900#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes). NPS 26"+ NOT emitted at 900# — wall would exceed buildable plate thickness.
+  F-series 1500#: 0.5" to 24" (17 sizes) — 2N/2LN start at 1" (15 sizes). NPS 26"+ NOT emitted at 1500#.
+  G-series 2500#: 0.5" to 24" (17 sizes) — G10: to 12" (11), G20: to 18" (14). NPS 26"+ NOT emitted at 2500#.
   J-series 5000#  / K-series 10000# (high-pressure ratings reserved in §5.5):
     No J* / K* class exists in the current catalogue. If the user requests
     one, follow F-series sizing (0.5"-24", 17 sizes) as the safe default
     and explicitly note the assumption in the response.
-  GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 24" (17 sizes)
+  GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 36" (22 sizes — galv/epoxy ≤ 600# extended for project-wide NPS 36 support)
+
+=== NPS 36 POLICY (project, May 2026) ===
+NPS 36 is supported for ratings ≤ 600# (A-series, B-series, D-series in §5.5).
+The OD comes from app/data/standards/pipe_dimensions.json (914.4 mm).
+
+For NPS 26, 28, 30, 32, 36 sizes where a class's per-class schedule rules
+below DON'T list a specific schedule, emit `schedule = "-"`. The post-
+processor (`pipe_data.correct_pipe_data`) will compute the wall thickness
+via ASME B31.3 §304.1.2 Eq. 3a using the actual design pressure /
+temperature / material / CA, and select the smallest standard B36.10M
+or B36.19M schedule whose nominal wall meets that minimum. Emitting a
+specific schedule is a HINT (project floor — the post-processor takes
+MAX(Eq. 3a, floor)); emitting "-" lets the calculation drive entirely.
+
+For E/F/G series (≥ 900#) and J/K series (≥ 5000#): NPS 36 is NOT in
+range. Heavy-wall large-bore pipe at high rating is rarely buildable.
   CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30" — do NOT emit those sizes)
   Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
   Titanium (A70): 0.5" to 6" ONLY (8 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6) — do NOT emit 8"+
@@ -132,100 +173,28 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
 
 Standard NPS sequence: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36
 
-=== PIPE SCHEDULES — RULES BY MATERIAL FAMILY AND RATING ===
-Use ASME B36.10M for CS/LTCS/GALV, ASME B36.19M for SS/DSS/SDSS.
-Wall thicknesses must be EXACT standard values from the appropriate ASME table.
+=== PIPE SCHEDULE & WALL THICKNESS — NO POLICY ENGINE ===
+The post-AI schedule/wall-thickness correction layer was REMOVED in the
+project's SCH/WT hard-wipe. There is currently no engineering layer
+that validates, calculates, or replaces what you emit for `schedule` or
+`wall_thickness_mm`.
 
-All per-class schedule rules below are verbatim from the project Pipe Wall
-Thickness Calculation workbook (20171-SPOG-80000-PP-CL-0001 Rev 03) —
-specifically the "Selected Thickness" lookup table (cols N/O/P) on each
-class sheet. Follow them EXACTLY — do not substitute "standard" ASME
-schedules by interpolation, and do not change a schedule because it looks
-unusual. These values reflect specific project engineering choices
-incorporating corrosion allowance, material limits, and fabrication
-standards.
+Emit your best guess based on:
+  • the rating class and material family
+  • the standards you know (ASME B36.10M for CS/LTCS/GALV pipe, B36.19M
+    for SS/DSS/SDSS, plus the standard-specific tables for CuNi EEMUA
+    234, Copper ASTM B42, GRE manufacturer std, CPVC ASTM F441, and
+    Tubing ASTM A269 elsewhere in this prompt)
+  • whatever the user-supplied design pressure / temperature / material
+    suggest
 
-CS 1-series (A1/B1/D1/E1/F1/G1 and NACE variants — N/non-N identical schedule per Excel):
-  A1  / A1N  (150#):  0.5-1.5"→160 | 2-6"→80 | 8-28"→STD | 30-36"→XS
-  B1  / B1N  (300#):  0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
-  D1  / D1N  (600#):  0.5-2"→160 | 3-24"→80
-  E1  / E1N  (900#):  0.5-3"→160 | 4-24"→120
-  F1  / F1N  (1500#): 0.5-1.5"→XXS | 2-6"→160 | 8"→XXS | 10"→140 | 12-14"→160 | 16"→140 | 18"→160 | 20"→140 | 22"→160 | 24"→140
-  G1  / G1N  (2500#): 0.5-1.5"→XXS | 2"→"-" | 3"→XXS | 4-24"→"-" (calc WT)
+The values you emit will be used as-is. The OD column is still
+post-corrected against `pipe_dimensions.json` for ASME-rated classes;
+schedule and wall_thickness_mm pass through untouched.
 
-LTCS 1L-series and 1LN-series (A1L–G1L, A1LN–G1LN — L/LN identical schedule per Excel):
-  A1L  / A1LN  (150#):  0.5-1.5"→160 | 2-28"→XS | 30"→30
-  B1L  / B1LN  (300#):  0.5-1.5"→160 | 2-6"→XS | 8-20"→40 | 22"→"-" | 24"→40
-  D1L  / D1LN  (600#):  0.5-2"→160 | 3-8"→XS | 10-24"→80
-  E1L  / E1LN  (900#):  0.5-1.5"→XXS | 2-3"→160 | 4-24"→120
-  F1L  / F1LN  (1500#): 0.5-8"→XXS | 10-24"→"-" (calc WT)
-  G1L  / G1LN  (2500#): 0.5-1"→XXS | 1.5-24"→"-" (calc WT)
-
-CS 2-series NACE (heavy-wall, 6mm CA — A2N–G2N) and LTCS 2LN-series (A2LN–G2LN):
-  A2N  (150#):  0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20-24"→XS
-  A2LN (150#):  0.5-1.5"→XXS | 2"→160 | 3-28"→XS | 30"→30
-  B2N  / B2LN  (300#):  0.5-1.5"→XXS | 2-3"→160 | 4"→120 | 6-10"→XS | 12-24"→60
-  D2N  / D2LN  (600#):  0.5-0.75"→"-" | 1-2"→XXS | 3-4"→160 | 6-8"→120 | 10-24"→100
-  E2N  / E2LN  (900#):  starts at 1" | 1-4"→XXS | 6"→160 | 8-16"→140 | 18-24"→120
-  F2N  / F2LN  (1500#): starts at 3" | 3-6"→XXS | 8-10"→"-" | 12-24"→160
-  G2N  / G2LN  (2500#): starts at 1" | 1-24"→"-" (all calc WT)
-
-SS 316L 10-series — A10/A10N are pure B36.19M; B10/D10/E10/F10/G10 are
-MIXED ("ASME B 36.19M / B 36.10M" pipe_code — seamless small-bore uses
-B36.19M S-schedules, welded large-bore uses B36.10M non-S schedules):
-  A10  (150#, 17 sizes 0.5"-24"): 0.5-0.75"→160 | 1-2"→80S | 3-20"→40S | 22"→STD | 24"→40S
-  A10N (150#, 17 sizes 0.5"-24"): same as A10
-  B10  (300#, 17 sizes 0.5"-24"): 0.5-1.5"→160 | 2"→80S | 3-18"→40S | 20"→80S | 22"→XS | 24"→80S
-  B10N (300#, 17 sizes 0.5"-24"): same as B10
-  D10  (600#, 17 sizes 0.5"-24"): 0.5-1.5"→160 | 2-10"→80S | 12-20"→60 | 22"→"-" (calc WT) | 24"→60
-  D10N (600#, 17 sizes 0.5"-24"): same as D10
-  E10  (900#, 17 sizes 0.5"-24"): 0.5-1.5"→160 | 2-6"→80S | 8-24"→100
-  E10N (900#, 17 sizes 0.5"-24"): same as E10
-  F10  (1500#, 17 sizes 0.5"-24"): 0.5-24"→160 (uniform SCH 160 across ALL sizes)
-  F10N (1500#, 17 sizes 0.5"-24"): same as F10
-  G10  (2500#, 11 sizes 0.5"-12" ONLY — do NOT emit 14"+): 0.5-3"→XXS | 4-12"→"-" (calc WT)
-  G10N (2500#, 11 sizes 0.5"-12" ONLY): same as G10
-
-DSS 20-series (UNS S31803, use "S" suffix):
-  A20  (150#): 0.5-2"→80S | 3-24"→10S | 26-28"→10 | 30"→10S | 32"→10
-  A20N (150#): same as A20
-  B20  (300#): 0.5-2"→80S | 3-10"→10S | 12"→20 | 14-16"→10 | 18"→20 | 20"→40S | 22"→STD | 24"→40S | 26"→STD | 28-32"→XS
-  B20N (300#): same as B20
-  D20  (600#): 0.5-2"→80S | 3-12"→40S | 14"→40 | 16"→80S | 18-20"→40 | 22"→"-" | 24"→40
-  D20N (600#): same as D20
-  E20  (900#): 0.5-2"→80S | 3-6"→40S | 8"→60 | 10"→80S | 12-24"→60
-  E20N (900#): same as E20
-  F20  (1500#): 0.5-4"→80S | 6"→120 | 8"→100 | 10-24"→120
-  F20N (1500#): same as F20
-  G20  (2500#): 0.5-1"→80S | 1.5-10"→160 | 12"→"-" (calc WT) | 14"→120
-  G20N (2500#): same as G20
-
-SDSS 25-series (UNS S32750) — A25/A25N pure B36.19M; B25/D25/E25/F25 +
-their N variants are MIXED ("ASME B 36.19M / B 36.10M"); G25/G25N pure B36.10M:
-  A25  (150#, 21 sizes 0.5"-32"): 0.5-2"→80S | 3-24"→10S | 26-28"→10 | 30"→10S | 32"→10
-  A25N (150#, 21 sizes 0.5"-32"): same as A25
-  B25  (300#, 21 sizes 0.5"-32"): 0.5-2"→80S | 3-16"→10S | 18-22"→10 | 24"→40S | 26-32"→STD
-  B25N (300#, 21 sizes 0.5"-32"): same as B25
-  D25  (600#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3-6"→40S | 8-10"→20 | 12-16"→40S | 18-20"→80S | 22"→XS | 24"→30
-  D25N (600#, 17 sizes 0.5"-24"): same as D25
-  E25  (900#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3-10"→40S | 12-14"→80S | 16-24"→60
-  E25N (900#, 17 sizes 0.5"-24"): same as E25
-  F25  (1500#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3"→40S | 4-8"→80S | 10-14"→80 | 16-24"→100
-  F25N (1500#, 17 sizes 0.5"-24"): same as F25
-  G25  (2500#, 17 sizes 0.5"-24"): 0.5-2"→80S | 3"→160 | 4"→120 | 6"→160 | 8-20"→140 | 22-24"→160
-  G25N (2500#, 17 sizes 0.5"-24"): same as G25
-
-GALV / Epoxy-coated classes:
-  A3 (150# GALV screwed):           0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD
-  A4 (150# GALV 1.5mm CA screwed):  0.5"→XXS | 0.75-1.5"→160 | 2-6"→80 | 8-24"→STD
-  A5 (150# GALV 6mm CA):            0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20-24"→XS
-  A6 (150# CS Internally Epoxy Coated, 6mm CA):
-                                    0.5-1.5"→XXS | 2"→160 | 3-6"→80 | 8"→60 | 10-16"→40 | 18"→30 | 20-24"→XS
-  B4 (300# GALV):                   0.5-1.5"→160 | 2-6"→80 | 8-20"→40 | 22"→"-" | 24"→40
-  D4 (600# GALV):                   0.5-2"→160 | 3-24"→80
-
-Titanium (A70, 150# — pipe_code = "ASME B 36.10M" per spec):
-  A70 (150#): 0.5-3"→40 | 4-6"→10   (size range 0.5"-6" ONLY — do NOT emit 8"+)
+If you can't confidently pick a schedule for a row, emit
+`schedule = "-"` and `wall_thickness_mm = 0` rather than guessing
+wildly — leaving them blank is safer than a wrong number.
 
 CuNi 30-series (EEMUA 234) — USE THESE EXACT ODs AND WTs (Pipe Class Sheet A30):
   A30: No ASME schedule — uses EEMUA 234 wall thickness tables. 17 sizes total.
@@ -325,8 +294,8 @@ Use these exact values:
 CPVC (A60) — ASTM F441 (uses Iron Pipe Size ODs — SAME as ASME B36.10M):
   Sizes: 0.5"-8" (typical)
   Schedule: SCH 80 for all sizes (per ASTM F441)
-  OD per ASME B36.10M (IPS): 0.5"=21.3, 0.75"=26.7, 1"=33.4, 1.5"=48.3, 2"=60.3,
-                              2.5"=73.0, 3"=88.9, 4"=114.3, 6"=168.3, 8"=219.1
+  OD per ASME B36.10M (IPS) — sourced from pipe_dimensions.json:
+    {_ASME_OD_FOR_CPVC}
 
 Tubing (T80/T90) — OD EQUALS NOMINAL SIZE × 25.4:
   0.5" tube: OD = 12.7 mm
@@ -1016,7 +985,7 @@ IMPORTANT:
     "branch_chart": "Ref. APPENDIX-1, Chart 1",
     "hydrotest_pressure": "",
     "pipe_data": [
-        {{"size_inch": "0.5", "od_mm": 21.3, "schedule": "SCH 160", "wall_thickness_mm": 7.47,
+        {{"size_inch": "0.5", "od_mm": {ASME_PIPE_OD["0.5"]}, "schedule": "SCH 160", "wall_thickness_mm": 4.78,
           "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B", "ends": "BE",
           "id_mm": 0}},
         ...for ALL sizes in the class...

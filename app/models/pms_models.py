@@ -11,6 +11,21 @@ class PMSRequest(BaseModel):
         description="Service description",
         examples=["Flare, Corrosive HC service (Low Temp)"],
     )
+    # Optional design conditions — populated by the frontend when the
+    # user is generating a CUSTOM (uncatalogued) class via the standards-
+    # derivation path. Catalogued classes ignore these (they use the
+    # catalogue's max P-T as the design point); derived classes use them
+    # to drive the hydrotest §345.4.2(b) correction. None = "use the
+    # P-T table's max ceiling as the design point" (legacy behaviour).
+    design_pressure_barg: Optional[float] = Field(
+        default=None,
+        description="Design pressure in barg. For custom classes only — "
+                    "catalogued classes derive this from the P-T table.",
+    )
+    design_temp_c: Optional[float] = Field(
+        default=None,
+        description="Design temperature in °C. For custom classes only.",
+    )
 
 
 class BulkDownloadRequest(BaseModel):
@@ -187,6 +202,21 @@ class PMSResponse(BaseModel):
     valves: ValveData = Field(default_factory=ValveData)
     branch_charts: list[BranchChart] = Field(default_factory=list, description="Branch connection charts (Appendix-1)")
     notes: list[str] = Field(default_factory=list)
+    # How this PMS was produced — used by the admin DB browser to badge
+    # rows that didn't come from the curated catalogue. Values:
+    #   • "catalogue"          — looked up from pipe_classes.json (default)
+    #   • "standards_derived"  — built from §5.5 + ASME B16.5 indexed data
+    #                            (Slice 1 fast path for uncatalogued classes)
+    #   • "ai_only"            — §5.5 class code valid but no indexed
+    #                            standards data; AI generated everything
+    #                            from training knowledge with user-supplied
+    #                            design point. Output NOT standards-verified.
+    #   • "tubing"             — deterministic builder for T80*/T90* classes
+    generation_mode: str = Field(
+        default="catalogue",
+        description="How this PMS was produced — catalogue / standards_derived / "
+                    "ai_only / tubing. Used by the admin DB browser.",
+    )
 
 
 class PMSListItem(BaseModel):

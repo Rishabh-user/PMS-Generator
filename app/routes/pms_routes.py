@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.models.pms_models import PMSRequest, PMSResponse, BulkDownloadRequest
-from app.models.thickness_models import ComputeThicknessRequest, ComputeThicknessResponse
+# thickness models removed in the SCH/WT hard-wipe — no replacement
 from app.models.pms_agent_models import (
     PMSAgentRequest,
     PMSAgentResponse,
@@ -21,7 +21,7 @@ from app.models.pms_agent_models import (
 )
 from app.models.validation_models import ValidationReport
 from app.services.pms_service import generate_excel, generate_pms, regenerate_pms, clear_cache
-from app.services.thickness_service import compute_thickness
+# thickness_service deleted in the SCH/WT hard-wipe
 from app.services.pms_agent_service import chat as pms_agent_chat
 from app.services.validation_service import validate as validate_pms
 from app.services.branch_chart_service import get_all_charts, get_branch_chart
@@ -56,6 +56,32 @@ async def list_services():
     return SERVICE_OPTIONS
 
 
+@router.get("/options/ratings", response_model=list[str])
+async def list_options_ratings():
+    """Pressure-rating dropdown options. Sourced from
+    `app/data/pressure_ratings.json` via `rating_lookup.all_labels()` —
+    single source of truth for §5.5 PART-1 ratings."""
+    from app.services import rating_lookup
+    return rating_lookup.all_labels()
+
+
+@router.get("/options/materials", response_model=list[str])
+async def list_options_materials():
+    """Material dropdown options. Sourced from `app/data/spec_options.py`,
+    matching the §5.5 PART-2 material families."""
+    from app.data.spec_options import SPEC_MATERIALS
+    return SPEC_MATERIALS
+
+
+@router.get("/options/corrosion-allowances", response_model=list[str])
+async def list_options_corrosion_allowances():
+    """Corrosion-allowance dropdown options. Standard increments per project
+    convention; the §5.5 material digit is determined by (material, CA)
+    pair at derivation time."""
+    from app.data.spec_options import SPEC_CORROSION_ALLOWANCES
+    return SPEC_CORROSION_ALLOWANCES
+
+
 @router.get("/pipe-classes/codes", response_model=list[str])
 async def list_pipe_class_codes():
     return data_service.get_available_classes()
@@ -67,6 +93,123 @@ async def api_index_data():
     return data_service.get_index_data()
 
 
+@router.post("/preview-custom-class")
+async def api_preview_custom_class(payload: dict):
+    """Frontend opt-in flow for uncatalogued classes.
+
+    Body: `{rating, material, corrosion_allowance, service?}`.
+
+    Returns the *mode* the (rating, material, CA) combination resolves
+    to. The frontend picks a panel UI based on the mode:
+
+      • "catalogued"        → fast path; frontend should use /preview-pms
+      • "standards_derived" → §5.5 + ASME B16.5 fully cover this combo
+                              (Slice 1 fast path, Group 1.1 today).
+                              Preview includes the derived P-T table.
+      • "ai_only"           → §5.5 class code is valid, but the project
+                              has no indexed standards data for this
+                              rating/material/group yet (e.g. 5000#
+                              wellhead service in API 6A territory, or
+                              SS316L pre-Slice-2). The AI generates
+                              everything from its own knowledge. Preview
+                              has no P-T (the AI fills it in at
+                              generation time). Frontend MUST collect
+                              explicit design_pressure_barg + design_temp_c
+                              from the user — those flow into the
+                              §345.4.2(b) hydrotest correction since
+                              there's no rated ceiling to fall back on.
+      • "unsupported"       → §5.5 itself can't make sense of the
+                              inputs (e.g. material/CA combo not in
+                              the digit table). Frontend shows the
+                              reason; user fixes the inputs.
+    """
+    from app.services.class_derivation import (
+        classify_combination,
+        MODE_CATALOGUED, MODE_STANDARDS, MODE_AI_ONLY, MODE_UNSUPPORTED,
+        derive_synthetic_entry,
+    )
+
+    rating = payload.get("rating", "")
+    material = payload.get("material", "")
+    ca = payload.get("corrosion_allowance", "")
+    service = payload.get("service", "")
+
+    classification = classify_combination(rating, material, ca)
+    mode = classification["mode"]
+    class_code = classification.get("class_code")
+    reason = classification["reason"]
+
+    # MODE_UNSUPPORTED — frontend shows the message and the user fixes
+    # the inputs. No `supported` field for backwards compat: instead
+    # return mode='unsupported' and the frontend reads that.
+    if mode == MODE_UNSUPPORTED:
+        return {
+            "mode":         MODE_UNSUPPORTED,
+            "class_code":   None,
+            "reason":       reason,
+            "in_catalogue": False,
+            "preview":      None,
+        }
+
+    # If the §5.5-derived class code already exists in the catalogue,
+    # short-circuit to MODE_CATALOGUED so the frontend uses /preview-pms.
+    if data_service.find_entry(class_code) is not None:
+        return {
+            "mode":         MODE_CATALOGUED,
+            "class_code":   class_code,
+            "reason":       f"Class {class_code} already exists in the "
+                            f"catalogue — no derivation needed.",
+            "in_catalogue": True,
+            "preview":      None,
+        }
+
+    # MODE_STANDARDS — full standards-derived preview (Slice 1 fast path).
+    if mode == MODE_STANDARDS:
+        synth = derive_synthetic_entry(rating, material, ca, service)
+        return {
+            "mode":         MODE_STANDARDS,
+            "class_code":   class_code,
+            "reason":       reason,
+            "in_catalogue": False,
+            "preview": {
+                "piping_class":        synth["piping_class"],
+                "rating":              synth["rating"],
+                "material":            synth["material"],
+                "corrosion_allowance": synth["corrosion_allowance"],
+                "service":             synth["service"],
+                "pressure_temperature": synth["pressure_temperature"],
+                "_derived":            True,
+                "_ai_only":            False,
+            },
+        }
+
+    # MODE_AI_ONLY — class code is valid per §5.5 but there's no indexed
+    # standards data. The frontend renders a different (warning-coloured)
+    # panel and requires the user to supply explicit design P/T before
+    # opting in. There's no P-T preview to show — the AI builds it
+    # from scratch at generation time.
+    return {
+        "mode":         MODE_AI_ONLY,
+        "class_code":   class_code,
+        "reason":       reason,
+        "in_catalogue": False,
+        "preview": {
+            "piping_class":        class_code,
+            "rating":              rating,
+            "material":            material,
+            "corrosion_allowance": ca,
+            "service":             service or "Generic — AI-only",
+            "pressure_temperature": {
+                "temperatures": [],
+                "pressures":    [],
+                "temp_labels":  [],
+            },
+            "_derived":            True,
+            "_ai_only":            True,
+        },
+    }
+
+
 @router.post("/preview-pms")
 async def api_preview_pms(req: PMSRequest):
     """Step 1: Return class metadata + P-T data from JSON only (no AI call).
@@ -75,36 +218,112 @@ async def api_preview_pms(req: PMSRequest):
     form: the highest rated temperature as the default design T, and the P-T
     table value interpolated at that temperature as the default design P. This
     lets the frontend pre-fill the form without duplicating interpolation logic.
+
+    Resolution order matches `_generate_from_ai` exactly so the preview and
+    the actual generation can never disagree about which path will run:
+
+      1. Catalogue lookup (fast path — 91 curated classes).
+      2. Standards-derivation (Slice 1: §5.5 + ASME B16.5 Group 1.1).
+      3. AI-only synthetic entry (§5.5 class code valid but no indexed
+         standards data — preview shows empty P-T because the AI
+         generates it at request time; `hydrotest` is computed from
+         the user-supplied design P/T, which the frontend's AI-only
+         panel makes mandatory).
     """
     entry = data_service.find_entry(req.piping_class)
+
+    # Catalogue miss → try derivation, same fallback chain as
+    # `pms_service._generate_from_ai`. We do this in the route handler
+    # rather than calling pms_service so the preview stays AI-free.
     if not entry:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Piping class '{req.piping_class}' not found in database.",
+        from app.services.class_derivation import (
+            derive_synthetic_entry, derive_synthetic_entry_ai_only,
+            rating_from_class_code, DerivationError,
         )
+        rating = rating_from_class_code(req.piping_class)
+        if not rating:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Piping class '{req.piping_class}' not found in catalogue, "
+                    f"and the class code doesn't start with a §5.5 rating "
+                    f"letter (A/B/D/E/F/G/J/K/T) so it can't be derived."
+                ),
+            )
+        try:
+            entry = derive_synthetic_entry(
+                rating=rating,
+                material=req.material,
+                corrosion_allowance=req.corrosion_allowance,
+                service=req.service,
+            )
+        except DerivationError:
+            # No standards data for this material/rating — fall back to
+            # AI-only mode. We REQUIRE the user to have supplied design
+            # P/T in the request (the frontend's AI-only panel enforces
+            # this); without it, hydrotest can't be computed.
+            if req.design_pressure_barg is None or req.design_temp_c is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Piping class '{req.piping_class}' has no indexed "
+                        f"standards data. AI-only generation requires "
+                        f"explicit design_pressure_barg and design_temp_c "
+                        f"in the request; the Custom-Class panel gathers "
+                        f"these from the user."
+                    ),
+                )
+            entry = derive_synthetic_entry_ai_only(
+                rating=rating,
+                material=req.material,
+                corrosion_allowance=req.corrosion_allowance,
+                service=req.service,
+            )
     pt = entry.get("pressure_temperature", {})
     pressures = pt.get("pressures", [])
     temperatures = pt.get("temperatures", [])
-    hydrotest = str(round(max(pressures) * HYDROTEST_FACTOR, 2)) if pressures else ""
+    is_ai_only = bool(entry.get("_ai_only"))
 
-    # Recommended defaults for the Design Conditions form
-    default_design_temp_c = temperatures[-1] if temperatures else None
-    default_design_pressure_barg = (
-        interpolate_pressure_at_temp(temperatures, pressures, default_design_temp_c)
-        if default_design_temp_c is not None
-        else None
-    )
-    # MDMT: parse the first signed integer from the first temp label
-    # (labels like "-29 to 38" → -29), falling back to the first numeric
-    # breakpoint if no label is available.
-    temp_labels = pt.get("temp_labels", [])
-    default_mdmt_c: float | None = None
-    if temp_labels:
-        match = re.search(r"-?\d+", temp_labels[0])
-        if match:
-            default_mdmt_c = float(match.group())
-    if default_mdmt_c is None and temperatures:
-        default_mdmt_c = temperatures[0]
+    # Hydrotest preview: catalogue / standards-derived classes use the
+    # P-T table ceiling × 1.5 (matches the simple §345.4.2(a) formula —
+    # the full §345.4.2(b) correction happens at generation time).
+    # AI-only classes have no P-T to multiply by, so we use the user's
+    # design pressure × 1.5 as the rough preview value.
+    if is_ai_only:
+        hydrotest = (
+            str(round((req.design_pressure_barg or 0) * HYDROTEST_FACTOR, 2))
+            if req.design_pressure_barg
+            else ""
+        )
+    else:
+        hydrotest = str(round(max(pressures) * HYDROTEST_FACTOR, 2)) if pressures else ""
+
+    # Recommended defaults for the Design Conditions form. AI-only mode
+    # has no rated table to draw from, so we echo back whatever the user
+    # supplied (or None if not supplied — the frontend already requires
+    # these in AI-only mode).
+    if is_ai_only:
+        default_design_temp_c = req.design_temp_c
+        default_design_pressure_barg = req.design_pressure_barg
+        default_mdmt_c = None      # AI-only doesn't have a rated cold endpoint
+    else:
+        default_design_temp_c = temperatures[-1] if temperatures else None
+        default_design_pressure_barg = (
+            interpolate_pressure_at_temp(temperatures, pressures, default_design_temp_c)
+            if default_design_temp_c is not None
+            else None
+        )
+        # MDMT: parse the first signed integer from the first temp label
+        # (labels like "-29 to 38" → -29), falling back to the first numeric
+        # breakpoint if no label is available.
+        temp_labels = pt.get("temp_labels", [])
+        default_mdmt_c: float | None = None
+        if temp_labels:
+            match = re.search(r"-?\d+", temp_labels[0])
+            if match:
+                default_mdmt_c = float(match.group())
+        if default_mdmt_c is None and temperatures:
+            default_mdmt_c = temperatures[0]
 
     return {
         "piping_class": req.piping_class,
@@ -117,6 +336,11 @@ async def api_preview_pms(req: PMSRequest):
         "default_design_pressure_barg": default_design_pressure_barg,
         "default_design_temp_c": default_design_temp_c,
         "default_mdmt_c": default_mdmt_c,
+        # Surface the generation mode so the frontend banner / preview
+        # card can show a "Custom — derived" or "Custom — AI-only" tag
+        # rather than masquerading as a normal catalogued class.
+        "is_derived": bool(entry.get("_derived")),
+        "is_ai_only": is_ai_only,
     }
 
 
@@ -259,6 +483,23 @@ async def api_branch_chart(chart_id: str):
 @router.get("/engineering-constants")
 async def api_engineering_constants():
     """Return all engineering constants so the frontend uses the same values as backend."""
+    # Local import keeps the global imports in this module focused; the OD
+    # table is sourced from `app/data/standards/pipe_dimensions.json` so the
+    # frontend mirrors the same authoritative values used for the post-AI
+    # correction layer.
+    from app.utils.engineering_constants import ASME_PIPE_OD
+    # Wall-thickness table for the live frontend Wall Thickness Calculation
+    # Table — the JS picks the smallest schedule meeting MAX(Eq. 3a, project
+    # floor), so it needs both the WT data and the project-floor rules the
+    # backend uses.
+    import json as _json
+    from pathlib import Path as _Path
+    _pd_path = _Path(__file__).resolve().parents[1] / "data" / "standards" / "pipe_dimensions.json"
+    _pd = _json.loads(_pd_path.read_text(encoding="utf-8"))
+    asme_wall_thicknesses = _pd.get("wall_thicknesses_mm") or {}
+    # Project-conventional schedule floors per (class, NPS-range)
+    from app.services import schedule_floor_lookup
+    project_schedule_floors = schedule_floor_lookup.floor_lookup_dict()
     return {
         "hydrotest_factor": HYDROTEST_FACTOR,
         "operating_pressure_factor": OPERATING_PRESSURE_FACTOR,
@@ -271,6 +512,9 @@ async def api_engineering_constants():
         "small_bore_cutoff_nps": SMALL_BORE_CUTOFF_NPS,
         "default_corrosion_allowance": DEFAULT_CORROSION_ALLOWANCE,
         "default_service": DEFAULT_SERVICE,
+        "asme_pipe_od": ASME_PIPE_OD,
+        "asme_wall_thicknesses_mm": asme_wall_thicknesses,
+        "project_schedule_floors": project_schedule_floors,
         "stress_tables": {
             "CS": STRESS_CS,
             "API5LX60": STRESS_API5LX60,
@@ -283,6 +527,70 @@ async def api_engineering_constants():
             "TITANIUM_B861_GR2": STRESS_TITANIUM_B861_GR2,
             "COPPER_C12200_H80": STRESS_COPPER_C12200_H80,
             "COPPER_C12200_H55": STRESS_COPPER_C12200_H55,
+        },
+    }
+
+
+@router.get("/pt-curve")
+async def api_pt_curve(rating: str = Query(...), material: str = Query(...)):
+    """Return the ASME B16.5 P-T curve for a (rating, material) pair.
+
+    Used by the frontend Wall Thickness Calculation panel to compute the
+    "Min T / Max P" Case 1 alongside the user's "Design Point" Case 2.
+    The min-temp row is always the bottom of the B16.5 curve — that gives
+    the highest allowable pressure (rating-defining cold-end), which often
+    governs t_press over the design-point case.
+
+    Returns 404 when:
+      • the rating isn't indexed in `pt_by_class.json` (5000#, 10000# stubs)
+      • the material doesn't map to any indexed group (exotic/AI-only)
+
+    Body shape:
+      {
+        "material_group": "1.1",
+        "temperatures_c":  [38, 50, 100, ...],
+        "pressures_barg":  [19.6, 19.6, 18.9, ...],
+        "temp_labels":     ["-29 to 38°C", ...],
+        "min_temp_row":    { "index": 0, "label": "-29 to 38°C",
+                             "temp_c": 38, "pressure_barg": 19.6 }
+      }
+    """
+    from app.services import pt_lookup
+    from app.services.class_derivation import _MATERIAL_TO_GROUP, _material_token
+
+    base_mat, _is_nace, _is_ltcs = _material_token(material)
+    group = _MATERIAL_TO_GROUP.get(base_mat)
+    if not group:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Material '{material}' has no indexed B16.5 group "
+                   f"(cleaned: '{base_mat}'). Frontend should fall back to single-case Eq. 3a.",
+        )
+
+    curve = pt_lookup.lookup_pt(group, rating)
+    if not curve:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No P-T curve for rating={rating} group={group}. "
+                   f"5000#/10000# are stubs awaiting authoritative data.",
+        )
+
+    temps = list(curve.get("temperatures_c") or [])
+    press = list(curve.get("pressures_barg") or [])
+    labels = list(curve.get("temp_labels") or [])
+    if not temps or not press or len(temps) != len(press):
+        raise HTTPException(status_code=500, detail="Malformed P-T curve in pt_by_class.json")
+
+    return {
+        "material_group": group,
+        "temperatures_c": temps,
+        "pressures_barg": press,
+        "temp_labels": labels,
+        "min_temp_row": {
+            "index": 0,
+            "label": labels[0] if labels else f"{temps[0]}°C",
+            "temp_c": temps[0],
+            "pressure_barg": press[0],
         },
     }
 
@@ -684,20 +992,8 @@ async def api_admin_delete_agent_session(
     return {"ok": True}
 
 
-@router.post("/compute-thickness", response_model=ComputeThicknessResponse)
-async def api_compute_thickness(req: ComputeThicknessRequest):
-    """
-    Compute per-size wall thickness, MAWP, margins, stress and engineering flags
-    for a given piping class + user design inputs (design P, design T, MDMT, joint,
-    optional Case 1 / stress overrides).
-
-    Reuses the PMS cache for the underlying pipe schedule data and the shared
-    ASME B31.3 engineering utilities — the frontend simply renders the response.
-    """
-    try:
-        return await compute_thickness(req)
-    except RuntimeError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        logger.exception("Error computing thickness")
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+# /api/compute-thickness route removed in the SCH/WT hard-wipe.
+# The thickness_service module and its models were deleted; the frontend
+# Wall Thickness Calculation Table that consumed this endpoint is also
+# being removed. If a future replacement is built, define a new route
+# here with its own request/response models.

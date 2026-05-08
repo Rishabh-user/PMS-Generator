@@ -185,6 +185,31 @@
     .badge.class { background: #eff6ff; color: #1e3a8a; }
     .badge.user { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
 
+    /* Generation-mode badges — colour-codes the trust level of each row */
+    .mode-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 10px;
+      border-radius: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    /* Hand-curated catalogue entry (trusted, full P-T from spec workbook) */
+    .mode-catalogue { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    /* Derived from indexed ASME standards (B16.5 P-T tables, etc.) */
+    .mode-standards_derived { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    /* No standards data — pure AI generation, REVIEW REQUIRED */
+    .mode-ai_only { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    /* Deterministic tubing builder (spec-fixed values) */
+    .mode-tubing { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+    /* Anything we don't recognise — fall back so the cell never goes blank */
+    .mode-badge:not(.mode-catalogue):not(.mode-standards_derived):not(.mode-ai_only):not(.mode-tubing) {
+      background: #f3f4f6; color: #4b5563; border-color: #e5e7eb;
+    }
+
     .btn-delete {
       background: transparent;
       border: 1px solid transparent;
@@ -333,13 +358,14 @@
           <th>Material</th>
           <th>CA</th>
           <th>Service</th>
+          <th>Mode</th>
           <th>Size</th>
           <th>Updated</th>
           <th style="text-align:right">Actions</th>
         </tr>
       </thead>
       <tbody id="tbody-cache">
-        <tr class="loading"><td colspan="8">Loading…</td></tr>
+        <tr class="loading"><td colspan="9">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -462,15 +488,29 @@
     }
 
     // ─── PMS Cache tab ────────────────────────────────────────────
+    // Map raw mode strings to a friendly label. Falls back to the raw value
+    // so we'd rather show an unknown mode than silently lose information.
+    const MODE_LABELS = {
+      catalogue: "Catalogue",
+      standards_derived: "Standards",
+      ai_only: "AI-only",
+      tubing: "Tubing",
+    };
+    const modeBadge = (mode) => {
+      const m = (mode || "catalogue").toLowerCase();
+      const label = MODE_LABELS[m] || m;
+      return `<span class="mode-badge mode-${escapeHtml(m)}" title="${escapeHtml(m)}">${escapeHtml(label)}</span>`;
+    };
+
     async function loadCache(search = "") {
       const tb = $("tbody-cache");
-      tb.innerHTML = `<tr class="loading"><td colspan="8">Loading…</td></tr>`;
+      tb.innerHTML = `<tr class="loading"><td colspan="9">Loading…</td></tr>`;
       try {
         const q = search ? `?search=${encodeURIComponent(search)}&limit=200` : "?limit=200";
         const rows = await api(`/pms-cache${q}`);
         $("count-cache").textContent = `${rows.length} row${rows.length === 1 ? "" : "s"}`;
         if (rows.length === 0) {
-          tb.innerHTML = `<tr class="empty"><td colspan="8">No cached PMS entries${search ? " match that search." : " yet."}</td></tr>`;
+          tb.innerHTML = `<tr class="empty"><td colspan="9">No cached PMS entries${search ? " match that search." : " yet."}</td></tr>`;
           return;
         }
         tb.innerHTML = rows.map(r => `
@@ -480,12 +520,13 @@
             <td>${escapeHtml(r.material)}</td>
             <td>${escapeHtml(r.corrosion_allowance)}</td>
             <td title="${escapeHtml(r.service)}" style="max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.service || "—")}</td>
+            <td>${modeBadge(r.generation_mode)}</td>
             <td style="color:#6b7280">${fmtBytes(r.payload_bytes)}</td>
             <td style="color:#6b7280">${fmtTime(r.updated_at)}</td>
             <td style="text-align:right"><button class="btn-delete" data-action="delete-cache" data-key="${escapeHtml(r.piping_class)}">🗑 Delete</button></td>
           </tr>`).join("");
       } catch (e) {
-        tb.innerHTML = `<tr class="error"><td colspan="8">${escapeHtml(e.message)}</td></tr>`;
+        tb.innerHTML = `<tr class="error"><td colspan="9">${escapeHtml(e.message)}</td></tr>`;
         $("count-cache").textContent = "";
       }
     }
@@ -543,6 +584,7 @@
           `
           <div class="kv"><span class="label">Class</span><span class="value mono">${escapeHtml(d.piping_class)}</span></div>
           <div class="kv"><span class="label">Revision</span><span class="value mono">${escapeHtml(d.version || "A0")}</span></div>
+          <div class="kv"><span class="label">Generation mode</span><span class="value">${modeBadge(d.generation_mode)}</span></div>
           <div class="kv"><span class="label">Material</span><span class="value">${escapeHtml(d.material)}</span></div>
           <div class="kv"><span class="label">CA</span><span class="value">${escapeHtml(d.corrosion_allowance)}</span></div>
           <div class="kv"><span class="label">Service</span><span class="value">${escapeHtml(d.service)}</span></div>

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS pms_cache (
     corrosion_allowance VARCHAR(32) NOT NULL DEFAULT '',
     service       TEXT NOT NULL DEFAULT '',
     response_json JSONB NOT NULL,
+    generation_mode VARCHAR(32) NOT NULL DEFAULT 'catalogue',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -55,10 +56,11 @@ CREATE INDEX IF NOT EXISTS idx_pms_cache_updated ON pms_cache (updated_at DESC);
 MIGRATION_SQL = """
 DO $$
 DECLARE
-    has_cache_key   BOOLEAN;
-    has_id_col      BOOLEAN;
-    has_version_col BOOLEAN;
-    pk_col          TEXT;
+    has_cache_key       BOOLEAN;
+    has_id_col          BOOLEAN;
+    has_version_col     BOOLEAN;
+    has_gen_mode_col    BOOLEAN;
+    pk_col              TEXT;
 BEGIN
     SELECT EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -72,11 +74,31 @@ BEGIN
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'pms_cache' AND column_name = 'version'
     ) INTO has_version_col;
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'pms_cache' AND column_name = 'generation_mode'
+    ) INTO has_gen_mode_col;
 
     -- Step 1: add version column if missing
     IF NOT has_version_col THEN
         ALTER TABLE pms_cache ADD COLUMN version VARCHAR(8) NOT NULL DEFAULT 'A0';
         RAISE NOTICE 'pms_cache: added version column';
+    END IF;
+
+    -- Step 1b: add generation_mode column if missing.
+    -- Tracks which path produced each cached row so the admin DB browser
+    -- can badge derived / AI-only entries differently from catalogued
+    -- ones. Default 'catalogue' is the safe pre-Slice-1 assumption — any
+    -- existing row was generated against the curated 91-class catalogue.
+    -- After ALTER we run a backfill that promotes T-prefixed classes to
+    -- 'tubing' (they were always built by the deterministic tubing
+    -- builder, not the catalogue/AI flow).
+    IF NOT has_gen_mode_col THEN
+        ALTER TABLE pms_cache ADD COLUMN generation_mode VARCHAR(32)
+            NOT NULL DEFAULT 'catalogue';
+        UPDATE pms_cache SET generation_mode = 'tubing'
+            WHERE piping_class LIKE 'T%';
+        RAISE NOTICE 'pms_cache: added generation_mode column (backfilled tubing classes)';
     END IF;
 
     -- Step 2a: normalize piping_class casing / whitespace on every row.
@@ -227,10 +249,18 @@ async def store_pms(
     corrosion_allowance: str,
     service: str,
     response: dict,
+    generation_mode: str = "catalogue",
 ) -> str | None:
     """Store or update PMS response in DB. On conflict, bumps the version
     (A0 → A1 → A2 …) rather than creating a new row. Returns the version
-    string that was written so callers can surface it in the response."""
+    string that was written so callers can surface it in the response.
+
+    `generation_mode` records which generation path produced this row —
+    'catalogue' for hand-curated classes, 'standards_derived' for §5.5 +
+    B16.5 derivation, 'ai_only' for AI-only fallback, 'tubing' for the
+    deterministic tubing builder. Drives the admin DB browser's "this
+    class came from <X>" badge and lets engineering tell at a glance
+    which cached entries are project-curated vs runtime-generated."""
     if not _pool:
         return None
     try:
@@ -240,8 +270,9 @@ async def store_pms(
                 """
                 INSERT INTO pms_cache
                     (piping_class, version, material, corrosion_allowance,
-                     service, response_json, created_at, updated_at)
-                VALUES ($1, 'A0', $2, $3, $4, $5::jsonb, NOW(), NOW())
+                     service, response_json, generation_mode,
+                     created_at, updated_at)
+                VALUES ($1, 'A0', $2, $3, $4, $5::jsonb, $6, NOW(), NOW())
                 ON CONFLICT (piping_class)
                 DO UPDATE SET
                     version             = 'A' ||
@@ -250,10 +281,12 @@ async def store_pms(
                     corrosion_allowance = EXCLUDED.corrosion_allowance,
                     service             = EXCLUDED.service,
                     response_json       = EXCLUDED.response_json,
+                    generation_mode     = EXCLUDED.generation_mode,
                     updated_at          = NOW()
                 RETURNING version
                 """,
-                piping_class, material, corrosion_allowance, service, response_json,
+                piping_class, material, corrosion_allowance,
+                service, response_json, generation_mode,
             )
         logger.info("Stored PMS for %s in database (version=%s)", piping_class, version)
         return version
@@ -289,7 +322,7 @@ async def list_cached_classes() -> list[dict]:
             rows = await conn.fetch(
                 """
                 SELECT piping_class, version, material, corrosion_allowance,
-                       service, updated_at
+                       service, generation_mode, updated_at
                 FROM pms_cache
                 ORDER BY updated_at DESC
                 """
@@ -301,6 +334,7 @@ async def list_cached_classes() -> list[dict]:
                 "material": r["material"],
                 "corrosion_allowance": r["corrosion_allowance"],
                 "service": r["service"],
+                "generation_mode": r["generation_mode"] or "catalogue",
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
             }
             for r in rows
@@ -528,7 +562,7 @@ async def admin_list_cache_entries(
                 rows = await conn.fetch(
                     """
                     SELECT piping_class, version, material, corrosion_allowance,
-                           service, created_at, updated_at,
+                           service, generation_mode, created_at, updated_at,
                            octet_length(response_json::text) AS payload_bytes
                     FROM pms_cache
                     WHERE LOWER(piping_class) LIKE $1
@@ -543,7 +577,7 @@ async def admin_list_cache_entries(
                 rows = await conn.fetch(
                     """
                     SELECT piping_class, version, material, corrosion_allowance,
-                           service, created_at, updated_at,
+                           service, generation_mode, created_at, updated_at,
                            octet_length(response_json::text) AS payload_bytes
                     FROM pms_cache
                     ORDER BY updated_at DESC
@@ -558,6 +592,7 @@ async def admin_list_cache_entries(
                 "material": r["material"],
                 "corrosion_allowance": r["corrosion_allowance"],
                 "service": r["service"],
+                "generation_mode": r["generation_mode"] or "catalogue",
                 "payload_bytes": r["payload_bytes"] or 0,
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
@@ -579,7 +614,8 @@ async def admin_get_cache_entry(piping_class: str) -> dict | None:
             row = await conn.fetchrow(
                 """
                 SELECT piping_class, version, material, corrosion_allowance,
-                       service, response_json, created_at, updated_at
+                       service, response_json, generation_mode,
+                       created_at, updated_at
                 FROM pms_cache WHERE piping_class = $1
                 """,
                 piping_class,
@@ -595,6 +631,7 @@ async def admin_get_cache_entry(piping_class: str) -> dict | None:
             "material": row["material"],
             "corrosion_allowance": row["corrosion_allowance"],
             "service": row["service"],
+            "generation_mode": row["generation_mode"] or "catalogue",
             "response_json": resp,
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
             "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,

@@ -1018,3 +1018,169 @@ label.multi-select-option > span { flex: 1; }
     .result-tabs-nav { flex-direction: column; }
     .result-tab + .result-tab { border-left: none; border-top: 1px solid var(--border); }
 }
+
+/* ── Custom Class panel (standards-derived, opt-in) ──────────────── */
+.custom-class-panel { margin: 16px 0; }
+.custom-class-loading {
+    padding: 12px 16px;
+    background: #fff8e1;
+    border: 1px solid #f0c674;
+    border-radius: 6px;
+    color: #6b5400;
+    font-size: 14px;
+}
+.custom-class-error {
+    padding: 14px 16px;
+    background: #fff0f0;
+    border: 1px solid #e6a4a4;
+    border-radius: 6px;
+    color: #7a2727;
+    font-size: 14px;
+}
+.custom-class-error strong { display: block; margin-bottom: 4px; font-size: 15px; }
+.custom-class-error p { margin: 4px 0; }
+.custom-class-error .hint { font-style: italic; color: #8a4a4a; font-size: 13px; }
+
+.custom-class-card {
+    background: #f5f9ff;
+    border: 1px solid #b3d4f5;
+    border-left: 4px solid #2a78d4;
+    border-radius: 6px;
+    padding: 18px 20px;
+}
+.custom-class-card .cc-header { margin-bottom: 16px; }
+.custom-class-card .cc-badge {
+    display: inline-block;
+    background: #2a78d4;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    padding: 3px 9px;
+    border-radius: 3px;
+}
+.custom-class-card h3 {
+    margin: 8px 0 4px 0;
+    font-size: 24px;
+    color: #0d3a6c;
+    font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+.custom-class-card .cc-reason {
+    margin: 0;
+    font-size: 13px;
+    color: #4a5a72;
+}
+.custom-class-card .cc-section { margin: 16px 0; }
+.custom-class-card .cc-section h4 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #2c4a72;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.custom-class-card .cc-pt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background: white;
+    border: 1px solid #d0e0f5;
+}
+.custom-class-card .cc-pt-table th,
+.custom-class-card .cc-pt-table td {
+    padding: 6px 10px;
+    text-align: center;
+    border: 1px solid #d0e0f5;
+}
+.custom-class-card .cc-pt-table th {
+    background: #e8f0fa;
+    font-weight: 600;
+    color: #0d3a6c;
+}
+.custom-class-card .cc-pt-table td:first-child {
+    text-align: left;
+    background: #f4f8fd;
+}
+.custom-class-card .cc-design-inputs {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.custom-class-card .cc-design-inputs label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: #2c4a72;
+    flex: 1;
+    min-width: 180px;
+}
+.custom-class-card .cc-design-inputs input {
+    padding: 7px 10px;
+    border: 1px solid #c0d0e5;
+    border-radius: 4px;
+    font-size: 14px;
+    background: white;
+}
+.custom-class-card .cc-hint {
+    margin: 6px 0 0 0;
+    font-size: 12px;
+    color: #6a7890;
+    font-style: italic;
+}
+.custom-class-card .cc-confirm {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid #d0e0f5;
+}
+.custom-class-card .cc-confirm-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #1a3a5a;
+}
+.custom-class-card .cc-confirm-line input[type="checkbox"] {
+    margin-top: 3px;
+    cursor: pointer;
+    transform: scale(1.15);
+}
+
+/* AI-only variant of the Custom-Class panel. Same shape as the
+   standards-derived panel but with a warning colour scheme so the user
+   knows the output isn't standards-verified. */
+.custom-class-card.cc-ai-only {
+    background: #fff8e1;
+    border-color: #f0c674;
+    border-left-color: #d68d00;
+}
+.custom-class-card.cc-ai-only h3 { color: #6b4500; }
+.custom-class-card.cc-ai-only .cc-reason { color: #6b5a3a; }
+.custom-class-card.cc-ai-only .cc-section h4 { color: #6b4500; }
+.custom-class-card.cc-ai-only .cc-confirm-line { color: #4a3000; }
+.cc-badge.cc-badge-warn {
+    background: #d68d00;
+    color: white;
+}
+.cc-warn-text {
+    margin: 4px 0 0 0;
+    font-size: 13px;
+    color: #6b4500;
+    line-height: 1.5;
+    background: #fff3cd;
+    padding: 10px 12px;
+    border-left: 3px solid #d68d00;
+    border-radius: 3px;
+}
+.cc-required {
+    color: #d68d00;
+    font-weight: 700;
+    margin-left: 2px;
+}
+.custom-class-card.cc-ai-only input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+}
+.custom-class-card.cc-ai-only .cc-confirm-line:has(input:disabled) {
+    opacity: 0.6;
+}

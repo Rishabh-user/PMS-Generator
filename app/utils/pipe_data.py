@@ -1,156 +1,67 @@
-"""
-Small engineering helpers used by pms_service + validation_service.
+"""Pipe-data post-processor.
 
-OD and WT values for ASME B36.10M / B36.19M pipe classes are looked up from
-the tables in engineering_constants.py after AI generation — the AI picks
-the Schedule per class-specific prompt rules, and this module overwrites
-the AI's (potentially hallucinated) wall thickness with the authoritative
-standard value.
+Runs after the AI emits each pipe row and corrects the row against
+authoritative ASME data sourced from `pipe_dimensions.json`:
 
-For non-ASME systems (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer
-std, CPVC ASTM F441, Tubing ASTM A269), correct_pipe_data is a pass-through
-and the AI's emitted values stand.
+  • OD                — looked up by NPS, overwrites whatever the AI emitted
+  • Wall thickness    — computed via ASME B31.3 §304.1.2 Eq. 3a using the
+                        line's design P / design T / material / CA
+  • Schedule          — picked as the smallest standard B36.10M schedule
+                        whose nominal wall meets the calculated t_min
+
+Order of operations per row (ASME pipe codes only):
+  1. Replace `od_mm` from `lookup_od()` (single source of truth).
+  2. Compute Eq. 3a `t_min_mm` using design conditions.
+  3. Call `schedule_selector.select_schedule_for_thickness(nps, t_min_mm)` to
+     pick the smallest schedule whose nominal WT ≥ t_min_mm.
+  4. Write `schedule` and `wall_thickness_mm` from that pick.
+
+Non-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer
+std, CPVC ASTM F441, Tubing ASTM A269) are passed through untouched —
+their dimensions come from per-standard tables baked into the AI prompt.
+
+When design context is incomplete (no P / no T / no material), the row's
+OD is corrected but the schedule + wall thickness pass through unchanged.
 """
 from __future__ import annotations
 
 import logging
 import re
 
-from app.utils.engineering_constants import (
-    ASME_B3610M_WT,
-    ASME_B3619M_WT,
-    _normalize_nps,
-    lookup_od,
-    lookup_wall_thickness,
-)
+from app.utils.engineering_constants import lookup_od
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_corrosion_allowance_mm(ca: str | float | int | None) -> float:
-    """Parse a CA string like '3 mm' or 'NIL' to a float in mm."""
-    if ca is None:
-        return 0.0
-    if isinstance(ca, (int, float)):
-        return float(ca)
-    m = re.search(r"([\d.]+)", str(ca))
-    return float(m.group(1)) if m else 0.0
-
-
-def calculate_wall_thickness_mm(
-    od_mm: float,
-    design_pressure_barg: float,
-    design_temp_c: float,
-    material_spec: str,
-    corrosion_allowance_mm: float,
-    joint_factor: float = 1.0,
-) -> float | None:
-    """Minimum required wall thickness per ASME B31.3 §304.1.2 Eq. 3a.
-
-        t      = (P × OD) / (2 × (S × E × W + P × Y))
-        t_m    = t + c
-        t_min  = t_m / (1 − mill_tolerance)
-
-    Returns t_min in mm (rounded to 2 decimals), or None if required inputs
-    are missing. Used by the validator's pressure-adequacy check — NOT used
-    to populate the PMS output (the AI does that).
-    """
-    if not od_mm or not design_pressure_barg or design_pressure_barg <= 0:
-        return None
-    try:
-        from app.utils.engineering import calculate_wall_thickness
-        from app.utils.engineering_constants import get_allowable_stress
-
-        stress = get_allowable_stress(material_spec or "", design_temp_c)
-        result = calculate_wall_thickness(
-            od_mm=od_mm,
-            design_pressure_barg=design_pressure_barg,
-            allowable_stress_mpa=stress["S_mpa"],
-            joint_factor=joint_factor,
-            corrosion_allowance_mm=corrosion_allowance_mm,
-        )
-        return round(result["t_minimum_mm"], 2)
-    except Exception as e:
-        logger.warning(
-            "WT calc failed for OD=%s P=%s T=%s: %s",
-            od_mm, design_pressure_barg, design_temp_c, e,
-        )
-        return None
-
-
-def _is_calc_schedule(schedule) -> bool:
-    """True when `schedule` indicates 'no schedule — calculate WT'.
-    Matches plain hyphens, em-dashes, and empty strings (the AI sometimes
-    omits the field entirely for calc-WT sizes)."""
-    s = str(schedule or "").strip()
-    return s in ("", "-", "--", "—", "— ")
-
-
 def _round2(x) -> float | None:
-    """Round a numeric value to 2 decimals. Returns None if x isn't a
-    finite number. Used as the final normalization so every od_mm /
-    wall_thickness_mm in the PMS response has consistent 2-decimal
-    precision regardless of origin (lookup table, B31.3 calc, AI
-    pass-through for non-ASME classes)."""
+    """Round to 2 decimals; None if not finite."""
     try:
         val = float(x)
     except (TypeError, ValueError):
         return None
-    # NaN / inf guard
     if val != val or val in (float("inf"), float("-inf")):
         return None
     return round(val, 2)
 
 
-def _format_schedule(sched_key: str) -> str:
-    """Format a bare table key the way the AI emits schedules: bare for
-    STD/XS/XXS and S-suffix schedules, "SCH N" for plain numerics."""
-    if sched_key in ("STD", "XS", "XXS"):
-        return sched_key
-    if sched_key.endswith("S"):
-        return sched_key
-    return f"SCH {sched_key}"
+def _parse_corrosion_allowance_mm(ca: str | float | int | None) -> float:
+    """'3 mm' / 'NIL' / 0 / None → numeric mm."""
+    if ca is None:
+        return 0.0
+    if isinstance(ca, (int, float)):
+        return float(ca)
+    s = str(ca)
+    if "nil" in s.lower() or "none" in s.lower():
+        return 0.0
+    m = re.search(r"([\d.]+)", s)
+    return float(m.group(1)) if m else 0.0
 
 
-def _smallest_schedule_meeting_min(
-    nps,
-    t_min_mm: float,
-    pipe_code: str | None,
-) -> tuple[str, float] | None:
-    """Pick the thinnest standard ASME schedule whose nominal wall ≥ t_min_mm.
-
-    Returns (schedule_string, nominal_wt_mm). Picks from B36.19M S-suffix
-    schedules when pipe_code refers to B36.19M, otherwise B36.10M. Falls
-    back to the thickest available schedule when no standard meets t_min
-    (the row is then flagged SUBSTD downstream by thickness_service).
-    """
-    nps_key = _normalize_nps(nps)
-    if not nps_key:
-        return None
-
+def _is_asme_pipe_code(pipe_code: str | None) -> bool:
+    """True for B36.10M / B36.19M ASME codes; False for CuNi / Cu / GRE / CPVC / tubing."""
     code = (pipe_code or "").upper()
-    is_b3619 = "B 36.19M" in code or "B36.19M" in code
-
-    if is_b3619:
-        order = ["5S", "10S", "40S", "80S"]
-        table = ASME_B3619M_WT
-    else:
-        order = ["10", "20", "30", "40", "STD", "60", "80", "XS",
-                 "100", "120", "140", "160", "XXS"]
-        table = ASME_B3610M_WT
-
-    row = table.get(nps_key, {})
-    available = [(s, row[s]) for s in order if s in row]
-    if not available:
-        return None
-    available.sort(key=lambda x: x[1])
-
-    for sched, wt in available:
-        if wt >= t_min_mm:
-            return _format_schedule(sched), wt
-
-    sched, wt = available[-1]
-    return _format_schedule(sched), wt
+    return ("B 36.10M" in code or "B36.10M" in code
+            or "B 36.19M" in code or "B36.19M" in code)
 
 
 def correct_pipe_data(
@@ -160,91 +71,99 @@ def correct_pipe_data(
     design_pressure_barg: float | None = None,
     design_temp_c: float | None = None,
     corrosion_allowance: str | float | None = None,
+    piping_class: str | None = None,
     **_unused,
 ) -> list[dict]:
     """Post-process AI-generated pipe rows.
 
-    Three code paths, picked per-row:
+    For ASME-rated classes:
+      1. Overwrite `od_mm` with the canonical value from `pipe_dimensions.json`.
+      2. Compute Eq. 3a minimum wall thickness from design conditions.
+      3. Look up project floor schedule for (piping_class, NPS) from
+         `project_schedule_floors.json` and resolve to a floor WT.
+      4. Compute required_wt = MAX(eq3a, floor_wt).
+      5. Pick the smallest standard schedule meeting required_wt.
+      6. Write `schedule` and `wall_thickness_mm` from the pick.
 
-      1. ASME class + standard Schedule (e.g. "SCH 160", "80S", "STD", "XS"):
-         od_mm and wall_thickness_mm are replaced with authoritative values
-         from the ASME B36.10M / B36.19M tables in engineering_constants.
+    Engineering rule: the project's conventional minimum schedule wins
+    when Eq. 3a alone would pick a thinner one; Eq. 3a wins when the
+    design pressure pushes above the project floor.
 
-      2. ASME class + Schedule == "-" (calculated WT, e.g. F1LN 10-24",
-         G2N 1-24"): od_mm is replaced from the OD table, and the row is
-         UPGRADED to the smallest standard B36.10M / B36.19M schedule whose
-         nominal wall ≥ the Eq. 3a minimum (P × OD/(2(SEW + PY)) + CA, then
-         divided by 1 − mill_tol). BOTH `schedule` and `wall_thickness_mm`
-         are replaced — so the resulting row is a buyable spec, not just an
-         engineering minimum. Requires `design_pressure_barg`, `design_temp_c`,
-         `material`, and `corrosion_allowance` to be provided by the caller
-         (pms_service passes them from pipe_classes.json P-T data + the
-         request). If no standard schedule is thick enough, the thickest
-         available is selected — thickness_service will then mark the row
-         SUBSTD.
+    For non-ASME pipe codes, the row is left untouched (OD lookup returns
+    None and the function skips the rest of per-row logic).
 
-      3. Non-ASME pipe code (CuNi EEMUA 234, Copper ASTM B42, GRE
-         manufacturer std, CPVC ASTM F441, Tubing ASTM A269): row is left
-         untouched — the AI's emitted values stand.
-
-    FINAL PASS — every row has both od_mm and wall_thickness_mm rounded
-    to 2 decimal places before returning, regardless of source. This
-    guarantees clean engineering-spec output even when a value arrives
-    via the AI-pass-through path (non-ASME classes) or when the calc
-    path falls through due to missing context.
+    All rows get a final 2-decimal normalisation on `od_mm` and
+    `wall_thickness_mm` before returning so the UI sees consistent
+    precision.
     """
+    # Lazy imports to keep module-load order clean
+    from app.services.schedule_selector import select_schedule_for_thickness
+    from app.services import schedule_floor_lookup
+    from app.utils.engineering import calculate_wall_thickness
+    from app.utils.engineering_constants import (
+        JOINT_EFFICIENCY_E,
+        get_allowable_stress,
+    )
+
     ca_mm = _parse_corrosion_allowance_mm(corrosion_allowance)
+    is_asme = _is_asme_pipe_code(pipe_code)
 
     for row in pipe_data:
         nps = row.get("size_inch") or row.get("nps")
-        schedule = row.get("schedule")
 
-        # OD correction (ASME-only)
+        # OD correction (ASME-only). Non-ASME codes return None and we
+        # skip the rest of the per-row logic.
         od = lookup_od(nps, pipe_code=pipe_code)
-        if od is not None:
-            row["od_mm"] = od
+        if od is None:
+            continue
+        row["od_mm"] = od
 
-        # WT correction — standard-schedule lookup first
-        wt = lookup_wall_thickness(nps, schedule, pipe_code=pipe_code)
-        if wt is not None:
-            row["wall_thickness_mm"] = wt
+        # Need the full design context to compute Eq. 3a + pick a schedule.
+        # If anything's missing, leave the AI's schedule/WT pass-through.
+        if not is_asme or design_pressure_barg is None or design_temp_c is None or not material:
             continue
 
-        # Calculated-WT path: "-" schedule on an ASME class.
-        # Only runs when (a) we have an OD for this NPS (standard ASME size),
-        # (b) schedule explicitly says "-", and (c) the caller gave us P/T/
-        # material so we can evaluate Eq. 3a. If any piece is missing, fall
-        # through and leave the AI's value (still normalized to 2 decimals
-        # below).
-        if (od is not None
-                and _is_calc_schedule(schedule)
-                and design_pressure_barg is not None
-                and design_temp_c is not None
-                and material):
-            computed = calculate_wall_thickness_mm(
+        # Eq. 3a: P × D / (2(SEW + PY)) + CA, then × 1/(1-mill_tol)
+        # Stress table key: prefer the row's actual MOC (material_spec) — the
+        # AI assigns the real ASTM/API pipe spec there (e.g. "API 5L Gr X60
+        # PSL-2" for F1/G1 1500#-2500# classes), which has different allowable
+        # stress than the class-level designation ("CS NACE"). Fall back to
+        # the class material when the row didn't supply a spec.
+        spec_for_stress = (row.get("material_spec") or "").strip() or material
+        try:
+            stress = get_allowable_stress(spec_for_stress, design_temp_c)
+            calc = calculate_wall_thickness(
                 od_mm=od,
                 design_pressure_barg=design_pressure_barg,
-                design_temp_c=design_temp_c,
-                material_spec=material,
+                allowable_stress_mpa=stress["S_mpa"],
+                joint_factor=JOINT_EFFICIENCY_E,
                 corrosion_allowance_mm=ca_mm,
-                joint_factor=1.0,
             )
-            if computed is not None and computed > 0:
-                # Round UP to smallest standard ASME schedule whose nominal
-                # wall ≥ t_min, so the row is a buyable spec (real wall +
-                # real schedule) rather than the bare theoretical minimum.
-                chosen = _smallest_schedule_meeting_min(nps, computed, pipe_code)
-                if chosen is not None:
-                    row["schedule"] = chosen[0]
-                    row["wall_thickness_mm"] = chosen[1]
-                else:
-                    row["wall_thickness_mm"] = computed
+            t_min = calc["t_minimum_mm"]
+        except Exception as e:
+            logger.warning("Eq. 3a failed for NPS %s: %s — leaving AI value", nps, e)
+            continue
 
-    # ── Final normalization: every numeric cell to 2 decimals ──
-    # Covers: AI-emitted values on non-ASME classes (CuNi/Copper/GRE/CPVC/
-    # Tubing), calc-path fallbacks when context was missing, and any stray
-    # float noise. Matches the Calculated-Thickness precision used by the
-    # /PMS_generator UI so downstream consumers see consistent output.
+        # Project floor — class-conventional minimum schedule per (class, NPS).
+        # Returns None when no rule applies (custom class, NPS out of declared
+        # range, or rule explicitly "calc-only" for that size). When None, the
+        # floor is effectively 0 — only Eq. 3a applies.
+        floor_sched = schedule_floor_lookup.floor_for(piping_class, nps)
+        floor_wt = 0.0
+        if floor_sched:
+            from app.services.schedule_selector import _wt_table
+            from app.utils.engineering_constants import _normalize_nps
+            row_wt = (_wt_table().get(_normalize_nps(nps)) or {})
+            floor_wt = float(row_wt.get(floor_sched, 0.0) or 0.0)
+
+        # required_wt = MAX(eq3a, floor). Pick smallest schedule meeting it.
+        required_wt = max(t_min, floor_wt)
+        chosen = select_schedule_for_thickness(nps, required_wt)
+        if chosen is not None:
+            row["schedule"] = chosen[0]
+            row["wall_thickness_mm"] = chosen[1]
+
+    # Final 2-decimal normalisation on od_mm and wall_thickness_mm
     for row in pipe_data:
         rounded_od = _round2(row.get("od_mm"))
         if rounded_od is not None:
