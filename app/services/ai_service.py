@@ -66,6 +66,21 @@ _ASME_OD_FOR_CPVC = _format_od_inline(max_nps_inch=8)
 Spliced into the CPVC section of SYSTEM_PROMPT so the prompt agrees with
 pipe_dimensions.json without needing the engineer to update both."""
 
+
+def _format_rating_letters_inline() -> str:
+    """Render the §5.5 rating list as a prompt-friendly pipe-separated
+    line: 'A=150# | B=300# | D=600# | ...'. Sourced from
+    `app/data/pressure_ratings.json` via `rating_lookup`, so the prompt
+    line agrees with the dropdown options + every other consumer."""
+    from app.services import rating_lookup
+    return " | ".join(f"{letter}={label}" for letter, label in rating_lookup.all_pairs())
+
+
+_RATING_LETTERS_LINE = _format_rating_letters_inline()
+"""§5.5 rating-letter mapping built once at module load. Spliced into
+SYSTEM_PROMPT's CLASS NAMING CONVENTION section so the prompt's rating
+list never drifts from `pressure_ratings.json`."""
+
 SYSTEM_PROMPT = """You are a senior piping materials engineer with deep expertise in:
 - ASME B31.3 (Process Piping), B36.10M (Welded/Seamless Wrought Steel Pipe), B36.19M (Stainless Steel Pipe)
 - ASME B16.5 (Flanges), B16.9 (BW Fittings), B16.11 (Forged Fittings), B16.20 (Gaskets), B16.47 (Large Flanges), B16.48 (Line Blanks)
@@ -95,13 +110,16 @@ def _build_generation_prompt(
 - Corrosion Allowance: {corrosion_allowance}
 - Service: {service}
 
-Do NOT generate P-T data or hydrotest_pressure (handled separately). Set hydrotest_pressure to "".
+Do NOT generate P-T data, hydrotest_pressure, or pipe_data (all built
+deterministically by the server from class_metadata.json + dual-case
+Eq. 3a). Set pipe_data to [] and hydrotest_pressure to "" — they will
+be overwritten before the response is shipped.
 
 === CLASS NAMING CONVENTION (3-Part System per PMS Doc) ===
 Format: [PART1][PART2][PART3]
 
 PART 1 — RATING (letter):
-  A=150# | B=300# | D=600# | E=900# | F=1500# | G=2500# | J=5000# | K=10000# | T=Tubing
+  {_RATING_LETTERS_LINE}
 
 PART 2 — MATERIAL (number) — verbatim from §5.5 of the project PMS doc
 (40801-SPE-80000-PP-SP-0001 Rev A0, page 18). Keep this list in lock-step
@@ -987,14 +1005,9 @@ IMPORTANT:
     "pipe_code": "...",
     "branch_chart": "Ref. APPENDIX-1, Chart 1",
     "hydrotest_pressure": "",
-    "pipe_data": [
-        {{"size_inch": "0.5", "od_mm": {ASME_PIPE_OD["0.5"]}, "schedule": "SCH 160", "wall_thickness_mm": 4.78,
-          "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B", "ends": "BE",
-          "id_mm": 0}},
-        ...for ALL sizes in the class...
-    ],
-    // id_mm is optional and defaults to 0 (row hidden). Populate it only for GRE
-    // classes (A50/A51/A52) where the spec sheet carries an Inside Diameter row.
+    "pipe_data": [],
+    // pipe_data is built server-side from app/data/class_metadata.json +
+    // dual-case Eq. 3a. Just emit [] — anything you put here is discarded.
     "fittings": {{"fitting_type": "...", "material_spec": "...",
                   "elbow_standard": "...", "tee_standard": "...", "reducer_standard": "...",
                   "cap_standard": "...", "plug_standard": "...", "weldolet_spec": "...",
@@ -1044,11 +1057,11 @@ IMPORTANT:
 }}
 
 CRITICAL:
-1. Valve *_by_size arrays MUST have one entry per pipe size (matching pipe_data count). Use "" for sizes where valve type is not available.
+1. Valve *_by_size arrays MUST have one entry per NPS in the class's size list (see PIPE SIZES section). Use "" for sizes where the valve type is not available.
 2. The top-level valve string fields (ball, gate, dbb, dbb_inst, etc.) are fallback descriptions — the *_by_size arrays hold the actual per-size codes.
 3. For 900#+ classes (E/F/G-series), include dbb and dbb_inst fields with DBRP prefix codes. dbb_inst code = dbb code + "T" suffix. Omit dbb/dbb_inst for 150#-600# classes.
-4. fittings_by_size count MUST match pipe_data count. fittings_welded MUST be populated (not null) if class has welded fittings.
-5. ASME pipe codes (B36.10M / B36.19M): the post-processor overwrites od_mm, schedule, and wall_thickness_mm — emit any plausible values, they WILL be replaced. NON-ASME pipe codes (EEMUA 234, ASTM B42, manufacturer GRE, ASTM F 441, ASTM A 269): your values ARE FINAL — use the exact tables given above.
+4. fittings_by_size count MUST match the class's NPS count. fittings_welded MUST be populated (not null) if class has welded fittings.
+5. pipe_data is server-built. Emit `pipe_data: []` — anything you put there will be replaced.
 6. Return ONLY JSON. No markdown fences, no commentary.
 7. For GALV classes, gasket is neoprene/EPDM rubber (NOT spiral wound).
 8. For CuNi classes, use EEMUA 234 standards throughout.

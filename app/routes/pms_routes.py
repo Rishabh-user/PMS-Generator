@@ -344,9 +344,20 @@ async def api_preview_pms(req: PMSRequest):
     }
 
 
-@router.post("/generate-pms", response_model=PMSResponse)
+@router.post(
+    "/generate-pms",
+    response_model=PMSResponse,
+    response_model_exclude={
+        "pipe_data", "pressure_temperature",
+        "fittings", "fittings_welded",
+    },
+)
 async def api_generate_pms(req: PMSRequest):
-    """Step 2: Full AI-powered PMS generation."""
+    """Full PMS generation. The `pipe_data` field is omitted from the
+    response — it's now derived from `class_metadata.json` + dual-case
+    Eq. 3a, and the frontend fetches it separately via `/api/pipe-data`
+    when needed. The internal `pms.pipe_data` is still populated (Excel
+    download reads it) but isn't shipped to the JSON client."""
     try:
         return await generate_pms(req)
     except RuntimeError as e:
@@ -356,9 +367,17 @@ async def api_generate_pms(req: PMSRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/regenerate-pms", response_model=PMSResponse)
+@router.post(
+    "/regenerate-pms",
+    response_model=PMSResponse,
+    response_model_exclude={
+        "pipe_data", "pressure_temperature",
+        "fittings", "fittings_welded",
+    },
+)
 async def api_regenerate_pms(req: PMSRequest):
-    """Force re-generation via AI, bypassing DB cache, and update stored result."""
+    """Force re-generation via AI, bypassing DB cache. `pipe_data` excluded
+    from response — see `/api/generate-pms` docstring."""
     try:
         return await regenerate_pms(req)
     except RuntimeError as e:
@@ -446,7 +465,14 @@ async def api_download_excel_zip(req: BulkDownloadRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
 
-@router.get("/pms/{piping_class}", response_model=PMSResponse)
+@router.get(
+    "/pms/{piping_class}",
+    response_model=PMSResponse,
+    response_model_exclude={
+        "pipe_data", "pressure_temperature",
+        "fittings", "fittings_welded",
+    },
+)
 async def get_pms_by_class(
     piping_class: str,
     material: str = Query(default=""),
@@ -517,6 +543,161 @@ async def api_engineering_constants():
             "COPPER_C12200_H80": STRESS_COPPER_C12200_H80,
             "COPPER_C12200_H55": STRESS_COPPER_C12200_H55,
         },
+    }
+
+
+@router.get("/pipe-data")
+async def api_pipe_data(
+    piping_class: str = Query(...),
+    material: str = Query(default=""),
+    corrosion_allowance: str = Query(default=""),
+    design_pressure_barg: float | None = Query(default=None),
+    design_temp_c: float | None = Query(default=None),
+):
+    """Return the pipe-data array for a class on demand.
+
+    Replaces the `pipe_data` field that used to be on `/api/generate-pms`
+    responses. Computed fresh from `class_metadata.json` + dual-case
+    Eq. 3a + project-floor lookup, using the request's design P/T (so
+    different design points produce different SCH/WT — no stale cached
+    values).
+
+    Tubing classes (T80*/T90*) use `tubing_service.build_tubing_pms()`'s
+    own row generation since their dimensions don't follow the
+    metadata's per-NPS schema.
+    """
+    from app.services.pipe_data_builder import build_pipe_data_rows
+    from app.services.tubing_service import is_tubing_class, build_tubing_pms
+    from app.services.pt_lookup import lookup_pt
+    from app.services.class_derivation import _MATERIAL_TO_GROUP, _material_token
+    from app.services import rating_lookup
+    from app.utils.pipe_data import correct_pipe_data
+    from app.models.pms_models import PMSRequest
+
+    code = (piping_class or "").upper().strip()
+
+    # Tubing path — defer to tubing_service for the deterministic build.
+    if is_tubing_class(code):
+        req = PMSRequest(
+            piping_class=code,
+            material=material or "",
+            corrosion_allowance=corrosion_allowance or "NIL",
+            service="General",
+        )
+        pms = build_tubing_pms(req)
+        return [p.model_dump() for p in pms.pipe_data]
+
+    # ASME / non-ASME path — builder + correct_pipe_data.
+    try:
+        rows = build_pipe_data_rows(code)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Class '{code}' not in class_metadata.json. Add it or use a tubing-class code.",
+        )
+
+    # Look up P-T curve for dual-case Case 1 (cold-end of B16.5 curve).
+    # Derive (rating, group) from the class code itself.
+    rating = rating_lookup.letter_to_label(code[0]) if code else None
+    pt_pressures: list[float] = []
+    pt_temperatures: list[float] = []
+    if rating and material:
+        base_mat, _, _ = _material_token(material)
+        group = _MATERIAL_TO_GROUP.get(base_mat)
+        curve = lookup_pt(group, rating) if group else None
+        if curve:
+            pt_pressures = list(curve.get("pressures_barg") or [])
+            pt_temperatures = list(curve.get("temperatures_c") or [])
+
+    correct_pipe_data(
+        rows,
+        pipe_code=ai_data_pipe_code_for(code),
+        material=material or "",
+        pt_pressures=pt_pressures,
+        pt_temperatures=pt_temperatures,
+        design_pressure_barg=design_pressure_barg,
+        design_temp_c=design_temp_c,
+        corrosion_allowance=corrosion_allowance,
+        piping_class=code,
+    )
+    return rows
+
+
+def ai_data_pipe_code_for(class_code: str) -> str:
+    """Helper for /api/pipe-data — gets the pipe_code from class_metadata.json
+    so correct_pipe_data correctly identifies ASME vs non-ASME (it gates
+    OD lookup on the pipe_code string)."""
+    from app.services.pipe_data_builder import get_class_pipe_code
+    return get_class_pipe_code(class_code) or ""
+
+
+@router.get("/class-metadata")
+async def api_class_metadata():
+    """Return the full class_metadata.json — every class's size list,
+    pipe-type transition NPS, MOC rules, ends, and (for non-ASME) explicit
+    OD/WT tables. Used by the frontend's class browser if it wants to
+    display class structure without computing pipe_data."""
+    from app.services.pipe_data_builder import _metadata
+    return _metadata()
+
+
+@router.get("/pressure-temperature")
+async def api_pressure_temperature(
+    piping_class: str = Query(...),
+    material: str = Query(default=""),
+):
+    """Return the ASME B16.5 P-T curve for a class on demand.
+
+    Replaces the `pressure_temperature` field that used to be on
+    `/api/generate-pms` responses. Sources from `pt_by_class.json` via
+    `pt_lookup` — same data the dual-case Eq. 3a uses for Case 1
+    cold-end derivation, so the UI's WT calculation matches what the
+    server computes when building pipe_data.
+
+    Body shape:
+      {
+        "temperatures": [38, 50, 100, ...],
+        "pressures":    [19.6, 19.2, 17.7, ...],
+        "temp_labels":  ["-29 to 38", "50", "100", ...]
+      }
+
+    Returns 404 when the rating isn't indexed in pt_by_class.json
+    (5000#/10000# stubs) or the material doesn't map to any group.
+    """
+    from app.services.pt_lookup import lookup_pt
+    from app.services.class_derivation import _MATERIAL_TO_GROUP, _material_token
+    from app.services import rating_lookup
+
+    code = (piping_class or "").upper().strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="piping_class is required")
+
+    rating = rating_lookup.letter_to_label(code[0])
+    if not rating:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Class code {code!r} doesn't start with a §5.5 rating letter",
+        )
+
+    base_mat, _, _ = _material_token(material)
+    group = _MATERIAL_TO_GROUP.get(base_mat)
+    if not group:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Material {material!r} has no indexed B16.5 group",
+        )
+
+    curve = lookup_pt(group, rating)
+    if not curve:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No P-T curve indexed for rating={rating} group={group}",
+        )
+
+    return {
+        "temperatures": list(curve.get("temperatures_c") or []),
+        "pressures": list(curve.get("pressures_barg") or []),
+        "temp_labels": list(curve.get("temp_labels") or []),
     }
 
 

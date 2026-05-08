@@ -56,8 +56,56 @@ const API = {
     optionsRatings: () => fetch('/api/options/ratings'),
     optionsMaterials: () => fetch('/api/options/materials'),
     optionsCorrosionAllowances: () => fetch('/api/options/corrosion-allowances'),
+    pipeData: (params) => fetch(`/api/pipe-data?${new URLSearchParams(params)}`),
+    pressureTemperature: (params) => fetch(`/api/pressure-temperature?${new URLSearchParams(params)}`),
     health: () => fetch('/health'),
 };
+
+// Server no longer ships `pipe_data` or `pressure_temperature` on the
+// /api/generate-pms / /api/regenerate-pms responses (Path C refactor —
+// both are derived data). Fetch each on demand and stamp onto
+// `currentPMS.{pipe_data,pressure_temperature}` so all the existing
+// renderers that read those fields keep working unchanged.
+//
+// Fetches run in parallel via Promise.all — total wait is the slower
+// of the two (~ms each, both hit cached JSON files).
+async function attachPipeData(pms, req) {
+    const className = pms.piping_class || req.piping_class;
+    const material = req.material || pms.material || '';
+    const ca = req.corrosion_allowance || pms.corrosion_allowance || '';
+
+    const pipeParams = { piping_class: className, material, corrosion_allowance: ca };
+    if (req.design_pressure_barg != null) pipeParams.design_pressure_barg = req.design_pressure_barg;
+    if (req.design_temp_c != null)        pipeParams.design_temp_c = req.design_temp_c;
+
+    const ptParams = { piping_class: className, material };
+
+    const [pipeRes, ptRes] = await Promise.all([
+        API.pipeData(pipeParams),
+        API.pressureTemperature(ptParams),
+    ]);
+
+    if (pipeRes.ok) {
+        pms.pipe_data = await pipeRes.json();
+    } else {
+        console.error('pipe-data fetch failed', pipeRes.status);
+        pms.pipe_data = [];
+    }
+
+    if (ptRes.ok) {
+        pms.pressure_temperature = await ptRes.json();
+    } else {
+        // 404 is normal for ratings not indexed (5000#, 10000# stubs) —
+        // leave the existing pressure_temperature on pms (DB-stored) if any.
+        if (ptRes.status !== 404) {
+            console.error('pressure-temperature fetch failed', ptRes.status);
+        }
+        if (!pms.pressure_temperature) {
+            pms.pressure_temperature = { temperatures: [], pressures: [], temp_labels: [] };
+        }
+    }
+    return pms;
+}
 
 // === Unit Conversions (physical constants — never change) ===
 const barg2psig = (b) => (b * 14.5038).toFixed(1);
@@ -363,10 +411,13 @@ async function loadIndexData() {
 //
 // Backend is the single source of truth — these fallback constants just
 // avoid an empty UI if the API call fails (offline, slow, etc.). Keep them
-// in lock-step with `app/data/spec_options.py` and `app/data/pressure_ratings.json`.
-const SPEC_RATINGS_FALLBACK = [
-    '150#', '300#', '600#', '900#', '1500#', '2500#', '5000#', '10000#', 'Tubing',
-];
+// in lock-step with `app/data/spec_options.py`.
+//
+// Pressure ratings are not duplicated here — they're loaded via
+// `/api/options/ratings` (sourced from `app/data/pressure_ratings.json`).
+// The empty fallback means a failed API call yields a blank dropdown
+// rather than a stale hardcoded list.
+const SPEC_RATINGS_FALLBACK = [];
 const SPEC_MATERIALS_FALLBACK = [
     'CS', 'CS NACE', 'LTCS', 'LTCS NACE', 'CS GALV', 'CS - Epoxy Lined',
     'SS316', 'SS316L', 'SS316L NACE', 'DSS', 'DSS NACE', 'SDSS', 'SDSS NACE',
@@ -437,30 +488,6 @@ function populateClassDropdown() { /* no-op — handled by loadSpecDropdowns */ 
 // now live in `app/data/spec_options.py` on the backend; the frontend
 // constants are just fallbacks for when the API call fails.
 
-// Default cold-rated design pressure per ASME class — used by the
-// AI-only panel to pre-fill the Design Pressure input so the user
-// doesn't have to type a value. Two regimes:
-//
-//   • B16.5 territory (150#–2500#): values are the cold-rated barg of
-//     B16.5 Group 1.1 (carbon steel) at 38 °C — a safe default for
-//     any non-tubing material since most B16.5 groups have very
-//     similar cold ratings within ~10%.
-//
-//   • API 6A territory (5000# / 10000#): the class number IS the cold-
-//     rated pressure in psig, so we convert directly.
-//
-// User can override either input on the panel; this is just the
-// no-input default so the form is one-click usable.
-const RATING_DEFAULT_PRESSURE_BARG = {
-    '150#':    19.6,     // B16.5 G1.1 cold rating
-    '300#':    51.1,
-    '600#':   102.1,
-    '900#':   153.2,
-    '1500#':  255.3,
-    '2500#':  425.5,
-    '5000#':  344.7,     // API 6A: 5000 psig × 0.06895
-    '10000#': 689.5,     // API 6A: 10000 psig × 0.06895
-};
 const AI_ONLY_DEFAULT_DESIGN_TEMP_C = 38;   // B16.5 cold-endpoint convention
 
 function initCascadingDropdowns() {
@@ -732,8 +759,11 @@ function renderAiOnlyPanel(panel, resp) {
     // response doesn't echo the rating back, but we can re-derive it
     // from the §5.5 class code's first letter via the same lookup the
     // backend uses (rating_from_class_code).
-    const ratingPicked = document.getElementById('pipingClass').value.trim();
-    const defaultP = RATING_DEFAULT_PRESSURE_BARG[ratingPicked] ?? null;
+    // AI-only panel — no per-rating default for Design Pressure. Input
+    // starts blank; user types the value. (Previously pre-filled from a
+    // hardcoded cold-barg map; the map was dropped to keep
+    // pressure_ratings.json minimal.)
+    const defaultP = null;
     const defaultT = AI_ONLY_DEFAULT_DESIGN_TEMP_C;
 
     customClassState = {
@@ -1301,6 +1331,8 @@ async function generateFullPMS() {
         const res = await API.generatePMS(pendingPMSRequest);
         if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Generation failed'); }
         currentPMS = await res.json();
+        // pipe_data is no longer in the generate response — fetch separately.
+        await attachPipeData(currentPMS, pendingPMSRequest);
 
         // Replace preview banner with final banner
         renderPMSCodeBanner(currentPMS);
@@ -1386,6 +1418,7 @@ async function regenerateFullPMS() {
         const res = await API.regeneratePMS(pendingPMSRequest);
         if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Regeneration failed'); }
         currentPMS = await res.json();
+        await attachPipeData(currentPMS, pendingPMSRequest);
 
         renderPMSCodeBanner(currentPMS);
         renderFullResult(currentPMS);
@@ -1921,11 +1954,9 @@ function renderScheduleTab(pms) {
     ];
 
     if (case1) {
-        // Round to clean spec values: psig → integer, barg → 1 decimal.
-        // Standard piping-spec convention; avoids the false-precision look
-        // of "6171.4 psig (425.50 barg)" — engineers read the integer.
-        const fmtPress = (psig, barg) =>
-            `${Math.round(psig).toLocaleString()} psig (${barg.toFixed(1)} barg)`;
+        // Show raw (unrounded) values — psig from `barg2psig()` (1 decimal
+        // by construction) and barg straight from the JSON source.
+        const fmtPress = (psig, barg) => `${psig} psig (${barg} barg)`;
         const pressureBlock = [
             dualLine('Min T / Max P', fmtPress(case1.P_psig, case1.P_barg),
                      `@ ${case1.label}`, case1Governs ? govTag : actTag),
@@ -1999,18 +2030,18 @@ function renderScheduleTab(pms) {
         let html = `<strong>NPS ${exRow.nps}" example:</strong> OD = ${odIn}" `
                  + ` | E = ${E} | W = ${W} | Y = ${Y} <span class="unit">[${yFamily}]</span> `
                  + ` | c = ${caIn}" (${caMM} mm) | mill tol = ${millTolPct}%<br>`;
-        // Round psig to integer for clean spec-style display, matching the
+        // Raw psig (1 decimal by construction from barg2psig), matching the
         // Design Parameters panel above.
-        const p1Int = case1 ? Math.round(case1.P_psig).toLocaleString() : '';
-        const p2Int = Math.round(case2.P_psig).toLocaleString();
+        const p1 = case1 ? case1.P_psig : '';
+        const p2 = case2.P_psig;
         if (case1) {
             html += `<strong>Case 1 (Min T / Max P @ ${case1.label}):</strong> `
-                  + `P = ${p1Int} psig, S = ${case1.S_psi.toLocaleString()} psi → `
+                  + `P = ${p1} psig, S = ${case1.S_psi.toLocaleString()} psi → `
                   + `t<sub>press</sub> = ${t1_in}"`
                   + (case1Governs ? ` <span style="color:#16a34a;font-weight:700">— GOVERNS</span>` : ``)
                   + `<br>`;
             html += `<strong>Case 2 (Design Point @ ${case2.temp_c}°C):</strong> `
-                  + `P = ${p2Int} psig, S = ${case2.S_psi.toLocaleString()} psi → `
+                  + `P = ${p2} psig, S = ${case2.S_psi.toLocaleString()} psi → `
                   + `t<sub>press</sub> = ${t2_in}"`
                   + (!case1Governs ? ` <span style="color:#16a34a;font-weight:700">— GOVERNS</span>` : ``)
                   + `<br>`;
@@ -2021,7 +2052,7 @@ function renderScheduleTab(pms) {
                   + `(${treq_mm} mm)</span>`;
         } else {
             html += `<strong>Single-case (Design Point @ ${case2.temp_c}°C):</strong> `
-                  + `P = ${p2Int} psig, S = ${case2.S_psi.toLocaleString()} psi → `
+                  + `P = ${p2} psig, S = ${case2.S_psi.toLocaleString()} psi → `
                   + `t = ${t_in}" → t<sub>m</sub> = ${tm_in}" → T<sub>REQ</sub> = ${treq_in}" (${treq_mm} mm)`;
         }
         exampleEl.innerHTML = html;
@@ -2064,7 +2095,6 @@ function renderScheduleTab(pms) {
     const cls = pms.piping_class || '';
     const isNACE = cls.includes('N') || matUpper.includes('NACE');
     const isLTCS = cls.includes('L') || matUpper.includes('LTCS');
-    const isHighRating = ['1500#', '2500#', '5000#', '10000#'].includes(pms.rating);
     const isGalv = matUpper.includes('GALV');
     const isCoated = matUpper.includes('EPOXY') || matUpper.includes('COATED');
 
@@ -2078,11 +2108,6 @@ function renderScheduleTab(pms) {
         level: 'mandatory', badge: 'LTCS',
         title: 'Low-Temperature Service',
         body: 'Charpy V-notch impact testing per ASTM A350 LF2 / A333 Gr.6. Verify minimum design metal temperature (MDMT) is within material allowable range.',
-    });
-    if (isHighRating) flags.push({
-        level: 'warning', badge: 'HP',
-        title: 'High-Pressure Rating (' + pms.rating + ')',
-        body: 'Hydrotest pressure exceeds 250 barg in many configurations. Verify test fixture and gauge ranges. Welder qualification per ASME IX required.',
     });
     if (isGalv) flags.push({
         level: 'warning', badge: 'GALV',
@@ -2136,8 +2161,15 @@ function renderScheduleTab(pms) {
 // ============================================================
 function renderPipeFittingsTab(pms) {
     const pipes = pms.pipe_data;
-    const fittings = pms.fittings;
-    const fittingsW = pms.fittings_welded;
+    // `fittings` / `fittings_welded` are no longer in the API response —
+    // derive small-bore + large-bore defaults from the fittings_by_size
+    // array (which IS in the response). The first Seamless entry is
+    // representative of small bore; the first Welded entry is large bore.
+    const fbs = pms.fittings_by_size || [];
+    const fittings  = fbs.find(f => (f.type || '').toLowerCase().startsWith('seam'))
+                   || fbs[0] || {};
+    const fittingsW = fbs.find(f => (f.type || '').toLowerCase().includes('weld'))
+                   || null;
 
     // Split into small bore (≤ 2") and large bore (> 2")
     const smallBore = pipes.filter(p => parseFloat(p.size_inch) <= ENG.small_bore_cutoff_nps);
@@ -2179,20 +2211,6 @@ function renderPipeFittingsTab(pms) {
         }
         if (fittings.plug_standard) rows.push({ component: 'Plug', material: fitMat || 'N/A', schedClass: '', standard: fittings.plug_standard });
         if (fittings.weldolet_spec) rows.push({ component: 'Weldolet', material: fittings.weldolet_spec, schedClass: '', standard: 'MSS SP-97' });
-
-        // Extra fittings: coupling, hex plug, union, olet, swage
-        const ef = pms.extra_fittings || {};
-        if (ef.coupling) rows.push({ component: 'Coupling', material: fitMat || 'N/A', schedClass: '', standard: ef.coupling });
-        if (ef.hex_plug) rows.push({ component: 'Hex Head Plug', material: fitMat || 'N/A', schedClass: '', standard: ef.hex_plug });
-        if (ef.union || ef.union_large) {
-            const unionStd = isSmallBore ? (ef.union || ef.union_large) : (ef.union_large || ef.union);
-            rows.push({ component: 'Union', material: fitMat, schedClass: '', standard: unionStd });
-        }
-        if (ef.olet || ef.olet_large) {
-            const oletSpec = isSmallBore ? (ef.olet || ef.olet_large) : (ef.olet_large || ef.olet);
-            rows.push({ component: 'Olet', material: oletSpec, schedClass: '', standard: ef.olet ? 'MSS SP-97' : '' });
-        }
-        if (ef.swage) rows.push({ component: 'Swage', material: ef.swage, schedClass: '', standard: 'MSS SP-95' });
 
         return rows;
     }

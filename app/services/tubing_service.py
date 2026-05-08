@@ -25,7 +25,6 @@ import logging
 
 from app.models.pms_models import (
     BoltsNutsGaskets,
-    ExtraFittings,
     FittingBySize,
     FittingsData,
     FlangeData,
@@ -206,11 +205,6 @@ def build_tubing_pms(req: PMSRequest) -> PMSResponse:
         )
         for s in _SIZES
     ]
-    extra_fittings = ExtraFittings(
-        coupling="", hex_plug="", union="", union_large="",
-        olet="", olet_large="", swage="",
-    )
-
     # ── Tubing has no flanges, no spectacle blinds, no bolts/gaskets ──
     flange = FlangeData(
         material_spec="N/A — tubing class (compression fittings)",
@@ -265,7 +259,6 @@ def build_tubing_pms(req: PMSRequest) -> PMSResponse:
         pipe_data=pipe_data,
         fittings=fittings,
         fittings_by_size=fittings_by_size,
-        extra_fittings=extra_fittings,
         flange=flange,
         spectacle_blind=spectacle_blind,
         bolts_nuts_gaskets=bolts,

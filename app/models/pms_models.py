@@ -95,16 +95,6 @@ class FittingBySize(BaseModel):
     adaptor_standard: str = Field(default="", description="Adaptor / Adapter (GRE)")
 
 
-class ExtraFittings(BaseModel):
-    coupling: str = Field(default="", description="Coupling standard")
-    hex_plug: str = Field(default="", description="Hex head plug standard")
-    union: str = Field(default="", description="Union standard (small bore)")
-    union_large: str = Field(default="", description="Union standard (large bore)")
-    olet: str = Field(default="", description="Olet spec (small bore)")
-    olet_large: str = Field(default="", description="Olet spec (large bore)")
-    swage: str = Field(default="", description="Swage specification")
-
-
 class FlangeData(BaseModel):
     material_spec: str = Field(default="", description="ASTM material specification")
     face_type: str = Field(default="", description="Flange face type")
@@ -195,7 +185,6 @@ class PMSResponse(BaseModel):
     fittings: FittingsData = Field(default_factory=FittingsData)
     fittings_welded: Optional[FittingsData] = None
     fittings_by_size: list[FittingBySize] = Field(default_factory=list)
-    extra_fittings: ExtraFittings = Field(default_factory=ExtraFittings)
     flange: FlangeData = Field(default_factory=FlangeData)
     spectacle_blind: SpectacleBlind = Field(default_factory=SpectacleBlind)
     bolts_nuts_gaskets: BoltsNutsGaskets = Field(default_factory=BoltsNutsGaskets)

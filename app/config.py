@@ -15,7 +15,21 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    # Default to Haiku 4.5 — Anthropic's fastest current model. ~2-3× faster
+    # than Sonnet 4 on the PMS-generation prompt (which is ~14k input tokens
+    # and ~14k output tokens). Quality on rule-following is well-suited to
+    # this prompt's structure — it's all explicit rules + a JSON schema, not
+    # open-ended reasoning.
+    #
+    # Override to a stronger model only if you observe quality regressions
+    # on a specific class:
+    #   • "claude-sonnet-4-6"  — newer Sonnet, similar speed band, higher
+    #                            quality; best fallback if Haiku misses
+    #                            edge cases.
+    #   • "claude-opus-4-7"    — most capable, slowest. Use only when even
+    #                            Sonnet can't get a class right.
+    # Override via the ANTHROPIC_MODEL env var (no code change needed).
+    anthropic_model: str = "claude-haiku-4-5"
 
     templates_dir: Path = BASE_DIR / "app" / "templates"
     static_dir: Path = BASE_DIR / "app" / "static"

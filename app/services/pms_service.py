@@ -13,14 +13,13 @@ import logging
 
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
-    PipeSize, FittingsData, FittingBySize, ExtraFittings, FlangeData,
+    PipeSize, FittingsData, FittingBySize, FlangeData,
     SpectacleBlind, BoltsNutsGaskets, ValveData, ValveSizeEntry,
 )
 from app.services.ai_service import generate_pms_with_ai, AIGenerationError
 from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
 from app.services.tubing_service import build_tubing_pms, is_tubing_class
-from app.services import class_catalog
 from app.services import data_service
 from app.services import db_service
 from app.services import valvesheet_sync_service
@@ -348,11 +347,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             adaptor_standard=fb.get("adaptor_standard", ""),
         ))
 
-    # Extra Fittings intentionally emitted as empty — the section was removed
-    # from the Excel output and the AI prompt. The Pydantic field is kept so
-    # previously-cached PMS entries still deserialize cleanly.
-    extra_fittings = ExtraFittings()
-
     fl = ai_data.get("flange", {})
     flange = FlangeData(
         material_spec=_enforce_flange_material(req.piping_class, fl.get("material_spec", "")),
@@ -443,7 +437,6 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         fittings=fittings,
         fittings_welded=fittings_welded,
         fittings_by_size=fittings_by_size,
-        extra_fittings=extra_fittings,
         flange=flange,
         spectacle_blind=spectacle,
         bolts_nuts_gaskets=bng,
@@ -490,9 +483,11 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             # cleanly with the DerivationError below.
             rating = rating_from_class_code(req.piping_class)
             if not rating:
+                from app.services import rating_lookup
+                valid_letters = "/".join(rating_lookup.all_letters())
                 raise DerivationError(
                     f"Class code {req.piping_class!r} doesn't start with a "
-                    f"§5.5 rating letter (A/B/D/E/F/G/J/K/T). Cannot derive "
+                    f"§5.5 rating letter ({valid_letters}). Cannot derive "
                     f"the rating; please use a valid §5.5 class code."
                 )
             # Try standards-derivation first (Slice 1 fast path with full
@@ -563,49 +558,23 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     ][:2]
     reference_entries.extend(other_entries)
 
-    # Pre-generated class catalog — see app/services/class_catalog.py.
-    # Production hit-rate should be ~100%: scripts/generate_class_catalog.py
-    # materialises every class in class_catalog_spec.json (91 codes) to
-    # disk as app/data/classes/{code}.json. Reading the file is ~ms.
-    # If the file is missing, we have two choices:
-    #   • soft path (current default) — fall through to the live AI call
-    #     so a one-off uncatalogued class still works.
-    #   • hard path — raise immediately, forcing operators to run the
-    #     batch script first.
-    # We've kept the soft path so adding a new spec entry doesn't require
-    # an immediate batch run; in practice, every standard class is
-    # pre-generated and the AI branch is dead code.
-    from app.services import class_catalog
-    cached_ai_data = class_catalog.lookup_pms(req.piping_class)
-    if cached_ai_data is not None:
-        logger.info(
-            "PMS for %s served from on-disk catalog (no AI call).",
-            req.piping_class,
+    # Call AI to generate everything except P-T.
+    # generate_pms_with_ai raises AIGenerationError with a specific reason on
+    # failure — we re-raise as RuntimeError so the route handler turns it
+    # into a 422 with the exact cause (credit balance, rate limit, etc.).
+    try:
+        ai_data = await generate_pms_with_ai(
+            piping_class=req.piping_class,
+            material=req.material,
+            corrosion_allowance=req.corrosion_allowance,
+            service=req.service,
+            rating=rating,
+            reference_entries=reference_entries,
         )
-        ai_data = cached_ai_data
-    else:
-        logger.info(
-            "PMS for %s NOT in on-disk catalog — falling back to AI. "
-            "Run `python -m scripts.generate_class_catalog --only %s` to "
-            "materialise it and skip the AI call on subsequent requests.",
-            req.piping_class, req.piping_class,
-        )
-        # generate_pms_with_ai raises AIGenerationError with a specific reason on
-        # failure — we re-raise as RuntimeError so the route handler turns it
-        # into a 422 with the exact cause (credit balance, rate limit, etc.).
-        try:
-            ai_data = await generate_pms_with_ai(
-                piping_class=req.piping_class,
-                material=req.material,
-                corrosion_allowance=req.corrosion_allowance,
-                service=req.service,
-                rating=rating,
-                reference_entries=reference_entries,
-            )
-        except AIGenerationError as e:
-            raise RuntimeError(
-                f"Unable to generate PMS for class '{req.piping_class}': {e}"
-            ) from e
+    except AIGenerationError as e:
+        raise RuntimeError(
+            f"Unable to generate PMS for class '{req.piping_class}': {e}"
+        ) from e
 
     if not ai_data:
         raise RuntimeError(
@@ -621,29 +590,56 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     #     pressure/temperature from pipe_classes.json) and the request's
     #     material / CA. OD is replaced from the OD table.
     #   - Non-ASME pipe codes (CuNi, Copper, GRE, CPVC, Tubing): untouched.
+    # Build pipe_data deterministically from class_metadata.json — replaces
+    # whatever the AI emitted (and overrides pipe_code from the metadata
+    # too). For ASME classes, the rows from build_pipe_data_rows() have
+    # blank OD/SCH/WT; correct_pipe_data fills those via dual-case Eq. 3a.
+    # For non-ASME (CuNi/Copper/GRE/CPVC) the builder fills everything;
+    # correct_pipe_data is a no-op for those (non-ASME pipe_code).
+    from app.services.pipe_data_builder import (
+        build_pipe_data_rows,
+        get_class_pipe_code,
+    )
+    try:
+        ai_data["pipe_data"] = build_pipe_data_rows(req.piping_class)
+        meta_pipe_code = get_class_pipe_code(req.piping_class)
+        if meta_pipe_code:
+            ai_data["pipe_code"] = meta_pipe_code
+        logger.info(
+            "Built pipe_data deterministically for %s — %d rows from class_metadata.json",
+            req.piping_class, len(ai_data["pipe_data"]),
+        )
+    except KeyError:
+        # Class isn't in class_metadata.json (e.g. tubing T80*/T90* — handled
+        # by tubing_service before we reach here, OR a custom uncatalogued
+        # class). Fall back to whatever AI emitted.
+        logger.info(
+            "Class %s not in class_metadata.json — using AI-emitted pipe_data",
+            req.piping_class,
+        )
+
     if "pipe_data" in ai_data:
         pt_data = entry.get("pressure_temperature", {}) or {}
         pressures = pt_data.get("pressures") or []
         temperatures = pt_data.get("temperatures") or []
-        design_pressure = max(pressures) if pressures else None
-        design_temp = max(temperatures) if temperatures else None
         material_for_correction = req.material or entry.get("material", "")
         correct_pipe_data(
             ai_data["pipe_data"],
             pipe_code=ai_data.get("pipe_code", ""),
             material=material_for_correction,
-            design_pressure_barg=design_pressure,
-            design_temp_c=design_temp,
+            pt_pressures=pressures,
+            pt_temperatures=temperatures,
+            design_pressure_barg=req.design_pressure_barg,
+            design_temp_c=req.design_temp_c,
             corrosion_allowance=req.corrosion_allowance,
             piping_class=req.piping_class,
         )
         logger.info(
             "Corrected pipe_data for %s (pipe_code='%s', material='%s', "
-            "P=%s barg, T=%s°C, CA=%s) — WT/OD from ASME tables where "
-            "schedule is a standard code; WT computed per B31.3 Eq. 3a "
-            "where schedule is '-'",
+            "design=req(P=%s barg, T=%s°C), CA=%s) — dual-case Eq. 3a + project floor",
             req.piping_class, ai_data.get("pipe_code", ""),
-            material_for_correction, design_pressure, design_temp,
+            material_for_correction,
+            req.design_pressure_barg, req.design_temp_c,
             req.corrosion_allowance,
         )
 
@@ -775,19 +771,11 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
 
 
 async def regenerate_pms(req: PMSRequest) -> PMSResponse:
-    """Bypass L1/L2 caches and re-build the PMS from authoritative sources.
+    """Force fresh AI generation, bypassing all caches. Overwrites cache.
 
-    With the on-disk class catalog in place (see app/services/class_catalog.py
-    and scripts/generate_class_catalog.py), Regenerate's job changed:
-      • Tubing classes — refresh from tubing_specs.json (unchanged).
-      • Catalog hit — re-read the class's catalog file from disk and re-run
-        the post-processor + response builder. This is the new fast path:
-        useful when an engineer hand-edits a catalog JSON and wants the L1/L2
-        caches to pick up the change without a server restart.
-      • Catalog miss — fall through to the legacy AI path. Logs a warning
-        suggesting the operator run `scripts/generate_class_catalog.py
-        --only {class}` to materialise the class so future Regenerates
-        skip the AI call.
+    Tubing classes (T80A/B/C, T90A/B/C) are still deterministic — Regenerate
+    just refreshes the L1 entry from tubing_specs.json (in case the file
+    was edited at runtime).
     """
     key = _cache_key(req)
     if is_tubing_class(req.piping_class):
@@ -796,19 +784,7 @@ async def regenerate_pms(req: PMSRequest) -> PMSResponse:
         _pms_cache[key] = pms
         return pms
 
-    if class_catalog.has_pms(req.piping_class):
-        logger.info(
-            "Regenerating PMS for %s from on-disk catalog (no AI call).",
-            req.piping_class,
-        )
-    else:
-        logger.warning(
-            "Regenerating PMS for %s via AI — class not in on-disk catalog. "
-            "Run `python -m scripts.generate_class_catalog --only %s` to "
-            "materialise it; future Regenerates will skip the AI call.",
-            req.piping_class, req.piping_class,
-        )
-
+    logger.info("Regenerating PMS for %s via AI (forced, bypassing cache)", req.piping_class)
     pms = await _generate_from_ai(req)
     await _store_in_caches(key, req, pms)
     return pms

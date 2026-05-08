@@ -1,27 +1,33 @@
 """Pipe-data post-processor.
 
 Runs after the AI emits each pipe row and corrects the row against
-authoritative ASME data sourced from `pipe_dimensions.json`:
+authoritative ASME data sourced from `pipe_dimensions.json`. The
+schedule + wall thickness are computed dual-case to match the UI's
+Wall Thickness Calculation Table:
 
-  • OD                — looked up by NPS, overwrites whatever the AI emitted
-  • Wall thickness    — computed via ASME B31.3 §304.1.2 Eq. 3a using the
-                        line's design P / design T / material / CA
-  • Schedule          — picked as the smallest standard B36.10M schedule
-                        whose nominal wall meets the calculated t_min
+  • Case 1 — Min T / Max P:  the cold-end of the B16.5 P-T curve
+                              (max P, paired with its matching min T;
+                              S is highest at min T → lowest t_press).
+  • Case 2 — Design Point:    the user's requested design pressure +
+                              temperature (S evaluated at design T).
 
-Order of operations per row (ASME pipe codes only):
-  1. Replace `od_mm` from `lookup_od()` (single source of truth).
-  2. Compute Eq. 3a `t_min_mm` using design conditions.
-  3. Call `schedule_selector.select_schedule_for_thickness(nps, t_min_mm)` to
-     pick the smallest schedule whose nominal WT ≥ t_min_mm.
-  4. Write `schedule` and `wall_thickness_mm` from that pick.
+  • t_press = max(case1_t_press, case2_t_press)  per ASME B31.3 §304.1.2 Eq. 3a
+  • t_m     = t_press + corrosion_allowance
+  • t_min   = t_m / (1 - mill_tolerance)
+  • schedule = smallest B36.10M schedule whose WT ≥ MAX(t_min, project_floor)
 
 Non-ASME pipe codes (CuNi EEMUA 234, Copper ASTM B42, GRE manufacturer
 std, CPVC ASTM F441, Tubing ASTM A269) are passed through untouched —
 their dimensions come from per-standard tables baked into the AI prompt.
 
-When design context is incomplete (no P / no T / no material), the row's
+When design context is incomplete (no P-T data / no material), the row's
 OD is corrected but the schedule + wall thickness pass through unchanged.
+
+Earlier versions used a single-case computation that mixed `max(P-T
+pressures)` with `max(P-T temperatures)`, producing conservatively-thick
+WT (those two values don't co-occur on the curve). The dual-case fix
+makes the persisted pipe_data match the UI's WT calculation table — so
+the Excel download and the on-screen table show the same numbers.
 """
 from __future__ import annotations
 
@@ -80,33 +86,36 @@ def correct_pipe_data(
     pipe_data: list[dict],
     pipe_code: str | None = None,
     material: str | None = None,
+    pt_pressures: list[float] | None = None,
+    pt_temperatures: list[float] | None = None,
     design_pressure_barg: float | None = None,
     design_temp_c: float | None = None,
     corrosion_allowance: str | float | None = None,
     piping_class: str | None = None,
     **_unused,
 ) -> list[dict]:
-    """Post-process AI-generated pipe rows.
+    """Post-process AI-generated pipe rows with dual-case Eq. 3a.
 
-    For ASME-rated classes:
-      1. Overwrite `od_mm` with the canonical value from `pipe_dimensions.json`.
-      2. Compute Eq. 3a minimum wall thickness from design conditions.
-      3. Look up project floor schedule for (piping_class, NPS) from
-         `project_schedule_floors.json` and resolve to a floor WT.
-      4. Compute required_wt = MAX(eq3a, floor_wt).
-      5. Pick the smallest standard schedule meeting required_wt.
-      6. Write `schedule` and `wall_thickness_mm` from the pick.
+    Inputs:
+      • `pt_pressures` / `pt_temperatures` — class P-T curve from the
+        catalogue (B16.5 / API 6A). Used to derive Case 1 (Min T / Max P).
+      • `design_pressure_barg` / `design_temp_c` — user's request design
+        point. Used as Case 2.
 
-    Engineering rule: the project's conventional minimum schedule wins
-    when Eq. 3a alone would pick a thinner one; Eq. 3a wins when the
-    design pressure pushes above the project floor.
+    Either case can be omitted; if both are missing, schedule + WT are
+    left as the AI emitted them.
 
-    For non-ASME pipe codes, the row is left untouched (OD lookup returns
-    None and the function skips the rest of per-row logic).
+    Engineering rule (matches the UI's WT calculation table):
+      t_press = max(case1_t_press, case2_t_press)  per Eq. 3a
+      t_m     = t_press + corrosion_allowance
+      t_min   = t_m / (1 - mill_tolerance)
+      schedule = smallest B36.10M schedule whose WT ≥ max(t_min, project_floor)
+
+    For non-ASME pipe codes, the row is left untouched; only OD is
+    corrected from `pipe_dimensions.json`.
 
     All rows get a final 2-decimal normalisation on `od_mm` and
-    `wall_thickness_mm` before returning so the UI sees consistent
-    precision.
+    `wall_thickness_mm` before returning.
     """
     # Lazy imports to keep module-load order clean
     from app.services.schedule_selector import (
@@ -123,63 +132,97 @@ def correct_pipe_data(
     ca_mm = _parse_corrosion_allowance_mm(corrosion_allowance)
     is_asme = _is_asme_pipe_code(pipe_code)
 
-    # Per the AI's "single unified MOC" rule (ai_service.py §PIPE TYPE
-    # TRANSITION), every row in a class shares the same material_spec —
-    # so the stress at design temp is loop-invariant. Resolve once here
-    # using the first row's spec (if any) with a class-material fallback,
-    # avoiding 20× redundant regex chains in `_detect_stress_table`.
-    have_design_ctx = (
-        is_asme and design_pressure_barg is not None
-        and design_temp_c is not None and material
-    )
-    s_mpa = None
-    if have_design_ctx:
-        first_spec = next(
-            ((r.get("material_spec") or "").strip() for r in pipe_data
-             if (r.get("material_spec") or "").strip()),
-            "",
-        )
+    # Resolve Case 1 (Min T / Max P) from the P-T curve. The cold-end row
+    # has the highest pressure paired with its actual minimum temperature
+    # — using these together (rather than max-P with max-T) is what makes
+    # the calculation engineering-correct.
+    case1: dict | None = None
+    if (is_asme and pt_pressures and pt_temperatures
+            and len(pt_pressures) == len(pt_temperatures) and material):
+        idx = pt_pressures.index(max(pt_pressures))
+        case1_p_barg = float(pt_pressures[idx])
+        case1_t_c = float(pt_temperatures[idx])
         try:
-            s_mpa = get_allowable_stress(first_spec or material, design_temp_c)["S_mpa"]
+            first_spec = next(
+                ((r.get("material_spec") or "").strip() for r in pipe_data
+                 if (r.get("material_spec") or "").strip()),
+                "",
+            )
+            case1_s_mpa = get_allowable_stress(first_spec or material, case1_t_c)["S_mpa"]
+            case1 = {"P_barg": case1_p_barg, "T_c": case1_t_c, "S_mpa": case1_s_mpa}
         except Exception as e:
-            logger.warning("Stress lookup failed for %s/%s: %s", first_spec or material, design_temp_c, e)
-            have_design_ctx = False
+            logger.warning(
+                "Case 1 stress lookup failed for %s/%s: %s",
+                first_spec or material, case1_t_c, e,
+            )
+
+    # Resolve Case 2 (Design Point) from the request.
+    case2: dict | None = None
+    if (is_asme and design_pressure_barg is not None
+            and design_temp_c is not None and material):
+        try:
+            first_spec = next(
+                ((r.get("material_spec") or "").strip() for r in pipe_data
+                 if (r.get("material_spec") or "").strip()),
+                "",
+            )
+            case2_s_mpa = get_allowable_stress(first_spec or material, design_temp_c)["S_mpa"]
+            case2 = {
+                "P_barg": float(design_pressure_barg),
+                "T_c": float(design_temp_c),
+                "S_mpa": case2_s_mpa,
+            }
+        except Exception as e:
+            logger.warning(
+                "Case 2 stress lookup failed for %s/%s: %s",
+                first_spec or material, design_temp_c, e,
+            )
+
+    have_any_case = case1 is not None or case2 is not None
 
     for row in pipe_data:
         nps = row.get("size_inch") or row.get("nps")
 
         # OD correction (ASME-only). Non-ASME codes return None and we
-        # skip the rest of the per-row logic. We still need to round any
-        # AI-supplied od_mm / wall_thickness_mm before continuing.
+        # skip the rest of the per-row logic.
         od = lookup_od(nps, pipe_code=pipe_code)
         if od is None:
             _round_dims(row)
             continue
         row["od_mm"] = od
 
-        if not have_design_ctx:
+        if not have_any_case:
             _round_dims(row)
             continue
 
-        # Eq. 3a: P × D / (2(SEW + PY)) + CA, then × 1/(1-mill_tol)
+        # Eq. 3a, dual-case. Compute t_press for whichever cases are
+        # available; if both are present we take the larger (matches the
+        # UI's `Math.max(t_press_1, t_press_2)`).
         try:
-            calc = calculate_wall_thickness(
-                od_mm=od,
-                design_pressure_barg=design_pressure_barg,
-                allowable_stress_mpa=s_mpa,
-                joint_factor=JOINT_EFFICIENCY_E,
-                corrosion_allowance_mm=ca_mm,
-            )
-            t_min = calc["t_minimum_mm"]
+            t_press_candidates = []
+            if case1 is not None:
+                t_press_candidates.append(_eq3a_t_press(
+                    od_mm=od, p_barg=case1["P_barg"], s_mpa=case1["S_mpa"],
+                    e_factor=JOINT_EFFICIENCY_E,
+                ))
+            if case2 is not None:
+                t_press_candidates.append(_eq3a_t_press(
+                    od_mm=od, p_barg=case2["P_barg"], s_mpa=case2["S_mpa"],
+                    e_factor=JOINT_EFFICIENCY_E,
+                ))
+            t_press = max(t_press_candidates)
+            # Use calculate_wall_thickness only for the CA + mill-tol step
+            # (it accepts a pre-computed t_press equivalent via design pressure
+            # — easier to just compute t_m and t_min inline here).
+            from app.utils.engineering_constants import MILL_TOLERANCE_FRACTION
+            t_m = t_press + ca_mm
+            t_min = t_m / (1 - MILL_TOLERANCE_FRACTION)
         except Exception as e:
             logger.warning("Eq. 3a failed for NPS %s: %s — leaving AI value", nps, e)
             _round_dims(row)
             continue
 
         # Project floor — class-conventional minimum schedule per (class, NPS).
-        # `floor_for` returns None when no rule applies (custom class, NPS out
-        # of declared range, or rule explicitly "calc-only"); resolve that
-        # to a 0 floor so Eq. 3a alone wins.
         floor_sched = schedule_floor_lookup.floor_for(piping_class, nps)
         floor_wt = lookup_wall_thickness(nps, floor_sched)
 
@@ -192,3 +235,21 @@ def correct_pipe_data(
         _round_dims(row)
 
     return pipe_data
+
+
+def _eq3a_t_press(
+    od_mm: float,
+    p_barg: float,
+    s_mpa: float,
+    e_factor: float = 1.0,
+    w_factor: float = 1.0,
+    y_coefficient: float = 0.4,
+) -> float:
+    """ASME B31.3 §304.1.2 Eq. 3a pressure-thickness term:
+        t = (P × D) / (2 × (S × E × W + P × Y))
+
+    Returns t in mm (input D in mm, P in barg, S in MPa). The CA + mill-
+    tolerance steps are applied by the caller — this is just the bare
+    pressure-thickness term, matching the UI's `t_press_1` / `t_press_2`."""
+    p_mpa = p_barg * 0.1
+    return (p_mpa * od_mm) / (2 * (s_mpa * e_factor * w_factor + p_mpa * y_coefficient))

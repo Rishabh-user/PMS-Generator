@@ -1657,6 +1657,22 @@ STYLE:
 - Keep replies under ~120 words unless the user explicitly asks for detail.
 """
 
+# Replace the literal §5.5 rating-letter line with the dynamic version
+# from `app/data/pressure_ratings.json` so the agent prompt's rating list
+# never drifts from the canonical source. The literal must match exactly
+# the line as written above; if you reformat the prompt, update this
+# replacement target too.
+def _patch_rating_line(prompt: str) -> str:
+    from app.services import rating_lookup
+    dynamic_line = " | ".join(
+        f"{letter}={label}" for letter, label in rating_lookup.all_pairs()
+    )
+    literal = "A=150# | B=300# | D=600# | E=900# | F=1500# | G=2500#"
+    return prompt.replace(literal, dynamic_line)
+
+
+_AGENT_SYSTEM_PROMPT = _patch_rating_line(_AGENT_SYSTEM_PROMPT)
+
 
 def _format_matches_for_ai(matches: list[ClassMatch]) -> str:
     if not matches:
