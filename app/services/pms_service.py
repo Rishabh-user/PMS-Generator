@@ -52,6 +52,223 @@ def _norm(s: str) -> str:
     return re.sub(r'\s+', ' ', (s or '').strip()).upper()
 
 
+def _clip(text: str, limit: int = 120) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def _size_sort_key(size: str) -> float:
+    try:
+        return float(str(size).replace('"', '').strip())
+    except (TypeError, ValueError):
+        return 1e9
+
+
+def _format_size_span(start: str, end: str) -> str:
+    return f'{start}"' if start == end else f'{start}"-{end}"'
+
+
+def _compress_pipe_runs(
+    pipe_rows: list[dict],
+    *,
+    value_builder,
+    max_groups: int = 5,
+) -> str:
+    rows = sorted(
+        [row for row in pipe_rows if isinstance(row, dict) and row.get("size_inch")],
+        key=lambda row: _size_sort_key(row.get("size_inch", "")),
+    )
+    if not rows:
+        return ""
+
+    groups: list[str] = []
+    current_value = value_builder(rows[0])
+    start = end = str(rows[0].get("size_inch", ""))
+
+    for row in rows[1:]:
+        row_value = value_builder(row)
+        size = str(row.get("size_inch", ""))
+        if row_value == current_value:
+            end = size
+            continue
+        groups.append(f"{_format_size_span(start, end)} => {current_value}")
+        current_value = row_value
+        start = end = size
+
+    groups.append(f"{_format_size_span(start, end)} => {current_value}")
+    if len(groups) > max_groups:
+        return " | ".join(groups[:max_groups]) + " | …"
+    return " | ".join(groups)
+
+
+async def _select_cached_pattern_examples(
+    *,
+    piping_class: str,
+    material: str,
+    corrosion_allowance: str,
+    service: str,
+    rating: str,
+    limit: int = 2,
+) -> list[dict]:
+    """Select the strongest cached PMS payloads to use as AI pattern anchors."""
+    if not db_service.is_available():
+        return []
+
+    rows = await db_service.list_cached_pms_examples(limit=80)
+    scored: list[dict] = []
+    for row in rows:
+        payload = row.get("response_json") or {}
+        if not isinstance(payload, dict):
+            continue
+        candidate = {
+            "piping_class": row.get("piping_class", ""),
+            "rating": payload.get("rating", ""),
+            "material": row.get("material", ""),
+            "corrosion_allowance": row.get("corrosion_allowance", ""),
+            "service": row.get("service", ""),
+        }
+        score = data_service.score_reference_entry(
+            target_piping_class=piping_class,
+            target_material=material,
+            target_corrosion_allowance=corrosion_allowance,
+            target_service=service,
+            target_rating=rating,
+            candidate=candidate,
+        )
+        if score == float("-inf"):
+            continue
+        enriched = dict(row)
+        enriched["_similarity_score"] = round(score, 2)
+        scored.append(enriched)
+
+    scored.sort(
+        key=lambda row: (
+            row.get("_similarity_score", float("-inf")),
+            row.get("updated_at") or "",
+        ),
+        reverse=True,
+    )
+    return scored[:limit]
+
+
+def _summarize_cached_pattern(example: dict) -> str:
+    payload = example.get("response_json") or {}
+    pipe_rows = payload.get("pipe_data") or []
+    sizes = [str(row.get("size_inch", "")) for row in pipe_rows if isinstance(row, dict) and row.get("size_inch")]
+    size_span = (
+        f'{sizes[0]}"-{sizes[-1]}" ({len(sizes)} sizes)'
+        if len(sizes) >= 2
+        else (f'{sizes[0]}" (1 size)' if sizes else "n/a")
+    )
+    schedule_pattern = _compress_pipe_runs(
+        pipe_rows,
+        value_builder=lambda row: (row.get("schedule") or "-").strip() or "-",
+    ) or "n/a"
+    transition_pattern = _compress_pipe_runs(
+        pipe_rows,
+        value_builder=lambda row: _clip(
+            " / ".join(
+                part for part in [
+                    row.get("pipe_type", ""),
+                    row.get("material_spec", ""),
+                    row.get("ends", ""),
+                ]
+                if part
+            ) or "n/a",
+            72,
+        ),
+        max_groups=3,
+    ) or "n/a"
+    flange = payload.get("flange") or {}
+    fittings = payload.get("fittings") or {}
+    notes = payload.get("notes") or []
+
+    return (
+        f"- {example.get('piping_class', '?')} "
+        f"(score {example.get('_similarity_score', 0):.1f}) | "
+        f"{payload.get('rating', '?')} | {example.get('material', '?')} | "
+        f"CA {example.get('corrosion_allowance', '?')} | "
+        f"sizes {size_span}\n"
+        f"  schedules: {schedule_pattern}\n"
+        f"  pipe/transitions: {_clip(payload.get('pipe_code', ''), 54) or 'n/a'} | {transition_pattern}\n"
+        f"  fittings/flange: {_clip(fittings.get('fitting_type', ''), 42) or 'n/a'} | "
+        f"{_clip(flange.get('standard', ''), 34) or 'n/a'} | "
+        f"{_clip(flange.get('face_type', ''), 34) or 'n/a'} | notes={len(notes)}"
+    )
+
+
+def _build_pattern_guidance(
+    *,
+    req: PMSRequest,
+    piping_class: str,
+    rating: str,
+    reference_entries: list[dict],
+    cached_examples: list[dict],
+) -> str:
+    """Build a compact inference guide for unmatched or custom requests."""
+    normalized_rating = data_service.normalize_rating(rating)
+    target_family = data_service.material_family(req.material)
+    pressure_system = (
+        "API 6A high-pressure"
+        if normalized_rating in {"2500#", "5000#", "10000#"}
+        else "ASME B16.5 / B31.3"
+    )
+    target_traits: list[str] = []
+    if data_service.has_nace_trait(req.material, req.service, piping_class):
+        target_traits.append("NACE")
+    if data_service.has_low_temp_trait(req.material, req.service, piping_class):
+        target_traits.append("Low Temperature")
+    service_traits = sorted(data_service.service_traits(req.service))
+
+    lines = [
+        "Target inference fingerprint:",
+        (
+            f"family={data_service.material_family(req.material)} | rating={rating} | "
+            f"pressure_system={pressure_system} | CA={req.corrosion_allowance or 'NIL'} | "
+            f"suffix_traits={', '.join(target_traits) if target_traits else 'standard'} | "
+            f"service_traits={', '.join(service_traits) if service_traits else 'general'}"
+        ),
+        "If an exact rule is missing, infer in this order:",
+        "1. Closest same-family + same-suffix examples (NACE / LT / material family).",
+        "2. Nearest-rating examples within the same pressure system.",
+        "3. Retrieved RAG standards excerpts for the final material, flange, fitting, and valve wording.",
+        "4. Produce the full PMS JSON anyway; only note assumptions when examples genuinely diverge.",
+    ]
+
+    if target_family == "NICKEL_CRA":
+        lines.append(
+            "Unsupported material-family handling: this request is a nickel-based CRA "
+            "(e.g. Inconel/Hastelloy/Monel family). Reuse the closest corrosion-resistant "
+            "project pattern for structure and schedules, preferring SDSS first, then DSS, "
+            "then SS316L if needed; keep all emitted MOC/spec strings faithful to the "
+            "requested alloy and use RAG to refine ASTM/ASME wording."
+        )
+
+    if reference_entries:
+        lines.append("Closest catalogue anchors:")
+        for entry in reference_entries[:4]:
+            lines.append(
+                f"- {entry.get('piping_class', '?')} | {entry.get('rating', '?')} | "
+                f"{entry.get('material', '?')} | CA {entry.get('corrosion_allowance', '?')} | "
+                f"service {_clip(entry.get('service', ''), 84) or 'n/a'} | "
+                f"score {entry.get('_similarity_score', 0):.1f}"
+            )
+
+    if cached_examples:
+        lines.append("Closest full PMS anchors from cache:")
+        for example in cached_examples[:2]:
+            lines.append(_summarize_cached_pattern(example))
+    else:
+        lines.append(
+            "No cached full PMS anchors are available in pms_cache for this request; "
+            "lean more heavily on the catalogue anchors plus the retrieved RAG context."
+        )
+
+    return "\n".join(lines)
+
+
 def _apply_hydrotest(pms: PMSResponse) -> PMSResponse:
     """Enforce the mandatory hydrotest rule on any PMSResponse (fresh or cached).
     P_hydrotest = pressures[0] × 1.5  — the first (coldest) P-T column.
@@ -188,15 +405,75 @@ def _determine_class_type(piping_class: str) -> str:
     return "standard"
 
 
+def _normalize_pt_table(pt_data: dict) -> dict:
+    """Fix common AI mistakes in P-T arrays so all three lists have equal length.
+
+    Known mistakes this corrects:
+    1. -29 (or -46) listed as a standalone temperatures entry instead of only
+       appearing in the first temp_label string → it gets dropped and the next
+       value (50) becomes the first entry.
+    2. temp_labels shorter than temperatures/pressures (AI grouped -29+50 into
+       one label but still emitted both as separate temperature entries).
+    3. Duplicate consecutive temperature values (e.g. 121 appearing twice).
+    4. pressures and temperatures counts differ.
+    """
+    temps = [float(t) for t in pt_data.get("temperatures", [])]
+    presses = [float(p) for p in pt_data.get("pressures", [])]
+    labels = list(pt_data.get("temp_labels", []))
+
+    if not temps:
+        return pt_data
+
+    # Step 1: remove the -29 / -46 standalone entry when it causes a mismatch.
+    # Heuristic: if first temp is ≤ -29 AND len(temps) == len(labels) + 1 AND
+    # the first label already contains "TO" (meaning it spans the range), the
+    # -29 is redundant.
+    if (len(temps) == len(labels) + 1
+            and temps[0] <= -29
+            and labels
+            and "TO" in labels[0].upper()):
+        temps = temps[1:]
+        presses = presses[1:] if len(presses) > len(labels) else presses
+
+    # Step 2: deduplicate consecutive duplicate temperatures (e.g. [100, 121, 121]).
+    deduped_temps: list[float] = []
+    deduped_presses: list[float] = []
+    for i, t in enumerate(temps):
+        if deduped_temps and t == deduped_temps[-1]:
+            continue
+        deduped_temps.append(t)
+        if i < len(presses):
+            deduped_presses.append(presses[i])
+
+    # Step 3: align pressures length to temps (truncate or pad with last value).
+    n = len(deduped_temps)
+    while len(deduped_presses) < n:
+        deduped_presses.append(deduped_presses[-1] if deduped_presses else 0.0)
+    deduped_presses = deduped_presses[:n]
+
+    # Step 4: align temp_labels length to n.
+    while len(labels) < n:
+        t_val = deduped_temps[len(labels)]
+        labels.append(str(int(t_val)) if t_val == int(t_val) else str(t_val))
+    labels = labels[:n]
+
+    return {
+        "temperatures": deduped_temps,
+        "pressures": deduped_presses,
+        "temp_labels": labels,
+    }
+
+
 def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest, piping_class_override: str | None = None) -> PMSResponse:
     """Merge JSON P-T data with AI-generated fields into a PMSResponse."""
     pt_data = entry.get("pressure_temperature", {})
 
-    # For custom classes the catalogue entry has no P-T data; the AI was
-    # asked to generate it via generate_pt=True.  Fall back to ai_data's
-    # pressure_temperature block so the table isn't empty.
-    if not pt_data.get("temperatures") and ai_data.get("pressure_temperature"):
-        pt_data = ai_data["pressure_temperature"]
+    # Only for 5000# / 10000# and any other custom-rated class (req.custom_rating
+    # is set): the catalogue has no P-T entry, so the AI generates it.
+    # Run the normalizer to fix common AI array-length mistakes before use.
+    # Catalogue classes (A/B/D/E/F/G series with recorded P-T) are never touched.
+    if req.custom_rating and not pt_data.get("temperatures") and ai_data.get("pressure_temperature"):
+        pt_data = _normalize_pt_table(ai_data["pressure_temperature"])
 
     pt = PressureTemperature(
         temperatures=pt_data.get("temperatures", []),
@@ -407,20 +684,15 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             "material": req.material,
         }
 
-    # Get reference entries for AI context / few-shots
-    all_entries = data_service.get_all_entries()
-    # Use custom_rating when provided — the piping_class may be a custom code
-    # whose catalogue entry (if any) uses a different rating.
     rating = req.custom_rating or entry.get("rating", "")
-    reference_entries = [
-        e for e in all_entries
-        if e.get("rating") == rating and e["piping_class"] != req.piping_class
-    ][:3]
-    other_entries = [
-        e for e in all_entries
-        if e.get("rating") != rating
-    ][:2]
-    reference_entries.extend(other_entries)
+    reference_entries = data_service.select_reference_entries(
+        piping_class=req.piping_class,
+        material=req.material,
+        corrosion_allowance=req.corrosion_allowance,
+        service=req.service,
+        rating=rating,
+        limit=6,
+    )
 
     # ── Custom class: resolve proper piping class code ────────────────────
     # Resolve FIRST so the correct class code (e.g. "K10") goes into both
@@ -440,6 +712,15 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             req.piping_class, effective_piping_class,
         )
 
+    reference_entries = data_service.select_reference_entries(
+        piping_class=effective_piping_class,
+        material=req.material,
+        corrosion_allowance=req.corrosion_allowance,
+        service=req.service,
+        rating=rating,
+        limit=6,
+    )
+
     # RAG: retrieve relevant ASME standard excerpts using the RESOLVED class code.
     # Returns (context_string, source_map) where source_map = {1: "ASME B16.5_2020", ...}
     # so we can resolve the LLM's integer rag_docs_used back to real document names.
@@ -454,6 +735,21 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
     # For custom classes the synthetic entry has no P-T data; instruct the
     # AI to generate pressure_temperature + hydrotest_pressure from ASME tables.
     is_custom_class = not bool(entry.get("pressure_temperature", {}).get("temperatures"))
+    cached_pattern_examples = await _select_cached_pattern_examples(
+        piping_class=effective_piping_class,
+        material=req.material,
+        corrosion_allowance=req.corrosion_allowance,
+        service=req.service,
+        rating=rating,
+        limit=2,
+    )
+    pattern_guidance = _build_pattern_guidance(
+        req=req,
+        piping_class=effective_piping_class,
+        rating=rating,
+        reference_entries=reference_entries,
+        cached_examples=cached_pattern_examples,
+    )
 
     # Call AI to generate everything (P-T included for custom classes).
     # generate_pms_with_ai raises AIGenerationError with a specific reason on
@@ -469,6 +765,7 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             reference_entries=reference_entries,
             rag_context=rag_context,
             generate_pt=is_custom_class,
+            pattern_guidance=pattern_guidance,
         )
     except AIGenerationError as e:
         raise RuntimeError(
@@ -552,20 +849,43 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             if m:
                 chunk_texts[int(m.group(1))] = m.group(2).strip()
 
-        used_indices = ai_data.get("rag_docs_used", [])
-        if isinstance(used_indices, list) and used_indices:
-            valid = [int(n) for n in used_indices
-                     if str(n).lstrip("-").isdigit() and int(n) in rag_source_map]
-        else:
-            valid = list(rag_source_map.keys())
-
-        if valid:
+        def _build_note(indices: list[int]) -> str:
+            valid_idx = [n for n in indices
+                         if isinstance(n, int) and n in rag_source_map]
+            if not valid_idx:
+                valid_idx = list(rag_source_map.keys())
             parts = []
-            for n in valid:
+            for n in valid_idx:
                 name = rag_source_map[n]
                 text = chunk_texts.get(n, "")
                 parts.append(f"[{n}] {name}\n{text}")
-            rag_note = "\n\n".join(parts)
+            return "\n\n---\n\n".join(parts)
+
+        all_keys = list(rag_source_map.keys())
+        used_raw = ai_data.get("rag_docs_used", {})
+
+        if isinstance(used_raw, dict) and used_raw:
+            # New format: per-section mapping {"Fittings": [1, 2], "Flange": [1], ...}
+            for section, src in pms.data_sources.items():
+                if src != "LLM (RAG)":
+                    continue
+                raw_idxs = used_raw.get(section, [])
+                try:
+                    idxs = [int(n) for n in (raw_idxs or [])]
+                except (TypeError, ValueError):
+                    idxs = []
+                pms.data_source_notes[section] = _build_note(idxs if idxs else all_keys)
+        else:
+            # Old flat-list format or empty — assign all retrieved docs to every section
+            if isinstance(used_raw, list) and used_raw:
+                try:
+                    flat_idxs = [int(n) for n in used_raw
+                                 if str(n).lstrip("-").isdigit()]
+                except (TypeError, ValueError):
+                    flat_idxs = all_keys
+            else:
+                flat_idxs = all_keys
+            rag_note = _build_note(flat_idxs)
             for section, src in pms.data_sources.items():
                 if src == "LLM (RAG)":
                     pms.data_source_notes[section] = rag_note
@@ -614,6 +934,40 @@ async def _store_in_caches(key: str, req: PMSRequest, pms: PMSResponse):
         valvesheet_sync_service.sync_in_background(pms, is_regenerate=is_regenerate)
 
 
+def _backfill_rag_notes(pms: PMSResponse) -> None:
+    """Populate data_source_notes from RAG for cached entries that predate the feature."""
+    try:
+        rag_context, rag_source_map = retrieve_context(
+            piping_class=pms.piping_class,
+            material=pms.material,
+            corrosion_allowance=pms.corrosion_allowance,
+            service=pms.service,
+            rating=pms.rating,
+        )
+        if not rag_context or not rag_source_map:
+            return
+        chunk_texts: dict[int, str] = {}
+        for chunk in re.split(r'\n\n---\n\n', rag_context):
+            chunk = chunk.strip()
+            m = re.match(r'^\[(\d+)\]\s*[^\n]+\n(.*)', chunk, re.DOTALL)
+            if m:
+                chunk_texts[int(m.group(1))] = m.group(2).strip()
+        valid = list(rag_source_map.keys())
+        if not valid:
+            return
+        parts = []
+        for n in valid:
+            name = rag_source_map[n]
+            text = chunk_texts.get(n, "")
+            parts.append(f"[{n}] {name}\n{text}")
+        rag_note = "\n\n---\n\n".join(parts)
+        for section, src in (pms.data_sources or {}).items():
+            if src == "LLM (RAG)":
+                pms.data_source_notes[section] = rag_note
+    except Exception as e:
+        logger.warning("RAG notes backfill failed for %s: %s", pms.piping_class, e)
+
+
 async def generate_pms(req: PMSRequest) -> PMSResponse:
     """
     Generate PMS with layered caching:
@@ -652,7 +1006,12 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
     # L1: In-memory cache
     if key in _pms_cache:
         logger.info("L1 memory cache HIT for %s (key=%s)", req.piping_class, key)
-        return _apply_hydrotest(_pms_cache[key])
+        pms = _pms_cache[key]
+        if not pms.data_source_notes and any(
+            src == "LLM (RAG)" for src in (pms.data_sources or {}).values()
+        ):
+            _backfill_rag_notes(pms)
+        return _apply_hydrotest(pms)
 
     # L2: PostgreSQL cache
     if db_service.is_available():
@@ -679,6 +1038,15 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
                     req.piping_class, key, cached.get("version", "?"),
                 )
                 _apply_hydrotest(pms)
+                # Backfill data_source_notes for entries cached before this
+                # feature was added (data_source_notes would be empty {}).
+                if not pms.data_source_notes and any(
+                    src == "LLM (RAG)" for src in (pms.data_sources or {}).values()
+                ):
+                    _backfill_rag_notes(pms)
+                    if pms.data_source_notes:
+                        await _store_in_caches(key, req, pms)
+                        logger.info("Backfilled data_source_notes for %s", req.piping_class)
                 _pms_cache[key] = pms  # Promote to L1
                 return pms
         else:

@@ -39,10 +39,31 @@ You generate PMS (Piping Material Specification) data with 100% accuracy to ASME
 Return ONLY valid JSON. No markdown fences, no explanation, no preamble, no extra text — not even after a web search.
 Your ENTIRE response must start with { and end with }.
 
+INFERENCE BEHAVIOUR:
+- Do NOT fail or go generic just because the exact material/class combination is missing from the project rules.
+- Learn the PMS structure from the closest existing project patterns supplied in the user prompt, then refine the material/spec wording with retrieved RAG context.
+- Preserve the requested material identity in emitted specs/MOC text even when you borrow structure from a nearby project family.
+- For unsupported corrosion-resistant nickel alloys (for example Inconel 625 / Alloy 625 / UNS N06625), infer from the nearest corrosion-resistant project family first:
+  SDSS -> DSS -> SS316L, unless the retrieved context clearly supports a better analogue.
+- Avoid blindly reusing a stock answer. Reconcile rating system, suffix traits (NACE / LT), corrosion allowance, service, nearest examples, and RAG before producing the PMS.
+- For generated pressure-temperature tables, keep temperatures unique and never duplicate the final temperature breakpoint.
+
 WEB SEARCH GUIDANCE (applies when the web_search tool is available):
 - Search freely for any information that helps generate accurate, complete PMS data — engineering standards, technical specs, material datasheets, product catalogues, manufacturer data, etc.
 - Limit to 2–3 focused searches per generation.
 - If a search result contradicts the project-specific rules in this prompt, trust the project rules."""
+
+
+def _coerce_rag_context_text(rag_context) -> str | None:
+    """Accept either raw context text or the (context, source_map) tuple."""
+    if isinstance(rag_context, tuple):
+        if not rag_context:
+            return None
+        first = rag_context[0]
+        return str(first) if first else None
+    if rag_context is None:
+        return None
+    return str(rag_context)
 
 
 def _build_generation_prompt(
@@ -54,8 +75,10 @@ def _build_generation_prompt(
     reference_entries: list[dict],
     rag_context: str | None = None,
     generate_pt: bool = False,
+    pattern_guidance: str | None = None,
 ) -> str:
     """Build the prompt that teaches the AI the project rules and patterns."""
+    rag_context = _coerce_rag_context_text(rag_context)
 
     # Build compact pattern examples from similar catalogue classes.
     # Shows P-T data + key specs so the AI can match the same style/values.
@@ -69,13 +92,21 @@ def _build_generation_prompt(
             # Compact P-T preview (first 5 points)
             pt_preview = list(zip(temps[:5], pres[:5]))
             suffix = "…" if len(temps) > 5 else ""
+            score = e.get("_similarity_score")
+            score_text = f" | similarity {float(score):.1f}" if score is not None else ""
             lines.append(
                 f"  {e.get('piping_class','?')} | {e.get('rating','?')} | "
-                f"{e.get('material','?')} | CA {e.get('corrosion_allowance','?')}"
+                f"{e.get('material','?')} | CA {e.get('corrosion_allowance','?')}{score_text}"
             )
+            if e.get("service"):
+                lines.append(f"    Service: {e.get('service')}")
             if pt_preview:
                 lines.append(f"    P-T (temp°C, barg): {pt_preview}{suffix}")
-        lines.append("Use these to match the P-T style and value range for the same rating/material family.")
+        lines.append(
+            "Use the closest same-family / same-suffix examples first. "
+            "If the exact request is not catalogued, blend the nearest family pattern "
+            "with the nearest rating/pressure-system pattern and confirm with RAG."
+        )
         lines.append("=== END PATTERNS ===")
         ref_section = "\n".join(lines) + "\n"
 
@@ -91,6 +122,31 @@ After generating, list the numbers of documents you actually referenced in "rag_
 === END OF RETRIEVED DOCUMENTS ===
 """
 
+    pattern_section = ""
+    if pattern_guidance:
+        pattern_section = f"""
+=== REQUEST-SPECIFIC PATTERN INFERENCE GUIDE ===
+{pattern_guidance}
+
+Inference rule for this request:
+- Do NOT stop at "not explicitly in rules" or "not in prompt".
+- Learn the shape of the PMS from the closest project patterns above.
+- Use retrieved RAG excerpts to settle standards/material wording you are not certain about.
+- Return a complete PMS JSON even for custom/unmatched requests; only capture real uncertainty as notes.
+=== END OF PATTERN GUIDE ===
+"""
+
+    unknown_material_section = """
+=== WHEN THE REQUESTED MATERIAL IS NOT EXPLICITLY IN THE PROJECT TABLES ===
+- Keep the requested material name/spec identity in the generated PMS.
+- Infer the structural pattern from the nearest project family example.
+- For nickel-based CRA materials such as Inconel 625 / Alloy 625 / UNS N06625:
+  use the nearest corrosion-resistant family pattern (prefer SDSS, then DSS, then SS316L),
+  then refine the final MOC/spec wording from RAG or engineering knowledge.
+- Do NOT collapse to a random CS/NACE pattern just because CA or rating happens to match.
+=== END UNKNOWN MATERIAL RULES ===
+"""
+
     if generate_pt:
         pt_instruction = """\
 PRESSURE-TEMPERATURE DATA — generate this (custom class, no catalogue entry).
@@ -101,6 +157,14 @@ PRESSURE-TEMPERATURE DATA — generate this (custom class, no catalogue entry).
   • Rating is 5000#  (J-series) → USE API 6A  (5000 psi  = 344.7 barg ≈ 345 barg)
   • Rating is 10000# (K-series) → USE API 6A  (10000 psi = 689.5 barg ≈ 690 barg)
   • Any other rating (150#–1500#) → USE ASME B16.5 Table 2 / B31.3
+
+═══ ARRAY LENGTH RULE (CRITICAL — applies to ALL paths) ═══
+
+  temperatures, pressures, and temp_labels MUST ALL HAVE THE SAME COUNT.
+  Each entry represents ONE display column in the P-T table.
+  The value -29 (or -46) is NEVER a standalone array entry — it appears
+  only inside the first temp_label string (e.g. "-29 TO 50").
+  The first array entry is the UPPER BOUND of the first display range.
 
 ═══ STEP 2a — API 6A path (2500# / 5000# / 10000#) ═══
 
@@ -113,40 +177,50 @@ PRESSURE-TEMPERATURE DATA — generate this (custom class, no catalogue entry).
     Class T: -46°C to 204°C    (high temperature service)
     Class U: -46°C to 260°C    (very high temperature service)
 
-  Temperature breakpoints within the selected class range — use only:
-    -29, 50, 100, [121 or 177 or 204 per class limit]
-  Do NOT go past the temperature class limit. Do NOT repeat any temperature.
+  Array entries (upper-bound of each display column) — pick from:
+    50, 100, [121  for Class P]
+    50, 100, 150, [177  for Class S]
+    50, 100, 150, [204  for Class T]
+    50, 100, 150, 200, [260  for Class U]
+  Do NOT include -29 or -46 as a separate entry. Do NOT repeat any value.
+  Pressure at every entry = the rated working pressure (constant).
 
-  Pressure at every breakpoint = the rated working pressure (constant).
-
-  Example for 10000# Class P (-29°C to 121°C):
-    temperatures:  [-29, 50, 100, 121]
-    pressures:     [690, 690, 690, 690]
+  CORRECT example for 10000# Class P (-29°C to 121°C)  ← ALL arrays length 3:
+    temperatures:  [50, 100, 121]
+    pressures:     [690, 690, 690]
     temp_labels:   ["-29 TO 50", "100", "121"]
+
+  CORRECT example for 5000# Class S (-46°C to 177°C)  ← ALL arrays length 4:
+    temperatures:  [50, 100, 150, 177]
+    pressures:     [345, 345, 345, 345]
+    temp_labels:   ["-46 TO 50", "100", "150", "177"]
 
 ═══ STEP 2b — ASME B16.5 path (150# to 1500#) ═══
 
   For ASME classes the PRESSURE MUST DECREASE as temperature increases.
   Use ASME B16.5 Table 2 material-group allowable-stress ratios.
 
-  Temperature breakpoints (°C): -29, 50, 100, 150, 200, 250, 300
-  Trim at the material's upper service limit:
-    CS / LTCS: up to 400°C  |  SS316L: up to 300°C  |  DSS/SDSS: up to 300°C
+  Array entries (upper-bound of each display column):
+    38, 50, 100, 150, 200, 250, 300  (trim at material upper service limit)
+    CS / LTCS: add 350, 400  |  SS316L / DSS / SDSS: stop at 300
+  Do NOT include -29 as a separate entry; it belongs only in the first label.
 
-  Pressure at -29°C = the ASME B16.5 class base rating.
+  Pressure at entry 38°C = the ASME B16.5 class base rating.
   Pressure MUST be LOWER at higher temperatures (min ~30% drop from base to
   the top of the table, distributed across temperature steps).
 
-  Example for 300# CS Group 1.1:
-    temperatures:  [-29, 50, 100, 150, 200, 250, 300, 350, 400]
-    pressures:     [51.1, 51.1, 51.1, 48.3, 46.5, 44.8, 43.1, 40.0, 37.9]
+  CORRECT example for 300# CS Group 1.1  ← ALL arrays length 9:
+    temperatures:  [38, 50, 100, 150, 200, 250, 300, 350, 400]
+    pressures:     [51.1, 50.1, 46.6, 44.8, 43.1, 41.4, 39.6, 37.9, 36.2]
+    temp_labels:   ["-29 TO 38", "50", "100", "150", "200", "250", "300", "350", "400"]
 
 ═══ STEP 3 — Formatting rules ═══
 
+  • ALL THREE ARRAYS must have the SAME LENGTH — count them before emitting.
   • temperatures: UNIQUE values only — NO DUPLICATES whatsoever.
-  • pressures: same count as temperatures.
-  • temp_labels: "-29 TO 50" for the first entry; subsequent entries are just
-    the number as a string ("100", "150", "121", …).
+  • pressures: one value per column, same count as temperatures.
+  • temp_labels: first entry is "-29 TO <first_temp>" (or "-46 TO <first_temp>" for
+    Class S/T/U); subsequent entries are the temperature as a plain string ("100", "121", …).
   • hydrotest_pressure: 1.5 × pressures[0] (the first/coldest pressure value), rounded to 2 decimal places.
 
 ═══ WEB SEARCH HINT for P-T (if web_search tool available) ═══
@@ -173,6 +247,8 @@ Include in your JSON:
 - Material: {material}
 - Corrosion Allowance: {corrosion_allowance}
 - Service: {service}
+{unknown_material_section}
+{pattern_section}
 {rag_section}
 {pt_instruction}
 
@@ -1248,10 +1324,22 @@ IMPORTANT:
         "dbb_inst_by_size": [{{"size_inch": "0.5", "code": "DBRPE20NJT"}}]
     }},
     "notes": ["<position 1 text>", "<position 2 text>", "<position 3 text>", ...],
-    "rag_docs_used": [1, 3]
+    "rag_docs_used": {{
+        "Pipe Data — Type, MOC, Schedule, Ends": [1],
+        "Fittings": [1, 2],
+        "Flange": [1, 2],
+        "Spectacle Blind": [1],
+        "Bolts / Nuts / Gaskets": [1, 2],
+        "Valves": [2, 3],
+        "Notes": [1]
+    }}
 }}
-// rag_docs_used: list the INTEGER NUMBERS of the retrieved documents above that you actually used.
-// Use only numbers that appear in [1], [2], … labels. Empty list [] if none were used.
+// rag_docs_used: object mapping each AI-generated section to the INTEGER NUMBERS of retrieved documents
+// actually used for that section. Keys must be exact section names from this list:
+//   "Pipe Data — Type, MOC, Schedule, Ends", "Fittings", "Flange", "Spectacle Blind",
+//   "Bolts / Nuts / Gaskets", "Valves", "Notes"
+// For custom-class P-T generation also include: "Pressure-Temperature Rating", "Hydrotest Pressure"
+// Use only numbers that appear in [1], [2], … labels. Omit a key if no doc was used for that section.
 
 CRITICAL:
 1. Valve *_by_size arrays MUST have one entry per pipe size (matching pipe_data count). Use "" for sizes where valve type is not available.
@@ -1292,6 +1380,7 @@ async def generate_pms_with_ai(
     reference_entries: list[dict],
     rag_context: str | None = None,
     generate_pt: bool = False,
+    pattern_guidance: str | None = None,
 ) -> dict:
     """Call Claude API to generate PMS data.
     When generate_pt=True (custom classes with no catalogue P-T), the AI also
@@ -1308,6 +1397,7 @@ async def generate_pms_with_ai(
         rating, reference_entries,
         rag_context=rag_context,
         generate_pt=generate_pt,
+        pattern_guidance=pattern_guidance,
     )
 
     # Web search tool — included only when enabled in config.
@@ -1544,6 +1634,8 @@ async def generate_class_code_with_ai(
     if not settings.anthropic_api_key:
         logger.warning("generate_class_code_with_ai: no API key — using fallback")
         return _derive_class_code_fallback(rating, material, corrosion_allowance)
+
+    rag_context = _coerce_rag_context_text(rag_context)
 
     few_shots = "\n".join(
         f"  {e.get('piping_class','?')} = "

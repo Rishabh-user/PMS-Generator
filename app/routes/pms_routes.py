@@ -90,27 +90,18 @@ async def api_preview_pms(req: PMSRequest):
                 status_code=422,
                 detail=f"Piping class '{req.piping_class}' not found in database.",
             )
-        # Collect relevant few-shot reference entries for the class-code AI call.
-        # Priority: same material family first, then diverse rating examples.
-        all_entries = data_service.get_all_entries()
-        mat_up = req.material.upper()
-
-        def _mat_family(m: str) -> str:
-            m = m.upper()
-            for fam in ('SDSS', 'DSS', 'SS316L', 'SS316', 'SS', 'LTCS', 'CS',
-                        'CUNI', 'COPPER', 'GRE', 'CPVC', 'TITANIUM'):
-                if fam in m:
-                    return fam
-            return m[:4]
-
-        target_family = _mat_family(req.material)
-        same_mat  = [e for e in all_entries if _mat_family(e.get('material','')) == target_family][:4]
-        other_mat = [e for e in all_entries if e not in same_mat][:4]
-        ref_entries = same_mat + other_mat
+        ref_entries = data_service.select_reference_entries(
+            piping_class=req.piping_class,
+            material=req.material,
+            corrosion_allowance=req.corrosion_allowance,
+            service=req.service,
+            rating=req.custom_rating,
+            limit=6,
+        )
 
         # RAG context for the class-code determination.
         # Use a clean query: "custom <rating> <material>" instead of the CUST-* placeholder.
-        rag_ctx = retrieve_context(
+        rag_ctx, _ = retrieve_context(
             piping_class=f"custom {req.custom_rating} {req.material}",
             material=req.material,
             corrosion_allowance=req.corrosion_allowance,

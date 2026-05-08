@@ -338,6 +338,49 @@ async def list_cached_classes() -> list[dict]:
         return []
 
 
+async def list_cached_pms_examples(limit: int = 80) -> list[dict]:
+    """Return recent cached PMS payloads for AI pattern guidance.
+
+    This is intentionally separate from the admin/browser helpers because the
+    AI layer needs the full response_json payload, not just summary metadata.
+    Safe default: returns [] when DB is unavailable or a read fails.
+    """
+    if not _pool:
+        return []
+    try:
+        async with _pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT display_class, version, material, corrosion_allowance,
+                       service, response_json, updated_at
+                FROM pms_cache
+                ORDER BY updated_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+        result: list[dict] = []
+        for row in rows:
+            payload = row["response_json"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            result.append(
+                {
+                    "piping_class": row["display_class"],
+                    "version": row["version"],
+                    "material": row["material"],
+                    "corrosion_allowance": row["corrosion_allowance"],
+                    "service": row["service"],
+                    "response_json": payload or {},
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                }
+            )
+        return result
+    except Exception as e:
+        logger.error("DB list_cached_pms_examples error: %s", e)
+        return []
+
+
 async def clear_all_cache() -> int:
     """Delete all cached PMS entries. Returns count deleted."""
     if not _pool:
