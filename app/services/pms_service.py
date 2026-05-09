@@ -324,8 +324,29 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
             weldolet_spec=fw.get("weldolet_spec", ""),
         )
 
+    # Build fittings_by_size deterministically from class_metadata.json —
+    # replaces whatever the AI emitted. Same Path-C pattern as pipe_data:
+    # the metadata maps each class to a fitting_group describing the
+    # small-bore/large-bore MOC split, and the builder applies global
+    # standards (B 16.9 / B 16.11 / MSS SP 97) for fields that are
+    # constant across every ASME class.
+    from app.services.fittings_builder import build_fittings_by_size, has_fitting_metadata
+    if has_fitting_metadata(req.piping_class):
+        fb_rows = build_fittings_by_size(req.piping_class)
+        logger.info(
+            "Built fittings_by_size deterministically for %s — %d rows",
+            req.piping_class, len(fb_rows),
+        )
+    else:
+        # Class isn't in metadata yet — fall back to AI (legacy path).
+        fb_rows = ai_data.get("fittings_by_size", [])
+        logger.info(
+            "Class %s has no fitting metadata — using AI-emitted fittings_by_size",
+            req.piping_class,
+        )
+
     fittings_by_size = []
-    for fb in ai_data.get("fittings_by_size", []):
+    for fb in fb_rows:
         fittings_by_size.append(FittingBySize(
             size_inch=str(fb.get("size_inch", "")),
             type=fb.get("type", ""),

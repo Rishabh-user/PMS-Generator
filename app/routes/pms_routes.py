@@ -349,15 +349,18 @@ async def api_preview_pms(req: PMSRequest):
     response_model=PMSResponse,
     response_model_exclude={
         "pipe_data", "pressure_temperature",
-        "fittings", "fittings_welded",
+        "fittings", "fittings_welded", "fittings_by_size",
     },
 )
 async def api_generate_pms(req: PMSRequest):
-    """Full PMS generation. The `pipe_data` field is omitted from the
-    response — it's now derived from `class_metadata.json` + dual-case
-    Eq. 3a, and the frontend fetches it separately via `/api/pipe-data`
-    when needed. The internal `pms.pipe_data` is still populated (Excel
-    download reads it) but isn't shipped to the JSON client."""
+    """Full PMS generation. Server-built derived fields are omitted from
+    the response — the frontend fetches them on demand via dedicated
+    endpoints:
+      • pipe_data           → /api/pipe-data
+      • pressure_temperature → /api/pressure-temperature
+      • fittings_by_size    → /api/fittings-by-size
+    The internal `pms.*` fields are still populated (Excel download reads
+    them) but aren't shipped to the JSON client."""
     try:
         return await generate_pms(req)
     except RuntimeError as e:
@@ -372,12 +375,13 @@ async def api_generate_pms(req: PMSRequest):
     response_model=PMSResponse,
     response_model_exclude={
         "pipe_data", "pressure_temperature",
-        "fittings", "fittings_welded",
+        "fittings", "fittings_welded", "fittings_by_size",
     },
 )
 async def api_regenerate_pms(req: PMSRequest):
-    """Force re-generation via AI, bypassing DB cache. `pipe_data` excluded
-    from response — see `/api/generate-pms` docstring."""
+    """Force re-generation via AI, bypassing DB cache. Server-built
+    derived fields excluded from response — see `/api/generate-pms`
+    docstring for the dedicated endpoints."""
     try:
         return await regenerate_pms(req)
     except RuntimeError as e:
@@ -470,7 +474,7 @@ async def api_download_excel_zip(req: BulkDownloadRequest):
     response_model=PMSResponse,
     response_model_exclude={
         "pipe_data", "pressure_temperature",
-        "fittings", "fittings_welded",
+        "fittings", "fittings_welded", "fittings_by_size",
     },
 )
 async def get_pms_by_class(
@@ -629,6 +633,30 @@ def ai_data_pipe_code_for(class_code: str) -> str:
     OD lookup on the pipe_code string)."""
     from app.services.pipe_data_builder import get_class_pipe_code
     return get_class_pipe_code(class_code) or ""
+
+
+@router.get("/fittings-by-size")
+async def api_fittings_by_size(piping_class: str = Query(...)):
+    """Return the fittings_by_size array for a class on demand.
+
+    Replaces the `fittings_by_size` field that used to be on
+    `/api/generate-pms` responses. Computed fresh from `class_metadata.json`'s
+    `fitting_groups` + `fitting_standards` (no AI). Same Path-C pattern as
+    `/api/pipe-data`: deterministic, fast (in-memory JSON read), and
+    returns the same row shape the response model used to ship.
+
+    Returns 404 for classes without fitting metadata wired in
+    `class_metadata.json` (uncatalogued / tubing). The frontend's
+    `attachPipeData` helper falls back to an empty list in that case."""
+    from app.services.fittings_builder import build_fittings_by_size, has_fitting_metadata
+    code = (piping_class or "").upper().strip()
+    if not has_fitting_metadata(code):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Class '{code}' has no fitting metadata in class_metadata.json. "
+                   f"Add it or use a tubing-class code.",
+        )
+    return build_fittings_by_size(code)
 
 
 @router.get("/class-metadata")

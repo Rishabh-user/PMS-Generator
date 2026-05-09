@@ -5,559 +5,550 @@
     "",
     "Schema:",
     "  • size_groups       — named arrays of NPS strings, referenced by class",
-    "                        entries to avoid repeating 22-size lists 79 times",
-    "  • classes[code]     — per-class entry:",
-    "      .pipe_code       — exact string for the 'Code' row of the PMS",
-    "      .sizes           — name from size_groups (or inline array if class-specific)",
-    "      .transition_nps  — first NPS that flips from small_bore → large_bore.",
-    "                          Sizes < transition_nps use small_bore values;",
-    "                          sizes ≥ transition_nps use large_bore values.",
-    "                          For classes with no transition (single pipe-type),",
-    "                          set transition_nps to a value above the largest size.",
-    "      .small_bore      — { pipe_type, material_spec } for sizes < transition_nps",
-    "      .large_bore      — { pipe_type, material_spec } for sizes ≥ transition_nps",
-    "      .ends            — typically 'BE' (bevel end), 'PE' (plain) for CuNi/tubing",
+    "                        entries to avoid repeating 22-size lists 85 times",
+    "  • pipe_profiles     — named pipe-block combos shared by multiple classes",
+    "                        (pipe_code / transition_nps / small_bore /",
+    "                         large_bore / ends / fittings). When >=2 classes",
+    "                        share the same MOC/transition combo, factor into",
+    "                        a profile so the duplicate doesn't have to be",
+    "                        repeated per class.",
+    "  • classes[code]     — per-class entry, two flavours:",
+    "      A) profile + sizes (compact form, most classes):",
+    "         { profile: 'CS_A', sizes: 'A_full' }",
+    "         Plus optional per-class overrides for any profile field",
+    "         (most commonly `pipe_code` for SS/DSS/SDSS A/G-series).",
+    "      B) full inline (one-off classes — A6, A70, A30/A40/A50/A51/A52/A60):",
+    "         { pipe_code, sizes, transition_nps, small_bore, large_bore,",
+    "           ends, fittings, [explicit_dimensions, cpvc_uses_asme_od, ...] }",
+    "",
+    "Resolution: get_class_meta(code) merges profile fields with class fields,",
+    "class wins. So a class with `profile: 'DSS'` and a per-class `pipe_code`",
+    "gets all DSS defaults except pipe_code.",
     "",
     "Engineering values (od_mm, schedule, wall_thickness_mm) are computed by",
     "pipe_data_builder.py at request time, not stored here:",
     "  • od_mm comes from pipe_dimensions.json (canonical ASME B36.10M)",
-    "  • schedule + wall_thickness_mm come from dual-case Eq. 3a + project floor",
-    "    (see pipe_data.correct_pipe_data and project_schedule_floors.json)",
+    "  • schedule + wall_thickness_mm come from dual-case Eq. 3a + project",
+    "    floor (see pipe_data.correct_pipe_data and project_schedule_floors.json)",
     "",
-    "Non-ASME classes (CuNi A30, Copper A40, GRE A50/51/52, CPVC A60, Titanium A70,",
-    "Tubing T80*/T90*) carry explicit per-NPS od_mm/wall_thickness_mm tables since",
-    "their dimensions don't follow ASME B36.10M. See the `non_asme_tables` block.",
+    "Non-ASME classes (CuNi A30, Copper A40, GRE A50/51/52, CPVC A60, Titanium",
+    "A70, Tubing T80*/T90*) carry explicit per-NPS od_mm/wall_thickness_mm",
+    "tables since their dimensions don't follow ASME B36.10M.",
     "",
-    "When a new class is added: append it to `classes`, restart the server."
+    "When a new class is added: append it to `classes` (use a profile if a",
+    "matching one exists, else inline), restart the server."
   ],
-
   "size_groups": {
-    "A_full":     ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "22", "24", "26", "28", "30", "32", "36"],
-    "E_full":     ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "22", "24"],
-    "E_2_NACE":   [           "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "22", "24"],
-    "G10_only":   ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12"],
-    "G20_only":   ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18"],
+    "ASME_full":         ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "22", "24", "26", "28", "30", "32", "36"],
+    "ASME_no_smallbore": [             "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "22", "24", "26", "28", "30", "32", "36"],
     "A40_copper": ["0.5", "0.75", "1", "1.5", "2", "3", "4"],
     "A70_titanium": ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6"],
-    "A30_cuni":   ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "24", "28"],
+    "A30_cuni": ["0.5", "0.75", "1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "24", "28"],
     "A50_A52_GRE": ["1", "1.5", "2", "3", "4", "6", "8", "10", "12", "14", "16", "18", "20", "24", "28", "30", "32", "34", "36", "40"],
     "A51_BONSTRAND": ["1", "1.5", "2", "3", "4", "6"],
-    "A60_CPVC":   ["0.5", "0.75", "1", "1.5", "2", "2.5", "3", "4", "6", "8"],
-    "T_short":    ["0.5", "0.75", "1", "1.5"]
+    "A60_CPVC": ["0.5", "0.75", "1", "1.5", "2", "2.5", "3", "4", "6", "8"],
+    "T_short": ["0.5", "0.75", "1", "1.5"]
   },
-
+  "_fittings_doc": [
+    "Fittings are built deterministically by fittings_builder.py from the",
+    "same metadata that drives pipe_data_builder. Each class's pipe_profile",
+    "(or inline class entry) names a `fitting_group`; the builder applies",
+    "the global `fitting_standards` defaults for fields that are constant",
+    "across all classes (elbow, tee, reducer, cap, weldolet — all ASME",
+    "B 16.9 / B 16.11 / MSS SP 97).",
+    "",
+    "Fittings transition NPS defaults to the pipe transition_nps. Override",
+    "via `fittings_transition_nps` on a class only when the project spec",
+    "puts the fittings split at a different size than the pipe split."
+  ],
+  "fitting_standards": {
+    "default": {
+      "elbow_standard": "ASME B 16.9",
+      "tee_standard": "ASME B 16.9",
+      "reducer_standard": "ASME B 16.9",
+      "cap_standard": "ASME B 16.9",
+      "plug_standard": "Hex Head, ASME B 16.11",
+      "weldolet_template": "MSS SP 97, {material_spec}"
+    }
+  },
+  "fitting_groups": {
+    "CS_A_WPB": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 234 Gr. WPB"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 234 Gr. WPB"
+      }
+    },
+    "CS_BDE_split": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 234 Gr. WPB"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 420 Gr. WPL6"
+      }
+    },
+    "CS_FG_WPHY60": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 860 WPHY 60"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 860 WPHY 60"
+      }
+    },
+    "LTCS_WPL6": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 420 Gr. WPL6"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 420 Gr. WPL6"
+      }
+    },
+    "SS316L_WP316L": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 403 Gr. WP 316L"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 403 Gr. WP 316L"
+      }
+    },
+    "DSS_S31803": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 815 Gr.WP-S UNS S31803"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 815 Gr.WP-WX UNS S31803"
+      }
+    },
+    "SDSS_S32750": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 815 Gr.WP-S UNS S32750"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 815 Gr.WP-WX UNS S32750"
+      }
+    },
+    "GALV_screwed": {
+      "small_bore": {
+        "fitting_type": "Screwed (SCRD), #3000",
+        "material_spec": "ASTM A 105N (Galvanized)"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 234 Gr. WPB (Galvanized)"
+      }
+    },
+    "GALV_BW": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 234 Gr. WPB (Galvanized)"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 234 Gr. WPB (Galvanized)"
+      }
+    },
+    "Epoxy_lined": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM A 234 Gr. WPB (Internally Epoxy Lined)"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Welded",
+        "material_spec": "ASTM A 234 Gr. WPB (Internally Epoxy Lined)"
+      }
+    },
+    "Titanium_B363": {
+      "small_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM B 363 Gr. 2"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM B 363 Gr. 2"
+      }
+    },
+    "CuNi_EEMUA234": {
+      "small_bore": {
+        "fitting_type": "Socket Weld (SW), per EEMUA 234",
+        "material_spec": "90-10 Cu-Ni per EEMUA 234"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (BW), Welded per EEMUA 234",
+        "material_spec": "90-10 Cu-Ni per EEMUA 234"
+      }
+    },
+    "Copper_split": {
+      "small_bore": {
+        "fitting_type": "Brazed Fittings (SCH to match pipe), Seamless",
+        "material_spec": "ASTM B 124 UNS C11000"
+      },
+      "large_bore": {
+        "fitting_type": "Butt Weld (SCH to match pipe), Seamless",
+        "material_spec": "ASTM B 42 UNS C12200"
+      }
+    },
+    "GRE_manufacturer": {
+      "small_bore": {
+        "fitting_type": "Taper / Taper Socket x Spigot, Adhesive bonded",
+        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) fitting, Conductive, ASTM D5685: RTRF, 11F1, or equivalent"
+      },
+      "large_bore": {
+        "fitting_type": "Taper / Taper Socket x Spigot, Adhesive bonded",
+        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) fitting, Conductive, ASTM D5685: RTRF, 11F1, or equivalent"
+      }
+    },
+    "BONSTRAND_manufacturer": {
+      "small_bore": {
+        "fitting_type": "Manufacturer standard (BONSTRAND Series 50000C)",
+        "material_spec": "Manufacturer standard (BONSTRAND Series 50000C)"
+      },
+      "large_bore": {
+        "fitting_type": "Manufacturer standard (BONSTRAND Series 50000C)",
+        "material_spec": "Manufacturer standard (BONSTRAND Series 50000C)"
+      }
+    },
+    "CPVC_manufacturer": {
+      "small_bore": {
+        "fitting_type": "Solvent cement socket per ASTM F 439, SCH 80",
+        "material_spec": "ASTM F 439 / F 437"
+      },
+      "large_bore": {
+        "fitting_type": "Solvent cement socket per ASTM F 439, SCH 80",
+        "material_spec": "ASTM F 439 / F 437"
+      }
+    }
+  },
+  "_pipe_profiles_doc": [
+    "Pipe profiles capture the {pipe_code, transition_nps, small_bore,",
+    "large_bore, ends, fittings} combination shared by multiple classes.",
+    "Each entry in `classes` references one via `profile`; the per-class",
+    "size_group lives in the `sizes` field. Classes can override any",
+    "profile field — most commonly `pipe_code` for the SS / DSS / SDSS",
+    "A-series and G-series variants where the standards citation differs",
+    "from the dual citation used by B/D/E/F.",
+    "",
+    "Add a new profile when >=2 classes share an identical pipe block.",
+    "One-off classes (Epoxy A6, Titanium A70, all non-ASME) stay inline."
+  ],
+  "pipe_profiles": {
+    "CS_A": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 20,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 106 Gr. B"
+      },
+      "large_bore": {
+        "pipe_type": "LSAW, 100% RT",
+        "material_spec": "API 5L Gr. B"
+      },
+      "ends": "BE",
+      "fittings": "CS_A_WPB"
+    },
+    "CS_BDE": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 14,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 106 Gr. B"
+      },
+      "large_bore": {
+        "pipe_type": "EFW, 100% RT",
+        "material_spec": "ASTM A 671 - CC60 Class 22"
+      },
+      "ends": "BE",
+      "fittings": "CS_BDE_split"
+    },
+    "CS_FG": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 18,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "API 5L Gr, X60 PSL-2"
+      },
+      "large_bore": {
+        "pipe_type": "LSAW, 100% RT",
+        "material_spec": "API 5L Gr, X60 PSL-2"
+      },
+      "ends": "BE",
+      "fittings": "CS_FG_WPHY60"
+    },
+    "LTCS": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 14,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 333 Gr.6"
+      },
+      "large_bore": {
+        "pipe_type": "EFW, 100% RT",
+        "material_spec": "ASTM A 671 - CC60 Class 22"
+      },
+      "ends": "BE",
+      "fittings": "LTCS_WPL6"
+    },
+    "LTCS_FG": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 14,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 333 Gr.6"
+      },
+      "large_bore": {
+        "pipe_type": "EFW, 100% RT",
+        "material_spec": "ASTM A 671 - CC60 Class 22"
+      },
+      "ends": "BE",
+      "fittings": "CS_FG_WPHY60"
+    },
+    "SS316L": {
+      "pipe_code": "ASME B 36.19M / B 36.10M",
+      "transition_nps": 10,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 312 TP 316L"
+      },
+      "large_bore": {
+        "pipe_type": "EFW, 100% RT",
+        "material_spec": "ASTM A 358 TP 316L"
+      },
+      "ends": "BE",
+      "fittings": "SS316L_WP316L"
+    },
+    "DSS": {
+      "pipe_code": "ASME B 36.19M / B 36.10M",
+      "transition_nps": 8,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 790 Gr. S31803"
+      },
+      "large_bore": {
+        "pipe_type": "Welded (Longitudinally) with 100% RT",
+        "material_spec": "ASTM A 928 Class 1, Gr. S31803"
+      },
+      "ends": "BE",
+      "fittings": "DSS_S31803"
+    },
+    "SDSS": {
+      "pipe_code": "ASME B 36.19M / B 36.10M",
+      "transition_nps": 8,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 790 Gr. S32750"
+      },
+      "large_bore": {
+        "pipe_type": "Welded (Longitudinally) with 100% RT",
+        "material_spec": "ASTM A 790 Gr. S32750"
+      },
+      "ends": "BE",
+      "fittings": "SDSS_S32750"
+    },
+    "GALV_screwed": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 14,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 106 Gr. B (Galvanized)"
+      },
+      "large_bore": {
+        "pipe_type": "LSAW, 100% RT",
+        "material_spec": "API 5L Gr. B (Galvanized)"
+      },
+      "ends": "BE",
+      "fittings": "GALV_screwed"
+    },
+    "GALV_BW": {
+      "pipe_code": "ASME B 36.10M",
+      "transition_nps": 14,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 106 Gr. B (Galvanized)"
+      },
+      "large_bore": {
+        "pipe_type": "LSAW, 100% RT",
+        "material_spec": "API 5L Gr. B (Galvanized)"
+      },
+      "ends": "BE",
+      "fittings": "GALV_BW"
+    },
+    "GRE": {
+      "pipe_code": "Manufacturer's Std.",
+      "transition_nps": 999,
+      "small_bore": {
+        "pipe_type": "Manufacturer standard (TBA)",
+        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
+      },
+      "large_bore": {
+        "pipe_type": "Manufacturer standard (TBA)",
+        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
+      },
+      "ends": "Taper / Taper Socket x Spigot, Adhesive bonded",
+      "fittings": "GRE_manufacturer",
+      "explicit_dimensions": {
+        "schedule": "-",
+        "od_mm": {
+          "1": 34.1, "1.5": 49.1, "2": 57.8, "3": 86.4, "4": 110.6, "6": 166.6,
+          "8": 218.4, "10": 274.5, "12": 327.3, "14": 359.2, "16": 410.5,
+          "18": 452.2, "20": 502.3, "24": 602.8, "28": 728.6, "30": 780.6,
+          "32": 832.6, "34": 884.6, "36": 936.4, "40": 1040.6
+        },
+        "wall_thickness_mm": {
+          "1": 3.5, "1.5": 3.5, "2": 2.3, "3": 2.3, "4": 2.7, "6": 3.8, "8": 4.8,
+          "10": 5.8, "12": 6.8, "14": 7.4, "16": 8.4, "18": 9.2, "20": 10.1,
+          "24": 12.1, "28": 14.3, "30": 15.3, "32": 16.3, "34": 17.3,
+          "36": 18.2, "40": 20.3
+        },
+        "id_mm": {
+          "1": 27.1, "1.5": 42.1, "2": 53.2, "3": 81.8, "4": 105.2, "6": 159.0,
+          "8": 208.8, "10": 262.9, "12": 313.7, "14": 344.4, "16": 393.7,
+          "18": 433.8, "20": 482.1, "24": 578.6, "28": 700.0, "30": 750.0,
+          "32": 800.0, "34": 850.0, "36": 900.0, "40": 1000.0
+        }
+      }
+    }
+  },
   "classes": {
-    "A1": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 20,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT",   "material_spec": "API 5L Gr. B"     },
-      "ends": "BE"
-    },
-    "A1N": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 20,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT",   "material_spec": "API 5L Gr. B"     },
-      "ends": "BE"
-    },
-    "B1": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "B1N": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "D1": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "D1N": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "E1": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "E_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "E1N": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "E_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "F1": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "E_full",
-      "transition_nps": 18,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "API 5L Gr, X60 PSL-2" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT",   "material_spec": "API 5L Gr, X60 PSL-2" },
-      "ends": "BE"
-    },
-    "F1N": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "E_full",
-      "transition_nps": 18,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "API 5L Gr, X60 PSL-2" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT",   "material_spec": "API 5L Gr, X60 PSL-2" },
-      "ends": "BE"
-    },
-    "G1": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "E_full",
-      "transition_nps": 18,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "API 5L Gr, X60 PSL-2" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT",   "material_spec": "API 5L Gr, X60 PSL-2" },
-      "ends": "BE"
-    },
-    "G1N": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "E_full",
-      "transition_nps": 18,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "API 5L Gr, X60 PSL-2" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT",   "material_spec": "API 5L Gr, X60 PSL-2" },
-      "ends": "BE"
-    },
+    "A1":   { "profile": "CS_A",   "sizes": "ASME_full" },
+    "A1N":  { "profile": "CS_A",   "sizes": "ASME_full" },
+    "A2N":  { "profile": "CS_A",   "sizes": "ASME_full" },
 
-    "A1L": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "A1LN": {
-      "pipe_code": "ASME B 36.10M",
-      "sizes": "A_full",
-      "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless",        "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT",    "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "B1L": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "B1LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "D1L": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "D1LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "E1L": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "E1LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "F1L": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "F1LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "G1L": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "G1LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
+    "B1":   { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "B1N":  { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "D1":   { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "D1N":  { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "B2N":  { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "D2N":  { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "E1":   { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "E1N":  { "profile": "CS_BDE", "sizes": "ASME_full" },
+    "E2N":  { "profile": "CS_BDE", "sizes": "ASME_no_smallbore" },
 
-    "A2N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 20,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B" },
-      "ends": "BE"
-    },
-    "A2LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "B2N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "B2LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "D2N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "D2LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "E2N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_2_NACE", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "E2LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_2_NACE", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "F2N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_2_NACE", "transition_nps": 18,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "API 5L Gr, X60 PSL-2" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr, X60 PSL-2" },
-      "ends": "BE"
-    },
-    "F2LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_2_NACE", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
-    "G2N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_2_NACE", "transition_nps": 18,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "API 5L Gr, X60 PSL-2" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr, X60 PSL-2" },
-      "ends": "BE"
-    },
-    "G2LN": {
-      "pipe_code": "ASME B 36.10M", "sizes": "E_2_NACE", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 333 Gr.6" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 671 - CC60 Class 22" },
-      "ends": "BE"
-    },
+    "F1":   { "profile": "CS_FG",  "sizes": "ASME_full" },
+    "F1N":  { "profile": "CS_FG",  "sizes": "ASME_full" },
+    "G1":   { "profile": "CS_FG",  "sizes": "ASME_full" },
+    "G1N":  { "profile": "CS_FG",  "sizes": "ASME_full" },
+    "F2N":  { "profile": "CS_FG",  "sizes": "ASME_no_smallbore" },
+    "G2N":  { "profile": "CS_FG",  "sizes": "ASME_no_smallbore" },
 
-    "A10": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "A10N": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "B10": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "B10N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "D10": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "D10N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "E10": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "E10N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "F10": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "F10N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "G10": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "G10_only", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
-    "G10N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "G10_only", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 312 TP 316L" },
-      "large_bore": { "pipe_type": "EFW, 100% RT", "material_spec": "ASTM A 358 TP 316L" },
-      "ends": "BE"
-    },
+    "A1L":  { "profile": "LTCS",   "sizes": "ASME_full" },
+    "A1LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "B1L":  { "profile": "LTCS",   "sizes": "ASME_full" },
+    "B1LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "D1L":  { "profile": "LTCS",   "sizes": "ASME_full" },
+    "D1LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "A2LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "B2LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "D2LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "E1L":  { "profile": "LTCS",   "sizes": "ASME_full" },
+    "E1LN": { "profile": "LTCS",   "sizes": "ASME_full" },
+    "E2LN": { "profile": "LTCS",   "sizes": "ASME_no_smallbore" },
 
-    "A20": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "A20N": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "A25": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "A25N": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "B20": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "B20N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "B25": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "B25N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "D20": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "D20N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "D25": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "D25N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "A_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "E20": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "E20N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "E25": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "E25N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "F20": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "F20N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "F25": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "F25N": {
-      "pipe_code": "ASME B 36.19M / B 36.10M", "sizes": "E_full", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "G20": {
-      "pipe_code": "ASME B 36.10M", "sizes": "G20_only", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "G20N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "G20_only", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S31803" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 928 Class 1, Gr. S31803" },
-      "ends": "BE"
-    },
-    "G25": {
-      "pipe_code": "ASME B 36.10M", "sizes": "G20_only", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
-    "G25N": {
-      "pipe_code": "ASME B 36.10M", "sizes": "G20_only", "transition_nps": 10,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 790 Gr. S32750" },
-      "large_bore": { "pipe_type": "Welded (Longitudinally) with 100% RT", "material_spec": "ASTM A 790 Gr. S32750" },
-      "ends": "BE"
-    },
+    "F1L":  { "profile": "LTCS_FG", "sizes": "ASME_full" },
+    "F1LN": { "profile": "LTCS_FG", "sizes": "ASME_full" },
+    "G1L":  { "profile": "LTCS_FG", "sizes": "ASME_full" },
+    "G1LN": { "profile": "LTCS_FG", "sizes": "ASME_full" },
+    "F2LN": { "profile": "LTCS_FG", "sizes": "ASME_no_smallbore" },
+    "G2LN": { "profile": "LTCS_FG", "sizes": "ASME_no_smallbore" },
 
-    "A3": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B (Galvanized)" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B (Galvanized)" },
-      "ends": "BE"
-    },
-    "A4": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B (Galvanized)" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B (Galvanized)" },
-      "ends": "BE"
-    },
-    "A5": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B (Galvanized)" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B (Galvanized)" },
-      "ends": "BE"
-    },
+    "A10":  { "profile": "SS316L", "sizes": "ASME_full",  "pipe_code": "ASME B 36.19M" },
+    "A10N": { "profile": "SS316L", "sizes": "ASME_full",  "pipe_code": "ASME B 36.19M" },
+    "B10":  { "profile": "SS316L", "sizes": "ASME_full" },
+    "B10N": { "profile": "SS316L", "sizes": "ASME_full" },
+    "D10":  { "profile": "SS316L", "sizes": "ASME_full" },
+    "D10N": { "profile": "SS316L", "sizes": "ASME_full" },
+    "E10":  { "profile": "SS316L", "sizes": "ASME_full" },
+    "E10N": { "profile": "SS316L", "sizes": "ASME_full" },
+    "F10":  { "profile": "SS316L", "sizes": "ASME_full" },
+    "F10N": { "profile": "SS316L", "sizes": "ASME_full" },
+    "G10":  { "profile": "SS316L", "sizes": "ASME_full" },
+    "G10N": { "profile": "SS316L", "sizes": "ASME_full" },
+
+    "A20":  { "profile": "DSS",    "sizes": "ASME_full",   "pipe_code": "ASME B 36.19M" },
+    "A20N": { "profile": "DSS",    "sizes": "ASME_full",   "pipe_code": "ASME B 36.19M" },
+    "B20":  { "profile": "DSS",    "sizes": "ASME_full" },
+    "B20N": { "profile": "DSS",    "sizes": "ASME_full" },
+    "D20":  { "profile": "DSS",    "sizes": "ASME_full" },
+    "D20N": { "profile": "DSS",    "sizes": "ASME_full" },
+    "E20":  { "profile": "DSS",    "sizes": "ASME_full" },
+    "E20N": { "profile": "DSS",    "sizes": "ASME_full" },
+    "F20":  { "profile": "DSS",    "sizes": "ASME_full" },
+    "F20N": { "profile": "DSS",    "sizes": "ASME_full" },
+    "G20":  { "profile": "DSS",    "sizes": "ASME_full", "pipe_code": "ASME B 36.10M" },
+    "G20N": { "profile": "DSS",    "sizes": "ASME_full", "pipe_code": "ASME B 36.10M" },
+
+    "A25":  { "profile": "SDSS",   "sizes": "ASME_full",   "pipe_code": "ASME B 36.19M" },
+    "A25N": { "profile": "SDSS",   "sizes": "ASME_full",   "pipe_code": "ASME B 36.19M" },
+    "B25":  { "profile": "SDSS",   "sizes": "ASME_full" },
+    "B25N": { "profile": "SDSS",   "sizes": "ASME_full" },
+    "D25":  { "profile": "SDSS",   "sizes": "ASME_full" },
+    "D25N": { "profile": "SDSS",   "sizes": "ASME_full" },
+    "E25":  { "profile": "SDSS",   "sizes": "ASME_full" },
+    "E25N": { "profile": "SDSS",   "sizes": "ASME_full" },
+    "F25":  { "profile": "SDSS",   "sizes": "ASME_full" },
+    "F25N": { "profile": "SDSS",   "sizes": "ASME_full" },
+    "G25":  { "profile": "SDSS",   "sizes": "ASME_full", "pipe_code": "ASME B 36.10M" },
+    "G25N": { "profile": "SDSS",   "sizes": "ASME_full", "pipe_code": "ASME B 36.10M" },
+
+    "A3":   { "profile": "GALV_screwed", "sizes": "ASME_full" },
+    "A4":   { "profile": "GALV_screwed", "sizes": "ASME_full" },
+
+    "A5":   { "profile": "GALV_BW", "sizes": "ASME_full" },
+    "B4":   { "profile": "GALV_BW", "sizes": "ASME_full" },
+    "D4":   { "profile": "GALV_BW", "sizes": "ASME_full" },
+
+    "A50":  { "profile": "GRE",    "sizes": "A50_A52_GRE" },
+    "A52":  { "profile": "GRE",    "sizes": "A50_A52_GRE" },
+
     "A6": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B (Internally Epoxy Lined)" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B (Internally Epoxy Lined)" },
-      "ends": "BE"
-    },
-    "B4": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B (Galvanized)" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B (Galvanized)" },
-      "ends": "BE"
-    },
-    "D4": {
-      "pipe_code": "ASME B 36.10M", "sizes": "A_full", "transition_nps": 14,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM A 106 Gr. B (Galvanized)" },
-      "large_bore": { "pipe_type": "LSAW, 100% RT", "material_spec": "API 5L Gr. B (Galvanized)" },
-      "ends": "BE"
+      "pipe_code": "ASME B 36.10M",
+      "sizes": "ASME_full",
+      "transition_nps": 14,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM A 106 Gr. B (Internally Epoxy Lined)"
+      },
+      "large_bore": {
+        "pipe_type": "LSAW, 100% RT",
+        "material_spec": "API 5L Gr. B (Internally Epoxy Lined)"
+      },
+      "ends": "BE",
+      "fittings": "Epoxy_lined"
     },
 
     "A70": {
-      "pipe_code": "ASME B 36.19M", "sizes": "A70_titanium", "transition_nps": 999,
-      "small_bore": { "pipe_type": "Seamless", "material_spec": "ASTM B 861 Gr. 2" },
-      "large_bore": { "pipe_type": "Seamless", "material_spec": "ASTM B 861 Gr. 2" },
-      "ends": "BE"
+      "pipe_code": "ASME B 36.19M",
+      "sizes": "A70_titanium",
+      "transition_nps": 999,
+      "small_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM B 861 Gr. 2"
+      },
+      "large_bore": {
+        "pipe_type": "Seamless",
+        "material_spec": "ASTM B 861 Gr. 2"
+      },
+      "ends": "BE",
+      "fittings": "Titanium_B363"
     },
 
     "A30": {
-      "pipe_code": "EEMUA 234 20 BAR", "sizes": "A30_cuni", "transition_nps": 18,
+      "pipe_code": "EEMUA 234 20 BAR",
+      "sizes": "A30_cuni",
+      "transition_nps": 18,
       "small_bore": {
         "pipe_type": "Seamless",
         "material_spec": "Annealed tube 90-10 CU-NI ALLOY UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102"
@@ -567,69 +558,53 @@
         "material_spec": "Annealed tube 90-10 CU-NI ALLOY UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102"
       },
       "ends": "PE",
+      "fittings": "CuNi_EEMUA234",
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
-          "0.5": 16, "0.75": 25, "1": 30, "1.5": 44.5, "2": 57, "3": 88.9, "4": 108, "6": 159,
-          "8": 219.1, "10": 267, "12": 323.9, "14": 368, "16": 419, "18": 457.2, "20": 508,
-          "24": 610, "28": 711
+          "0.5": 16, "0.75": 25, "1": 30, "1.5": 44.5, "2": 57, "3": 88.9,
+          "4": 108, "6": 159, "8": 219.1, "10": 267, "12": 323.9, "14": 368,
+          "16": 419, "18": 457.2, "20": 508, "24": 610, "28": 711
         },
         "wall_thickness_mm": {
-          "0.5": 2.0, "0.75": 2.0, "1": 2.5, "1.5": 2.5, "2": 2.5, "3": 2.5, "4": 3.0, "6": 3.5,
-          "8": 4.5, "10": 5.5, "12": 7.0, "14": 8.0, "16": 9.0, "18": 9.5, "20": 11.0,
-          "24": 13.0, "28": 15.0
+          "0.5": 2.0, "0.75": 2.0, "1": 2.5, "1.5": 2.5, "2": 2.5, "3": 2.5,
+          "4": 3.0, "6": 3.5, "8": 4.5, "10": 5.5, "12": 7.0, "14": 8.0,
+          "16": 9.0, "18": 9.5, "20": 11.0, "24": 13.0, "28": 15.0
         }
       }
     },
 
     "A40": {
-      "pipe_code": "ASTM B42 (Regular)", "sizes": "A40_copper", "transition_nps": 2,
-      "small_bore": { "pipe_type": "Seamless Hard Drawn H80 (Regular)", "material_spec": "ASTM B 42 UNS C12200" },
-      "large_bore": { "pipe_type": "Seamless light Drawn H55 (Regular)", "material_spec": "ASTM B 42 UNS C12200" },
-      "ends": "BE",
-      "explicit_dimensions": {
-        "schedule": "-",
-        "od_mm":          { "0.5": 21.3, "0.75": 26.7, "1": 33.4, "1.5": 48.3, "2": 60.3, "3": 88.9, "4": 114.0 },
-        "wall_thickness_mm": { "0.5": 2.72, "0.75": 2.9,  "1": 3.2,  "1.5": 3.81, "2": 3.96, "3": 5.56, "4": 6.35 }
-      }
-    },
-
-    "A50": {
-      "pipe_code": "Manufacturer's Std.", "sizes": "A50_A52_GRE", "transition_nps": 999,
+      "pipe_code": "ASTM B42 (Regular)",
+      "sizes": "A40_copper",
+      "transition_nps": 2,
       "small_bore": {
-        "pipe_type": "Manufacturer standard (TBA)",
-        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
+        "pipe_type": "Seamless Hard Drawn H80 (Regular)",
+        "material_spec": "ASTM B 42 UNS C12200"
       },
       "large_bore": {
-        "pipe_type": "Manufacturer standard (TBA)",
-        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
+        "pipe_type": "Seamless light Drawn H55 (Regular)",
+        "material_spec": "ASTM B 42 UNS C12200"
       },
-      "ends": "Taper / Taper Socket x Spigot, Adhesive bonded",
+      "ends": "BE",
+      "fittings": "Copper_split",
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
-          "1": 34.1, "1.5": 49.1, "2": 57.8, "3": 86.4, "4": 110.6, "6": 166.6,
-          "8": 218.4, "10": 274.5, "12": 327.3, "14": 359.2, "16": 410.5,
-          "18": 452.2, "20": 502.3, "24": 602.8, "28": 728.6, "30": 780.6,
-          "32": 832.6, "34": 884.6, "36": 936.4, "40": 1040.6
+          "0.5": 21.3, "0.75": 26.7, "1": 33.4, "1.5": 48.3,
+          "2": 60.3, "3": 88.9, "4": 114.0
         },
         "wall_thickness_mm": {
-          "1": 3.5, "1.5": 3.5, "2": 2.3, "3": 2.3, "4": 2.7, "6": 3.8, "8": 4.8,
-          "10": 5.8, "12": 6.8, "14": 7.4, "16": 8.4, "18": 9.2, "20": 10.1,
-          "24": 12.1, "28": 14.3, "30": 15.3, "32": 16.3, "34": 17.3,
-          "36": 18.2, "40": 20.3
-        },
-        "id_mm": {
-          "1": 27.1, "1.5": 42.1, "2": 53.2, "3": 81.8, "4": 105.2, "6": 159.0,
-          "8": 208.8, "10": 262.9, "12": 313.7, "14": 344.4, "16": 393.7,
-          "18": 433.8, "20": 482.1, "24": 578.6, "28": 700.0, "30": 750.0,
-          "32": 800.0, "34": 850.0, "36": 900.0, "40": 1000.0
+          "0.5": 2.72, "0.75": 2.9, "1": 3.2, "1.5": 3.81,
+          "2": 3.96, "3": 5.56, "4": 6.35
         }
       }
     },
 
     "A51": {
-      "pipe_code": "Manufacturer's Std (BONSTRAND Series 50000C)", "sizes": "A51_BONSTRAND", "transition_nps": 999,
+      "pipe_code": "Manufacturer's Std (BONSTRAND Series 50000C)",
+      "sizes": "A51_BONSTRAND",
+      "transition_nps": 999,
       "small_bore": {
         "pipe_type": "Manufacturer standard (BONSTRAND Series 50000C)",
         "material_spec": "Manufacturer standard (BONSTRAND Series 50000C)"
@@ -639,55 +614,37 @@
         "material_spec": "Manufacturer standard (BONSTRAND Series 50000C)"
       },
       "ends": "Manufacturer standard (BONSTRAND Series 50000C)",
-      "explicit_dimensions": {
-        "schedule": "-",
-        "od_mm":             { "1": 31.5, "1.5": 46.5, "2": 57.4, "3": 86.2, "4": 111.6, "6": 165.4 },
-        "wall_thickness_mm": { "1": 2.2,  "1.5": 2.2,  "2": 2.1,  "3": 2.2,  "4": 3.2,   "6": 3.2 },
-        "id_mm":             { "1": 27.1, "1.5": 42.1, "2": 53.2, "3": 81.8, "4": 105.2, "6": 159.0 }
-      }
-    },
-
-    "A52": {
-      "pipe_code": "Manufacturer's Std.", "sizes": "A50_A52_GRE", "transition_nps": 999,
-      "small_bore": {
-        "pipe_type": "Manufacturer standard (TBA)",
-        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
-      },
-      "large_bore": {
-        "pipe_type": "Manufacturer standard (TBA)",
-        "material_spec": "Filament wound Glassfiber Reinforced Epoxy (GRE) pipe, Conductive, ASTM D2996: RTRP-11AW"
-      },
-      "ends": "Taper / Taper Socket x Spigot, Adhesive bonded",
+      "fittings": "BONSTRAND_manufacturer",
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
-          "1": 34.1, "1.5": 49.1, "2": 57.8, "3": 86.4, "4": 110.6, "6": 166.6,
-          "8": 218.4, "10": 274.5, "12": 327.3, "14": 359.2, "16": 410.5,
-          "18": 452.2, "20": 502.3, "24": 602.8, "28": 728.6, "30": 780.6,
-          "32": 832.6, "34": 884.6, "36": 936.4, "40": 1040.6
+          "1": 31.5, "1.5": 46.5, "2": 57.4, "3": 86.2, "4": 111.6, "6": 165.4
         },
         "wall_thickness_mm": {
-          "1": 3.5, "1.5": 3.5, "2": 2.3, "3": 2.3, "4": 2.7, "6": 3.8, "8": 4.8,
-          "10": 5.8, "12": 6.8, "14": 7.4, "16": 8.4, "18": 9.2, "20": 10.1,
-          "24": 12.1, "28": 14.3, "30": 15.3, "32": 16.3, "34": 17.3,
-          "36": 18.2, "40": 20.3
+          "1": 2.2, "1.5": 2.2, "2": 2.1, "3": 2.2, "4": 3.2, "6": 3.2
         },
         "id_mm": {
-          "1": 27.1, "1.5": 42.1, "2": 53.2, "3": 81.8, "4": 105.2, "6": 159.0,
-          "8": 208.8, "10": 262.9, "12": 313.7, "14": 344.4, "16": 393.7,
-          "18": 433.8, "20": 482.1, "24": 578.6, "28": 700.0, "30": 750.0,
-          "32": 800.0, "34": 850.0, "36": 900.0, "40": 1000.0
+          "1": 27.1, "1.5": 42.1, "2": 53.2, "3": 81.8, "4": 105.2, "6": 159.0
         }
       }
     },
 
     "A60": {
-      "pipe_code": "ASTM F 441", "sizes": "A60_CPVC", "transition_nps": 999,
-      "small_bore": { "pipe_type": "Manufacturer standard", "material_spec": "ASTM F 441/F 442" },
-      "large_bore": { "pipe_type": "Manufacturer standard", "material_spec": "ASTM F 441/F 442" },
+      "pipe_code": "ASTM F 441",
+      "sizes": "A60_CPVC",
+      "transition_nps": 999,
+      "small_bore": {
+        "pipe_type": "Manufacturer standard",
+        "material_spec": "ASTM F 441/F 442"
+      },
+      "large_bore": {
+        "pipe_type": "Manufacturer standard",
+        "material_spec": "ASTM F 441/F 442"
+      },
       "ends": "Solvent cement socket per ASTM F 493",
       "cpvc_uses_asme_od": true,
-      "cpvc_schedule": "SCH 80"
+      "cpvc_schedule": "SCH 80",
+      "fittings": "CPVC_manufacturer"
     }
   }
 }

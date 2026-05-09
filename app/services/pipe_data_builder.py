@@ -47,10 +47,34 @@ def all_class_codes() -> list[str]:
 
 
 def get_class_meta(class_code: str) -> dict | None:
-    """Return the per-class metadata dict (or None if not in the file).
-    The dict mutates the cached copy if edited — callers must treat as
-    read-only."""
-    return _metadata().get("classes", {}).get(class_code.upper())
+    """Return the per-class metadata dict, with `profile` references resolved.
+
+    Two flavours of class entry in class_metadata.json:
+      • Compact: `{ "profile": "<name>", "sizes": "<group>", ...overrides }`
+        — looked up in `pipe_profiles[<name>]` and shallow-merged with the
+        per-class entry; class fields win over profile fields.
+      • Inline: full entry with all keys (pipe_code, transition_nps,
+        small_bore, large_bore, ends, fittings, [explicit_dimensions, ...]).
+
+    Returns None if the class code isn't in the file. The returned dict is
+    a fresh shallow copy (safe to read; do not mutate the nested objects
+    since they're shared with the cached metadata)."""
+    code = class_code.upper()
+    cls = _metadata().get("classes", {}).get(code)
+    if not cls:
+        return None
+    profile_name = cls.get("profile")
+    if not profile_name:
+        return cls  # inline class — nothing to merge
+    profile = _metadata().get("pipe_profiles", {}).get(profile_name)
+    if not profile:
+        raise KeyError(
+            f"Class {code!r} references unknown pipe_profile {profile_name!r}"
+        )
+    # Shallow merge: profile defaults first, class overrides win. The
+    # `profile` key itself is dropped — downstream code shouldn't see it.
+    merged = {**profile, **{k: v for k, v in cls.items() if k != "profile"}}
+    return merged
 
 
 def get_class_pipe_code(class_code: str) -> str | None:

@@ -58,17 +58,18 @@ const API = {
     optionsCorrosionAllowances: () => fetch('/api/options/corrosion-allowances'),
     pipeData: (params) => fetch(`/api/pipe-data?${new URLSearchParams(params)}`),
     pressureTemperature: (params) => fetch(`/api/pressure-temperature?${new URLSearchParams(params)}`),
+    fittingsBySize: (params) => fetch(`/api/fittings-by-size?${new URLSearchParams(params)}`),
     health: () => fetch('/health'),
 };
 
-// Server no longer ships `pipe_data` or `pressure_temperature` on the
-// /api/generate-pms / /api/regenerate-pms responses (Path C refactor —
-// both are derived data). Fetch each on demand and stamp onto
-// `currentPMS.{pipe_data,pressure_temperature}` so all the existing
+// Server no longer ships pipe_data / pressure_temperature / fittings_by_size
+// on the /api/generate-pms / /api/regenerate-pms responses (Path C refactor —
+// all three are derived data, built deterministically from class_metadata.json).
+// Fetch each on demand and stamp onto currentPMS so all the existing
 // renderers that read those fields keep working unchanged.
 //
-// Fetches run in parallel via Promise.all — total wait is the slower
-// of the two (~ms each, both hit cached JSON files).
+// Fetches run in parallel via Promise.all — total wait is the slowest
+// of the three (~ms each, all hit cached JSON files).
 async function attachPipeData(pms, req) {
     const className = pms.piping_class || req.piping_class;
     const material = req.material || pms.material || '';
@@ -79,10 +80,12 @@ async function attachPipeData(pms, req) {
     if (req.design_temp_c != null)        pipeParams.design_temp_c = req.design_temp_c;
 
     const ptParams = { piping_class: className, material };
+    const fbsParams = { piping_class: className };
 
-    const [pipeRes, ptRes] = await Promise.all([
+    const [pipeRes, ptRes, fbsRes] = await Promise.all([
         API.pipeData(pipeParams),
         API.pressureTemperature(ptParams),
+        API.fittingsBySize(fbsParams),
     ]);
 
     if (pipeRes.ok) {
@@ -103,6 +106,18 @@ async function attachPipeData(pms, req) {
         if (!pms.pressure_temperature) {
             pms.pressure_temperature = { temperatures: [], pressures: [], temp_labels: [] };
         }
+    }
+
+    if (fbsRes.ok) {
+        pms.fittings_by_size = await fbsRes.json();
+    } else {
+        // 404 is normal for tubing classes (T80*/T90*) — they have their
+        // own deterministic builder in tubing_service.py and don't go
+        // through fittings_builder. Leave whatever pms already has.
+        if (fbsRes.status !== 404) {
+            console.error('fittings-by-size fetch failed', fbsRes.status);
+        }
+        if (!pms.fittings_by_size) pms.fittings_by_size = [];
     }
     return pms;
 }

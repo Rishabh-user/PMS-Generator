@@ -227,10 +227,23 @@ def correct_pipe_data(
         floor_wt = lookup_wall_thickness(nps, floor_sched)
 
         # required_wt = MAX(Eq. 3a, floor). Pick smallest schedule meeting it.
-        chosen = select_schedule_for_thickness(nps, max(t_min, floor_wt))
+        required_wt = max(t_min, floor_wt)
+        chosen = select_schedule_for_thickness(nps, required_wt)
         if chosen is not None:
-            row["schedule"] = chosen[0]
-            row["wall_thickness_mm"] = chosen[1]
+            chosen_label, chosen_wt = chosen
+            # SUBSTD detection — mirror the UI's wall-thickness table.
+            # `select_schedule_for_thickness` returns the THICKEST available
+            # when nothing meets the requirement (per its docstring); we have
+            # to honour that contract here. If the chosen WT is still short,
+            # mark the row substandard: blank schedule + the calculated t_req
+            # as the wall thickness, so the engineer sees the wall they
+            # actually need to procure (custom-machined / spec-upgraded).
+            if chosen_wt + 1e-3 >= required_wt:
+                row["schedule"] = chosen_label
+                row["wall_thickness_mm"] = chosen_wt
+            else:
+                row["schedule"] = ""
+                row["wall_thickness_mm"] = required_wt
 
         _round_dims(row)
 
