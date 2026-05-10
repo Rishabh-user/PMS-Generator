@@ -10,6 +10,7 @@ Flow:
   6. Regenerate endpoint bypasses cache and forces fresh AI call
 """
 import logging
+import re
 
 from app.models.pms_models import (
     PMSRequest, PMSResponse, PressureTemperature,
@@ -164,6 +165,132 @@ def _determine_class_type(piping_class: str) -> str:
            for pfx in ["A3", "A4", "A5", "A6", "B4", "D4"]):
         return "galv_screwed"
     return "standard"
+
+
+# ── VDS code post-processor ───────────────────────────────────────────
+#
+# The AI prompt has dozens of literal "A1" examples in the VDS section
+# (BLRTA1R, GAYMA1R, BFWTA1R, ...). Smaller models (Haiku 4.5) sometimes
+# copy those examples verbatim instead of substituting the actual class
+# code, producing wrong codes like BLRTA1R for a D1 class.
+#
+# The post-processor below re-stamps every VDS code in `ai_data["valves"]`
+# with the actual piping_class + the correct end-connection suffix
+# (R / J / F / JT) for that class. It runs unconditionally, so:
+#   • when the AI gets it right → no-op (output equals input)
+#   • when the AI gets it wrong → fixed deterministically
+#
+# VDS structure: [4-char prefix][class][end-conn]
+#   prefix:    BLRT / BLFT / BLRP / BLFP / BLRM / BLFM
+#              GAYM / GLYM
+#              CHPM / CHSM / CHDM
+#              BFWT / BFTP / BFTT
+#              DBRP / DBRM
+#              NEIP / NEAP
+#   class:     project class code (A1 / A1LN / F20N / G25N / T90C / ...)
+#   end-conn:  R (RF) | J (RTJ) | F (FF) | H (Hub) | JT (RTJ + NPT female)
+
+# Pattern: 4 prefix letters + middle (class portion) + end conn.
+# `[A-Z0-9]+` is greedy — it backtracks so the alternation can match.
+# JT goes first in the alternation (longest match). This is the ONLY
+# valid VDS shape; anything that doesn't match is left unchanged.
+_VDS_PATTERN = re.compile(r'^([A-Z]{4})[A-Z0-9]+(JT|R|J|F|H)$')
+
+
+def _vds_end_conn_for_class(class_code: str, is_dbb_inst: bool = False) -> str:
+    """End-connection suffix for VDS codes on this class.
+
+    Rules (mirrors the AI prompt's EndConn table):
+      • Tubing T80*/T90*           → JT
+      • A30 / A40 / A50 / A51 / A52 / A60 (FF face classes) → F
+      • E / F / G ratings (900#+)  → J  (RTJ)
+      • Everything else (A/B/D 150-600#) → R  (RF)
+
+    `is_dbb_inst=True` adds the T suffix to RTJ classes (DBRPE20NJT
+    pattern — DBB Instrument variant per AI prompt §VALVE CODES).
+    """
+    code = (class_code or "").upper().strip()
+    if not code:
+        return "R"
+    if code.startswith("T"):
+        return "JT"
+    if code in ("A30", "A40", "A50", "A51", "A52", "A60"):
+        return "F"
+    base = "J" if code[0] in ("E", "F", "G") else "R"
+    if is_dbb_inst and base == "J":
+        return "JT"
+    return base
+
+
+def _rewrite_vds_code(code: str, target_class: str, target_end: str) -> str:
+    """Replace the embedded class portion + end-conn of a single VDS code.
+
+    Returns the original string unchanged if it doesn't match the VDS
+    shape (so non-VDS values, empty strings, or AI-emitted explanatory
+    text pass through). Strips whitespace.
+    """
+    if not code or not isinstance(code, str):
+        return code
+    s = code.strip()
+    if not s:
+        return s
+    m = _VDS_PATTERN.match(s)
+    if not m:
+        return s
+    prefix = m.group(1)
+    return f"{prefix}{target_class}{target_end}"
+
+
+def _rewrite_vds_field(field: str, target_class: str, target_end: str) -> str:
+    """Comma-separated VDS field rewriter — used for the class-level
+    fallback strings (`ball`, `gate`, …) and for `code` strings inside
+    each by_size entry. Drops empty fragments after the rewrite."""
+    if not field or not isinstance(field, str):
+        return field
+    parts = [p.strip() for p in field.split(",")]
+    rewritten = [_rewrite_vds_code(p, target_class, target_end) for p in parts]
+    return ", ".join(p for p in rewritten if p)
+
+
+def _normalize_valves(v: dict, target_class: str) -> dict:
+    """Force every VDS code in the AI's valves block to use `target_class`
+    + the correct end-connection suffix for that class.
+
+    Mutates and returns the dict. Idempotent — running twice produces the
+    same result. No-op if `v` isn't a dict or `target_class` is empty.
+    """
+    if not isinstance(v, dict) or not target_class:
+        return v
+
+    end_normal = _vds_end_conn_for_class(target_class)
+    end_inst   = _vds_end_conn_for_class(target_class, is_dbb_inst=True)
+
+    # Class-level fallback strings — comma-separated.
+    for f in ("ball", "gate", "globe", "check", "butterfly", "dbb", "needle"):
+        if f in v:
+            v[f] = _rewrite_vds_field(v.get(f, ""), target_class, end_normal)
+    if "dbb_inst" in v:
+        v["dbb_inst"] = _rewrite_vds_field(v.get("dbb_inst", ""), target_class, end_inst)
+
+    # Per-size arrays — each entry is {"size_inch": ..., "code": ...}.
+    by_size_specs = (
+        ("ball_by_size",       end_normal),
+        ("gate_by_size",       end_normal),
+        ("globe_by_size",      end_normal),
+        ("check_by_size",      end_normal),
+        ("butterfly_by_size",  end_normal),
+        ("dbb_by_size",        end_normal),
+        ("needle_by_size",     end_normal),
+        ("dbb_inst_by_size",   end_inst),
+    )
+    for field, end in by_size_specs:
+        rows = v.get(field)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and "code" in row:
+                    row["code"] = _rewrite_vds_field(row.get("code", ""), target_class, end)
+
+    return v
 
 
 def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSResponse:
@@ -394,7 +521,11 @@ def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest) -> PMSRespo
         gasket_2=bg.get("gasket_2", ""),
     )
 
-    v = ai_data.get("valves", {})
+    # Re-stamp every VDS code with the actual piping class + correct
+    # end-connection suffix. Defends against the AI copying example
+    # codes (BLRTA1R, GAYMA1R, ...) verbatim instead of substituting
+    # the request's class. No-op when the AI gets it right.
+    v = _normalize_valves(ai_data.get("valves", {}) or {}, req.piping_class)
 
     def _parse_valve_by_size(entries) -> list[ValveSizeEntry]:
         if not entries or not isinstance(entries, list):

@@ -85,6 +85,40 @@ def get_class_pipe_code(class_code: str) -> str | None:
     return cls.get("pipe_code") if cls else None
 
 
+def get_class_pt(class_code: str) -> dict | None:
+    """Return the class-specific P-T curve from class_metadata.json's
+    `explicit_pt` block, or None.
+
+    Used by /api/pressure-temperature for non-ASME classes (A30 CuNi /
+    A40 Copper / A50 + A52 GRE / A51 BONSTRAND) that aren't covered by
+    ASME B16.5 P-T tables but have manufacturer / EEMUA / B16.24
+    project-rated P-T envelopes baked into the metadata.
+
+    Profile inheritance applies — a class's `explicit_pt` can come from
+    its `pipe_profile` (e.g. A50 and A52 both inherit the GRE profile's
+    P-T envelope) or be defined inline on the class itself. Inline wins
+    if both are present.
+
+    Shape (matches the /api/pressure-temperature response):
+        {
+          "temperatures": [38, 50, 100],
+          "pressures":    [15.5, 15.5, 14.5],
+          "temp_labels":  ["0 to 38", "50", "100"]
+        }
+    """
+    cls = get_class_meta(class_code)
+    if not cls:
+        return None
+    pt = cls.get("explicit_pt")
+    if not pt:
+        return None
+    return {
+        "temperatures": list(pt.get("temperatures") or []),
+        "pressures":    list(pt.get("pressures") or []),
+        "temp_labels":  list(pt.get("temp_labels") or []),
+    }
+
+
 def _resolve_sizes(sizes_field, size_groups: dict) -> list[str]:
     """A class's `sizes` is either:
       • a string naming an entry in size_groups (most classes), or

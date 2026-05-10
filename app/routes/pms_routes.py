@@ -674,13 +674,21 @@ async def api_pressure_temperature(
     piping_class: str = Query(...),
     material: str = Query(default=""),
 ):
-    """Return the ASME B16.5 P-T curve for a class on demand.
+    """Return the P-T curve for a class on demand.
 
-    Replaces the `pressure_temperature` field that used to be on
-    `/api/generate-pms` responses. Sources from `pt_by_class.json` via
-    `pt_lookup` — same data the dual-case Eq. 3a uses for Case 1
-    cold-end derivation, so the UI's WT calculation matches what the
-    server computes when building pipe_data.
+    Two lookup paths, tried in order:
+
+      1. Class-specific `explicit_pt` from `class_metadata.json` —
+         covers non-ASME classes whose ratings don't come from B16.5
+         (A30 CuNi / EEMUA 234, A40 Copper / B16.24, A50+A52 GRE /
+         ASTM D2996, A51 BONSTRAND manufacturer std). The class entry
+         (or its inherited `pipe_profile`) carries the published P-T
+         envelope directly.
+
+      2. ASME B16.5 group lookup via `pt_lookup` — the (rating, group)
+         path for ferrous classes. Same data the dual-case Eq. 3a uses
+         for Case 1 cold-end derivation, so the UI's WT calculation
+         matches what the server computes when building pipe_data.
 
     Body shape:
       {
@@ -689,10 +697,10 @@ async def api_pressure_temperature(
         "temp_labels":  ["-29 to 38", "50", "100", ...]
       }
 
-    Returns 404 when the rating isn't indexed in pt_by_class.json
-    (5000#/10000# stubs) or the material doesn't map to any group.
+    Returns 404 when neither path yields a curve.
     """
     from app.services.pt_lookup import lookup_pt
+    from app.services.pipe_data_builder import get_class_pt
     from app.services.class_derivation import _MATERIAL_TO_GROUP, _material_token
     from app.services import rating_lookup
 
@@ -700,6 +708,15 @@ async def api_pressure_temperature(
     if not code:
         raise HTTPException(status_code=400, detail="piping_class is required")
 
+    # Path 1 — class-specific explicit_pt (non-ASME). Wins over B16.5
+    # because the manufacturer / EEMUA / B16.24 envelope is more specific
+    # than a generic group lookup for these classes.
+    explicit = get_class_pt(code)
+    if explicit and explicit["pressures"]:
+        return explicit
+
+    # Path 2 — ASME B16.5 group lookup. Requires both a §5.5 rating
+    # letter and a material that maps to one of the indexed groups.
     rating = rating_lookup.letter_to_label(code[0])
     if not rating:
         raise HTTPException(
@@ -712,7 +729,8 @@ async def api_pressure_temperature(
     if not group:
         raise HTTPException(
             status_code=404,
-            detail=f"Material {material!r} has no indexed B16.5 group",
+            detail=f"Material {material!r} has no indexed B16.5 group "
+                   f"and class {code} has no explicit_pt in class_metadata.json",
         )
 
     curve = lookup_pt(group, rating)

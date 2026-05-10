@@ -769,31 +769,23 @@ function renderStandardsPanel(panel, resp) {
 //     not standards-verified — I will review carefully."
 
 function renderAiOnlyPanel(panel, resp) {
-    // Read the rating directly from the form so we can look up the
-    // appropriate cold-rated default pressure. The preview-custom-class
-    // response doesn't echo the rating back, but we can re-derive it
-    // from the §5.5 class code's first letter via the same lookup the
-    // backend uses (rating_from_class_code).
     // AI-only panel — no per-rating default for Design Pressure. Input
     // starts blank; user types the value. (Previously pre-filled from a
-    // hardcoded cold-barg map; the map was dropped to keep
-    // pressure_ratings.json minimal.)
-    const defaultP = null;
+    // hardcoded cold-barg map; the map was dropped when pressure_ratings.json
+    // was trimmed to {label, letter}.)
     const defaultT = AI_ONLY_DEFAULT_DESIGN_TEMP_C;
+    const ratingPicked = resp.preview?.rating || '';
 
     customClassState = {
         classCode: resp.class_code,
-        designP:   defaultP,
+        designP:   null,
         designT:   defaultT,
         aiOnly:    true,
         derivedPt: null,
     };
 
-    // Hint text shown beneath the design inputs — varies by whether we
-    // could pre-fill a sensible default for the chosen rating.
-    const designHint = defaultP !== null
-        ? `Auto-filled with the cold-rated default for ${escapeHtml(ratingPicked)} (${defaultP} barg at ${defaultT} °C). Edit either field to change the design point. Drives the §345.4.2(b) hydrotest correction.`
-        : `No standard default exists for ${escapeHtml(ratingPicked)} — enter the line's actual design pressure and temperature. Drives the §345.4.2(b) hydrotest correction.`;
+    // Hint text shown beneath the design inputs.
+    const designHint = `No standard default exists for ${escapeHtml(ratingPicked)} — enter the line's actual design pressure and temperature. Drives the §345.4.2(b) hydrotest correction.`;
 
     panel.innerHTML = `
         <div class="custom-class-card cc-ai-only">
@@ -820,8 +812,8 @@ function renderAiOnlyPanel(panel, resp) {
                     <label>
                         Design Pressure (barg)
                         <input type="number" id="ccDesignP" step="0.1" min="0.1"
-                               value="${defaultP !== null ? defaultP : ''}"
-                               placeholder="${defaultP !== null ? defaultP : 'e.g. 345 for 5000# CS'}">
+                               value=""
+                               placeholder="e.g. 345 for 5000# CS">
                     </label>
                     <label>
                         Design Temperature (°C)
@@ -835,7 +827,7 @@ function renderAiOnlyPanel(panel, resp) {
 
             <div class="cc-confirm">
                 <label class="cc-confirm-line">
-                    <input type="checkbox" id="ccOptIn"${defaultP !== null ? '' : ' disabled'}>
+                    <input type="checkbox" id="ccOptIn" disabled>
                     <span>I understand the output for <strong>${escapeHtml(resp.class_code)}</strong> is AI-only and not standards-verified. I will review every field before use.</span>
                 </label>
             </div>

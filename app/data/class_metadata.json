@@ -399,6 +399,12 @@
       },
       "ends": "Taper / Taper Socket x Spigot, Adhesive bonded",
       "fittings": "GRE_manufacturer",
+      "explicit_pt": {
+        "_doc": "ASTM D2996 RTRP-11AW manufacturer std — 20 bar @ 93°C envelope (A50/A52).",
+        "temperatures": [38, 50, 93],
+        "pressures":    [20.0, 20.0, 20.0],
+        "temp_labels":  ["0 to 38", "50", "93"]
+      },
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
@@ -559,6 +565,12 @@
       },
       "ends": "PE",
       "fittings": "CuNi_EEMUA234",
+      "explicit_pt": {
+        "_doc": "EEMUA 234, Table 69 — 90/10 CuNi 20 bar series (project-rated).",
+        "temperatures": [38, 50, 100, 150],
+        "pressures":    [20.0, 19.7, 18.6, 17.3],
+        "temp_labels":  ["0 to 38", "50", "100", "150"]
+      },
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
@@ -588,6 +600,12 @@
       },
       "ends": "BE",
       "fittings": "Copper_split",
+      "explicit_pt": {
+        "_doc": "ASME B16.24 / ASTM B42 — 150# Copper alloy (UNS C12200) project rating.",
+        "temperatures": [38, 50, 100],
+        "pressures":    [15.5, 15.5, 14.5],
+        "temp_labels":  ["0 to 38", "50", "100"]
+      },
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
@@ -615,6 +633,12 @@
       },
       "ends": "Manufacturer standard (BONSTRAND Series 50000C)",
       "fittings": "BONSTRAND_manufacturer",
+      "explicit_pt": {
+        "_doc": "BONSTRAND Series 50000C manufacturer std — 16.32 bar @ 82°C envelope.",
+        "temperatures": [38, 50, 82],
+        "pressures":    [16.32, 16.32, 16.32],
+        "temp_labels":  ["0 to 38", "50", "82"]
+      },
       "explicit_dimensions": {
         "schedule": "-",
         "od_mm": {
