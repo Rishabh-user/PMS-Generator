@@ -2736,7 +2736,7 @@
     "service": "Raw Sea Water, Fire Water"
   },
   {
-    "piping_class": "A40",
+    "piping_class": "A31",
     "rating": "150#",
     "material": "Copper",
     "corrosion_allowance": "NIL",
@@ -2758,6 +2758,90 @@
       ]
     },
     "service": "Potable Water"
+  },
+  {
+    "piping_class": "A40",
+    "rating": "150#",
+    "material": "GRE (Valve: NAB)",
+    "corrosion_allowance": "NIL",
+    "pressure_temperature": {
+      "temperatures": [
+        38.0,
+        50.0,
+        100.0
+      ],
+      "pressures": [
+        20.0,
+        20.0,
+        20.0
+      ],
+      "temp_labels": [
+        "0 to 38",
+        "50",
+        "100"
+      ]
+    },
+    "service": "Raw Sea Water"
+  },
+  {
+    "piping_class": "A41",
+    "rating": "150#",
+    "material": "GRE (Valve: NAB)",
+    "corrosion_allowance": "NIL",
+    "pressure_temperature": {
+      "temperatures": [
+        38.0,
+        50.0,
+        100.0
+      ],
+      "pressures": [
+        20.0,
+        20.0,
+        20.0
+      ],
+      "temp_labels": [
+        "0 to 38",
+        "50",
+        "100"
+      ]
+    },
+    "service": "Raw Sea Water"
+  },
+  {
+    "piping_class": "A42",
+    "rating": "150#",
+    "material": "CPVC (Valve: NAB)",
+    "corrosion_allowance": "NIL",
+    "pressure_temperature": {
+      "temperatures": [
+        38.0,
+        50.0,
+        100.0,
+        150.0,
+        200.0,
+        250.0,
+        300.0
+      ],
+      "pressures": [
+        14.46,
+        13.36,
+        12.1,
+        11.0,
+        9.75,
+        8.65,
+        7.39
+      ],
+      "temp_labels": [
+        "0 to 38",
+        "50",
+        "100",
+        "150",
+        "200",
+        "250",
+        "300"
+      ]
+    },
+    "service": "Chemical Service"
   },
   {
     "piping_class": "A50",

@@ -301,7 +301,7 @@ def _class_digits(piping_class: str) -> str:
 
 def _rating_system(rating: str) -> str:
     rating = normalize_rating(rating)
-    if rating in {"2500#", "5000#", "10000#"}:
+    if rating in {"5000#", "10000#"}:
         return "API6A"
     if rating in _RATING_INDEX:
         return "ASME"

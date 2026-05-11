@@ -51,6 +51,9 @@ INFERENCE BEHAVIOUR:
 WEB SEARCH GUIDANCE (applies when the web_search tool is available):
 - Search freely for any information that helps generate accurate, complete PMS data — engineering standards, technical specs, material datasheets, product catalogues, manufacturer data, etc.
 - Limit to 2–3 focused searches per generation.
+- For valve rows, prefer searches that include the exact piping class and project
+  VDS / valve material specification terms before falling back to generic API
+  valve standards.
 - If a search result contradicts the project-specific rules in this prompt, trust the project rules."""
 
 
@@ -153,10 +156,9 @@ PRESSURE-TEMPERATURE DATA — generate this (custom class, no catalogue entry).
 
 ═══ STEP 1: Identify the governing standard from the rating ═══
 
-  • Rating is 2500#  (G-series) → USE API 6A  (2500 psi  = 172.4 barg ≈ 172 barg)
   • Rating is 5000#  (J-series) → USE API 6A  (5000 psi  = 344.7 barg ≈ 345 barg)
   • Rating is 10000# (K-series) → USE API 6A  (10000 psi = 689.5 barg ≈ 690 barg)
-  • Any other rating (150#–1500#) → USE ASME B16.5 Table 2 / B31.3
+  • Any other rating (150#–2500#) → USE ASME B16.5 Table 2 / B31.3
 
 ═══ ARRAY LENGTH RULE (CRITICAL — applies to ALL paths) ═══
 
@@ -166,7 +168,7 @@ PRESSURE-TEMPERATURE DATA — generate this (custom class, no catalogue entry).
   only inside the first temp_label string (e.g. "-29 TO 50").
   The first array entry is the UPPER BOUND of the first display range.
 
-═══ STEP 2a — API 6A path (2500# / 5000# / 10000#) ═══
+═══ STEP 2a — API 6A path (5000# / 10000#) ═══
 
   API 6A defines a CONSTANT working pressure throughout a temperature class.
   Pressure does NOT decrease with temperature (unlike ASME B16.5).
@@ -273,7 +275,10 @@ screenshot:
   20 = Duplex SS (DSS) UNS S31803
   25 = Super Duplex SS (SDSS) UNS S32750
   30 = 90/10 CuNi (Copper-Nickel)
-  40 = Copper
+  31 = Copper (plain copper pipe, ASTM B 42)
+  40 = GRE (Glass Reinforced Epoxy — type 1)
+  41 = GRE (Glass Reinforced Epoxy — type 2)
+  42 = CPVC (second CPVC class)
   50 = GRE (Glass Reinforced Epoxy)
   51 = GRV — BONSTRAND Series 5000C
   52 = GRE (for special service)
@@ -294,7 +299,10 @@ Examples:
   A1   = 150# CS 3mm CA
   B1N  = 300# CS 3mm CA NACE
   A2LN = 150# CS 6mm CA LTCS+NACE
-  A40  = 150# Copper
+  A31  = 150# Copper
+  A40  = 150# GRE (type 1)
+  A41  = 150# GRE (type 2)
+  A42  = 150# CPVC (second class)
   A50  = 150# GRE
   A60  = 150# CPVC
   A70  = 150# Titanium
@@ -303,18 +311,17 @@ Examples:
   J1   = 5000# CS 3mm CA  (rating reserved for HP service; no class currently catalogued)
   K1   = 10000# CS 3mm CA (rating reserved for HP service; no class currently catalogued)
 
-=== API 6A HIGH-PRESSURE CLASSES (G-series 2500#, J-series 5000#, K-series 10000#) ===
+=== API 6A HIGH-PRESSURE CLASSES (J-series 5000#, K-series 10000#) ===
 
-For G/J/K-series classes, ALL component specifications must follow API 6A,
-NOT ASME B16.5.  Key rules:
+For J/K-series classes ONLY, ALL component specifications must follow API 6A,
+NOT ASME B16.5.  G-series (2500#) uses ASME B16.5 — see the general rules.
 
 PRESSURE-TEMPERATURE (catalogue entries carry this; custom classes generated per P-T block above):
-  2500# (G): 172 barg working pressure, constant within temperature class
   5000# (J): 345 barg working pressure, constant within temperature class
   10000# (K): 690 barg working pressure, constant within temperature class
   Use temperature class P (-29°C to 121°C) as default unless service dictates S/T/U.
 
-FLANGES (API 6A, NOT ASME B16.5):
+FLANGES (API 6A, NOT ASME B16.5) — J/K only:
   face_type:  "API 6A BX Ring Joint" (or RX for lower ratings)
   flange_type: "Weld Neck Flange (WNRTJ) per API 6A, 6BX type"
   standard:    "API 6A"
@@ -324,10 +331,10 @@ FLANGES (API 6A, NOT ASME B16.5):
     SS316L: "ASTM A 182 F316L / API 6A Material Class FF"
     DSS: "ASTM A 182 F51 / API 6A Material Class FF"
 
-FITTINGS (API 6A / high-pressure forged):
+FITTINGS (API 6A / high-pressure forged) — J/K only:
   fitting_type: "Butt Weld (BW)"
-  *** NO ASME standards at all for G/J/K classes — every fitting standard must reference API 6A ***
-  For EVERY fittings_by_size entry in G/J/K-series classes — ALL sizes — set:
+  *** NO ASME standards at all for J/K classes — every fitting standard must reference API 6A ***
+  For EVERY fittings_by_size entry in J/K-series classes — ALL sizes — set:
       elbow_standard:   "API 6A"
       tee_standard:     "API 6A"
       reducer_standard: "API 6A"
@@ -335,22 +342,22 @@ FITTINGS (API 6A / high-pressure forged):
       plug_standard:    "API 6A"
       weldolet_spec:    "Manufacturer's Std per API 6A, [material per class above]"
 
-VALVES (API 6A):
+VALVES (API 6A) — J/K only:
   Gate valves: "API 6A Gate Valve, Flanged, BB (Bolted Bonnet), FE (Full Equalising)"
   Ball valves: "API 6A Ball Valve, Flanged, Trunnion Mounted"
   Check valves: "API 6A Check Valve"
   Globe valves: use API 602 forged steel globe for ≤2", API 6A for larger.
   VDS code prefix convention for J/K series: maintain project standard prefixes.
 
-BOLTS / NUTS (API 6A high-pressure):
+BOLTS / NUTS (API 6A high-pressure) — J/K only:
   Stud bolts:  "ASTM A 193 Gr. B7, XYLAR 2 + XYLAN 1070 coated"
   Hex nuts:    "ASTM A 194 Gr. 2H, XYLAR 2 + XYLAN 1070 coated"
 
-GASKETS (API 6A BX ring joint):
+GASKETS (API 6A BX ring joint) — J/K only:
   "API 6A BX Ring Joint Gasket, Soft Iron / Low Carbon Steel"
 
 DESIGN CODE:
-  Add "API 6A" alongside ASME B31.3 in the design_code field for G/J/K classes.
+  Add "API 6A" alongside ASME B31.3 in the design_code field for J/K classes.
   Example: "ASME B31.3 / API 6A"
 
 === PIPE SIZES — STANDARD NPS RANGES ===
@@ -370,12 +377,13 @@ Generate ALL standard NPS sizes for the class. Typical ranges:
     and explicitly note the assumption in the response.
   GALV / Epoxy (A3/A4/B4/D4/A5/A6): 0.5" to 24" (17 sizes)
   CuNi (A30): 0.5" to 28" (17 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28 — per EEMUA 234. No 2.5", no 22", no 30" — do NOT emit those sizes)
-  Copper (A40): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
+  Copper (A31): 0.5" to 4" ONLY (7 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4) — do NOT emit 6"+
   Titanium (A70): 0.5" to 6" ONLY (8 sizes: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6) — do NOT emit 8"+
+  GRE (A40/A41): 1" to 40" (20 sizes — same range as A50/A52; manufacturer standard)
   GRE (A50/A51/A52):
     A50/A52: 20 sizes 1"-40" (1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 30, 32, 34, 36, 40)
     A51: 6 sizes 1"-6" only (1, 1.5, 2, 3, 4, 6) — BONSTRAND Series 50000C range
-  CPVC (A60): 0.5" to 8" (10 sizes: 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 6, 8)
+  CPVC (A42/A60): 0.5" to 8" (10 sizes: 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 6, 8)
   Tubing (T80/T90): Short size range per rating — T*A = 0.5"-1.5", T*B/C similar
 
 Standard NPS sequence: 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36
@@ -577,14 +585,19 @@ CPVC (A60) — ASTM F441 (uses Iron Pipe Size ODs — SAME as ASME B36.10M):
                               2.5"=73.0, 3"=88.9, 4"=114.3, 6"=168.3, 8"=219.1
 
 Tubing (T80/T90) — OD EQUALS NOMINAL SIZE × 25.4:
-  0.5" tube: OD = 12.7 mm
-  0.75" tube: OD = 19.05 mm
-  1" tube: OD = 25.4 mm
-  1.5" tube: OD = 38.1 mm
-  T80A/T90A: 0.5"-1.5" OD, wall thickness varies by size (125 Barg rating)
-  T80B/T90B: 0.5"-1.5" OD, heavier WT (200 Barg rating)
-  T80C/T90C: 0.5"-1.5" OD, heaviest WT (325 Barg rating)
-  Schedule: "-" for all (tubing uses thickness classes, not schedules)
+  WALL THICKNESS IS FIXED PER SIZE — same across A/B/C variants.
+  The A/B/C suffix only changes the pressure rating (P-T table); the tube wall
+  and OD are IDENTICAL for all three variants of the same base class:
+
+  Size  | OD (mm) | WT (mm)
+  0.5"  |  12.70  |  1.245
+  0.75" |  19.05  |  1.651
+  1"    |  25.40  |  2.413
+  1.5"  |  38.10  |  3.404
+
+  Pressure ratings (from P-T table — already supplied, DO NOT change):
+    T80A / T90A → 125 barg  |  T80B / T90B → 206 barg  |  T80C / T90C → 330 barg
+  Schedule: "-" for all (tubing uses thickness classes, not ASME schedules)
 
 === PIPE TYPE TRANSITION (Seamless → Welded) ===
 All mainstream classes have TWO pipe types with a size-based transition:
@@ -602,15 +615,20 @@ All mainstream classes have TWO pipe types with a size-based transition:
   CuNi (A30): Seamless (0.5"-16") → Seam Welded (18"-28"). Transition at 18".
     Pipe MOC is the same string for both types: "Annealed tube 90-10 CU-NI ALLOY
     UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102".
-  GRE (40/41/42): ALL manufacturer standard (single type)
-  CPVC (60): ALL manufacturer standard
+  GRE (40/41/50/51/52): ALL manufacturer standard (single type)
+  CPVC (42/60): ALL manufacturer standard
   Tubing (T80/T90): ALL Seamless
 
 === PIPE MOC RULES ===
 CS (1-series, 2-series):
   Seamless: ASTM A 106 Gr. B
   Welded (A-series 150#, GALV): API 5L Gr. B
-  Welded (B/D/E-series): ASTM A 671 - CC60 Class 22
+  B/D/E 1-series (B1/B1N/D1/D1N/E1/E1N) pipe MOC has THREE size bands:
+    0.5"-12"  → ASTM A 106 Gr. B
+    14"-16"   → ASTM A 333 Gr.6
+    18"+      → ASTM A 671 - CC60 Class 22
+    Do NOT collapse the 14"-16" A333 band into either neighbouring band.
+  Other welded B/D/E-series CS rows: ASTM A 671 - CC60 Class 22
   F1/G1 (1500#/2500#): API 5L Gr, X60 PSL-2 (ALL sizes, single MOC)
 
 LTCS (1L-series, 2LN-series):
@@ -635,8 +653,8 @@ GALV (3/4/5/6,B4,D4):
 CuNi (30):
   Annealed tube 90-10 CU-NI ALLOY UNS 7060X EEMUA 234 20 BAR / ASTM B 466 Copper Alloy UNS No. 70600 / BS 2871 CN 102
 
-Copper (A40) — ASTM B 42 "Regular" copper pipe, pipe_code = "ASTM B42 (Regular)":
-  USE THESE EXACT ODs AND WTs (Pipe Class Sheet A40 — NON-ASME, post-processor
+Copper (A31) — ASTM B 42 "Regular" copper pipe, pipe_code = "ASTM B42 (Regular)":
+  USE THESE EXACT ODs AND WTs (Pipe Class Sheet A31 — NON-ASME, post-processor
   does NOT correct these values, so AI's emission is what the user sees):
     NPS → OD (mm):
       0.5"=21.3, 0.75"=26.7, 1"=33.4, 1.5"=48.3, 2"=60.3, 3"=88.9, 4"=114.0
@@ -651,11 +669,15 @@ Copper (A40) — ASTM B 42 "Regular" copper pipe, pipe_code = "ASTM B42 (Regular
   Ends: "BE" (butt end — the spec says BE even though soldered ends are common)
   Size range is LIMITED: 0.5" through 4" ONLY (7 sizes total). No 6"+ sizes.
 
+GRE (40/41): Manufacturer standard (filament wound GRE, same spec family as A50/A52 but
+  different class designation — use same OD/WT tables and material_spec as A50/A52
+  unless confirmed otherwise from the client spec sheet).
+
 GRE (50/51/52):
   Manufacturer standard per GRE system rating
 
 CPVC (42/60):
-  ASTM F441/F442
+  ASTM F441/F442 (A42 = second CPVC class, same material spec as A60)
 
 Titanium (70):
   ASTM B 861 Gr. 2
@@ -671,7 +693,7 @@ CuNi (A30): THREE-way fittings TYPE split per Excel:
     0.5"-1.5" → "SW"                                     (Socket Weld)
     2"-16"    → "Butt Weld (SCH to match pipe), Seamless"
     18"-28"   → "BW, Welded"                             (Butt Weld, Welded pipe — matches the 18" seamless→welded pipe transition)
-Copper (A40): Small sizes (0.5-1.5) = "Brazed Fittings (SCH to match pipe), Seamless", larger (2-4) = "Butt Weld (SCH to match pipe), Seamless"
+Copper (A31): Small sizes (0.5-1.5) = "Brazed Fittings (SCH to match pipe), Seamless", larger (2-4) = "Butt Weld (SCH to match pipe), Seamless"
 GRE/CPVC: Manufacturer standard (adhesive bonded / laminated)
 Tubing (T80/T90): "Compression Fitting" — body AISI 316, ferrules and nuts in AISI 316
 
@@ -685,18 +707,18 @@ FITTINGS MOC BY MATERIAL:
   SDSS (25-series): Seamless=ASTM A 815 Gr.WP-S UNS S32750, Welded=ASTM A 815 Gr.WP-WX UNS S32750
   GALV (3/4/5/6,B4,D4): Screwed=ASTM A 105N-Galvanized, BW=ASTM A 234 Gr. WPB, Seamless Galvanized
   CuNi (A30): 90-10 Cu-Ni per EEMUA 234
-  Copper (A40): Small sizes (0.5-1.5) = "ASTM B 124 UNS C11000",
+  Copper (A31): Small sizes (0.5-1.5) = "ASTM B 124 UNS C11000",
                 Large sizes (2-4)     = "ASTM B 42 UNS C12200"
   Titanium (70): ASTM B 363 Gr. 2
 
 STANDARDS (apply to ALL material families unless noted):
-  EXCEPTION — G/J/K-series (2500#/5000#/10000#): ALL fitting standards = "API 6A" for every size. NO ASME fitting standards (not B16.9, not B16.11) anywhere in G/J/K classes.
+  EXCEPTION — J/K-series (5000#/10000#): ALL fitting standards = "API 6A" for every size. NO ASME fitting standards (not B16.9, not B16.11) anywhere in J/K classes. G-series (2500#) uses ASME B16.9 / B16.11 like all other ASME classes.
   Elbow: ASME B 16.9 | Tee: ASME B 16.9 | Reducer: ASME B 16.9 | Cap: ASME B 16.9
   Plug: Hex Head Plug, ASME B 16.11 (or "Hex Head, ASME B 16.11")
   Weldolet: MSS SP 97, [flange MOC] (e.g., "MSS SP 97, ASTM A 105N" for CS)
   GALV screwed classes: Elbow/Tee/Red/Cap = ASME B 16.11
   CuNi classes: All fittings per EEMUA 234; additional: Coupling, Union, Sockolet, Nipple, Swage per EEMUA 234
-  Copper (A40) — fitting standards carry the MOC split values per Excel.
+  Copper (A31) — fitting standards carry the MOC split values per Excel.
     For EVERY fittings_by_size entry, populate these fields with the MATERIAL
     MOC for that size (not an engineering standard like B 16.22):
 
@@ -731,7 +753,7 @@ MOC by material family:
   SDSS (25-series): ASTM A 182 Gr. F53 (or Gr. F55 in some variants)
   GALV (3/4/5/6,B4,D4): ASTM A 105N Galvanized (screwed flanges for small, WN for large)
   CuNi (A30): 90-10Cu-Ni per EEMUA 234 20 BAR; Blind Flange = ASTM A 105N FF with 3mm 90-10 CuNi weld deposit
-  Copper (A40): "ASTM B61 UNS C92200" (bronze cast flange per ASME B 16.24);
+  Copper (A31): "ASTM B61 UNS C92200" (bronze cast flange per ASME B 16.24);
                 Blind Flange MOC = "ASTM A 105N RF With 3mm Copper over lay"
   CPVC  (A60): manufacturer CPVC flange; face FF
   GRE (A50/A52) — face FF (Flat Face):
@@ -747,13 +769,16 @@ FACE by rating / material:
   150#: "150# RF, Serrated Finish"
   300#: "300# RF, Serrated Finish"
   600#: "600# RF, Serrated Finish"
-  900# (E-series): Small bore (0.5-1.5") = "1500#, RTJ", Larger sizes (2"+) = "900#, RTJ"
+  900# (E-series): face_type = "900#, RTJ" (large bore, ≥2")
+                  face_type_small = "1500#, RTJ" (small bore ≤1.5" — separate field so the
+                  sheet can show two distinct merged cells under the correct NPS columns)
+  All other ratings: leave face_type_small = "" (single face applies to all sizes)
   1500# (F-series): "1500#, RTJ"
-  2500# (G-series): "API 6A BX Ring Joint"  ← API 6A, NOT "2500#, RTJ"
+  2500# (G-series): "2500#, RTJ"  ← ASME B16.5, same RTJ pattern as 900#/1500#
   5000# (J-series): "API 6A BX Ring Joint"
   10000# (K-series): "API 6A BX Ring Joint"
   CuNi (A30) EEMUA: "EEMUA 20 bar, FF" (Flat Face)
-  Copper (A40): "FF" — Flat Face, per ASME B 16.24 bronze flanges
+  Copper (A31): "FF" — Flat Face, per ASME B 16.24 bronze flanges
   GRE (A50/A51/A52): "FF" — Flat Face, manufacturer std
   CPVC (A60): "FF" — Flat Face, per ASTM F 441 socket-flange
   GALV: "150# RF, Serrated Finish" (same as 150#)
@@ -790,12 +815,12 @@ reference is correct across the whole size range:
     A51 (GRE BONSTRAND, 1"-6" only) stays "Drilled to ASME B 16.5, 150#".
 
   All other classes (B-series 300#, D-series 600#, E/F/G-series 900-2500#,
-  10-series SS, A40 Copper, A60 CPVC, A70 Titanium, GALV) top out at
+  10-series SS, A31 Copper, A60 CPVC, A70 Titanium, GALV) top out at
   ≤24" and use the single-citation form.
 
   GALV screwed (A3/A4): small sizes use screwed-end flanges (SCRD), larger sizes use WN butt-welded
   CuNi (A30): SW Flange for 0.5"-1.5"; WN Flange for 2"-28" (boundary at 2", per EEMUA 234 / Excel spec)
-  Copper (A40): TYPE = "Solid slip on flange" (all sizes) per ASME B 16.24; STD = "ASME B 16.24"
+  Copper (A31): TYPE = "Solid slip on flange" (all sizes) per ASME B 16.24; STD = "ASME B 16.24"
 
 F/G-series (1500#/2500#) additional flange rows (populate compact_flange and hub_connector):
   compact_flange — describe the Norsok L-005 WN Compact Flange used for layout-constrained installations. Include the Norsok L-005 reference and a short note that it is for layout constraint.
@@ -823,7 +848,11 @@ For 900#/1500# (E/F RTJ classes), drop the "(Note 5)" suffix; use
 F-series (1500#): MOC = ASTM A 694 F60, Standard = "ASME B 16.48",
   Standard_large = "Spacer and blind as per ASME B 16.48" (split at ≤14" / ≥16").
 
-G/J/K-series (2500#/5000#/10000# — API 6A classes): *** NO ASME B16.48 ***
+G-series (2500#): follows ASME B16.48 like all other ASME RTJ classes.
+  Use the same rules as E/F-series: Standard = "ASME B 16.48",
+  Standard_large = "Spacer and blind as per ASME B 16.48" (split at ≤14" / ≥16").
+  MOC = same as flange MOC (ASTM A 105N for CS G-series, etc.).
+J/K-series (5000#/10000# — API 6A classes): *** NO ASME B16.48 ***
   Standard       = "API 6A"
   Standard_large = "Manufacturer's Std per API 6A"
   MOC = same as flange MOC for the class material.
@@ -851,9 +880,9 @@ GASKETS:
     SDSS: ASME B 16.20, 4.5mm, DSS UNS S32750 Spiral Wound with Flexible Graphite (F.G.) filler
     GALV: 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
     CuNi (A30): 3mm thick flat ring of neoprene/ EPDM rubber as ASME B 16.21
-    Copper (A40): ASME B 16.21, Full face gasket, 2mm, CNAF
-      (CNAF = Compressed Non-Asbestos Fiber. Use this exact gasket string for A40;
-       do NOT use the CuNi neoprene rule — A40 has its own spec per Excel.)
+    Copper (A31): ASME B 16.21, Full face gasket, 2mm, CNAF
+      (CNAF = Compressed Non-Asbestos Fiber. Use this exact gasket string for A31;
+       do NOT use the CuNi neoprene rule — A31 has its own spec per Excel.)
     GRE (A50/A52): "EPDM Rubber Full Face Gasket with SS insert Shore A Hardness 70 ± 5, #150 (e.g. Kroll & Ziller G-ST/PS)"
       (The A50/A52 Excel sheet lists TWO gaskets — the second is a "Flat Ring" variant of the same spec.
        The current model carries a single gasket field, so emit the Full Face one. A follow-up model
@@ -875,7 +904,10 @@ OFFICIAL VDS format:    [Type] + [Bore/Design] + [Seat] + [SPEC] + [EndConn]
                                 T=Triple-Offset (BF) | Y=Screw-and-Yoke (Gate/Globe) |
                                 I=Straight-Inline (Needle) | A=Angle (Needle)
   Seat     (1 char):   M=Metal | P=PEEK | T=PTFE
-  SPEC:                exact piping class code (A1, A1LN, F20N, G25N, T90C, etc.)
+  SPEC:                exact piping class code from the request — NEVER substitute
+                       a different variant. T80B → T80B, T90C → T90C, T80A → T80A.
+                       Example for T80B: BLFPT80BJT, DBFPT80BJT, NEIPT80BJT, CHPMT80BJT
+                       Example for T90C: BLFPT90CJT, DBFPT90CJT, NEIPT90CJT, CHPMT90CJT
   EndConn:             R=RF | J=RTJ | F=FF | H=Hub | JT=RTJ with NPT female (inst.)
 
 GOTCHA — letter T has two meanings:
@@ -901,7 +933,7 @@ EndConn (last char/s — must match piping rating face):
   150#/300#/600#   → R (RF)  — standard steel classes
   900#/1500#/2500# → J (RTJ)
   CuNi (A30)       → F (FF)  — Flat Face face-type, per EEMUA 234
-  Copper (A40)     → F (FF)  — Flat Face, per ASME B 16.24
+  Copper (A31)     → F (FF)  — Flat Face, per ASME B 16.24
   GRE (A50/51/52)  → F (FF)  — Flat Face, manufacturer std
   CPVC (A60)       → F (FF)  — Flat Face, ASTM F 441 socket/flange
   Tubing (T80/T90) → F or JT (per inst. isolation)
@@ -911,7 +943,7 @@ valves.rating field MUST include face-type:
   "150#, RF" / "300#, RF" / "600#, RF"
   "900#, RTJ" / "1500#, RTJ" / "2500#, RTJ"
   CuNi (A30):    "150#, FF"  (actually EEMUA 20 bar but use 150# convention)
-  Copper (A40):  "150#, FF"
+  Copper (A31):  "150#, FF"
   GRE (A50-52):  "150#, FF"
   CPVC (A60):    "150#, FF"
   Tubing: "10000# (69 Mpa)" or as specified
@@ -946,6 +978,27 @@ string ("") means the valve type is not applicable at that size / class /
 service. The rules below are the project default — class-specific
 overrides in "Special valve rules" further down take precedence.
 
+Source priority for valves:
+  1. If the retrieved PMS / VDS context contains a valve table row for the
+     exact piping class, COPY that row's VDS codes and note references exactly.
+     Do not replace them with a generic seat/rating rule.
+  2. If no exact row is retrieved, infer from the closest same rating +
+     same material-family project class before using generic API/ASME rules.
+  3. Use web_search when the exact class row or VDS prefix is uncertain; search
+     for the exact class plus "VDS", "valve material specification", and the
+     likely code prefix. Use API 6D/API 600/API 594/API 609 search results only
+     to verify design suitability, not to invent project VDS codes.
+
+Before final JSON, perform a valve self-check:
+  • Every emitted VDS code must parse as Type + Bore/Design + Seat + EXACT
+    piping class + EndConn.
+  • The SPEC part must be exactly "{piping_class}" in every code. Never leak a
+    nearby class into the valve code.
+  • For RF ratings, EndConn is R; for RTJ ratings, EndConn is J (or JT for
+    instrument DBB); for FF families, EndConn is F.
+  • Keep blank spans blank. Do not use a fallback string to fill sizes where
+    the project sheet has no valve code.
+
 1. BALL (BL) — primary on/off valve
    Governing std: ASME B16.34 (P-T), API 6D / ISO 17292 (≤24" ≤600#),
                   API 6D (>600#); NACE MR-01-75 in sour service.
@@ -953,8 +1006,14 @@ overrides in "Special valve rules" further down take precedence.
    Bore selection by size (boundary at 2"):
      0.5"-2"   → Reduced bore only      (BLRT/BLRP/BLRM)
      2.5"-24"  → Reduced AND Full bore  ("BLRT…, BLFT…" comma-joined)
+   CRITICAL — large bore by_size rule: at ≥ 2.5" ALWAYS emit both Reduced
+     and Full bore together in a SINGLE comma-joined entry. NEVER emit only
+     the full-bore code (BLFP/BLFT/BLFM) alone in any by_size entry. The
+     pair must appear in one entry: e.g. size_inch="3", code="BLRPD1R, BLFPD1R".
    Seat selection by class rating:
-     150#-600#  → PTFE (T)              codes BLRT / BLFT
+     150#-300#  → PTFE (T)              codes BLRT / BLFT
+     600#       → PEEK (P)              codes BLRP / BLFP unless an exact
+                  retrieved project row says otherwise
      900#-1500# → PEEK (P)              codes BLRP / BLFP
      2500#      → PEEK + Metal (P + M)  codes BLRP, BLFP, BLFM, BLRM
    Full-bore mandatory for: piggable lines, PSV inlet/outlet, sample lines.
@@ -1021,9 +1080,18 @@ overrides in "Special valve rules" further down take precedence.
      4"-24"    → Swing AND Dual-plate       ("CHSM…, CHDM…" comma-joined)
                  Swing = default for general service
                  Dual-plate = where short face-to-face needed
+   CRITICAL — large-bore by_size rule: at ≥ 4" ALWAYS emit both CHSM and
+     CHDM together in a SINGLE comma-joined entry (for non-NACE classes).
+     NEVER emit only CHSM alone in any by_size entry for non-NACE classes.
    ### NACE / sour-service exception ###
-   For ANY class with N or LN suffix (A1N, B1N, D1N, E1N, F1N, F2LN,
-   G1N, G2LN, G10N, G20N, G25N, etc.) at sizes ≥ 4":
+   Applies ONLY to N-suffix NACE variants of the 1/10/20/25-series:
+     (A1N, B1N, D1N, E1N, F1N, G1N, A10N, B10N, D10N, E10N, F10N, G10N,
+      A20N, D20N, E20N, F20N, G20N, A25N, D25N, E25N, F25N, G25N, etc.)
+   Does NOT apply to standalone 2-series NACE classes (A2N, B2N, D2N, E2N,
+     F2N, G2N, A2LN, B2LN, D2LN, E2LN, F2LN, G2LN) — these are base NACE
+     classes in their own right. For all 2-series classes use the general
+     rule: Swing AND Dual-plate comma-joined at ≥ 4".
+   For qualifying N-suffix variant classes at sizes ≥ 4":
      → emit Swing ONLY (e.g. "CHSMA1NR")
      → DROP Dual-plate (CHDM*)
    Reason: dual-plate hinge-pin fatigue + sulfide deposit accumulation
@@ -1109,6 +1177,10 @@ overrides in "Special valve rules" further down take precedence.
 
    Class limits: Wafer common 150#-300#; Triple-offset OK to 600#+;
                  ≥ 900# only triple-offset, and verify against API 609.
+   Seat selection:
+     150#-300# utility/water → Wafer PTFE (BFWT) may appear with Triple-Offset
+     600# and higher RF/RTJ project rows → prefer Triple-Offset PEEK (BFTP)
+       unless exact retrieved project context says a different BF prefix applies.
 
 6. DBB — Double Block & Bleed (positive isolation)
    Governing std: API 6D §3, ISO 14313, operator overlays (Shell DEP,
@@ -1216,17 +1288,17 @@ Pipe Code (exact string per spec sheet row "Code"):
     B25, B25N, D25, D25N, E25, E25N, F25, F25N:               "ASME B 36.19M / B 36.10M"
   G20, G20N, G25, G25N, G2N (2500# duplex/SDSS variants with welded pipe only): "ASME B 36.10M"
   CuNi (A30):                                                 "EEMUA 234 20 BAR"
-  Copper (A40):                                               "ASTM B42 (Regular)"
+  Copper (A31):                                               "ASTM B42 (Regular)"
   GRE A50 / A52:                                              "Manufacturer's Std."
   GRE A51:                                                    "Manufacturer's Std (BONSTRAND Series 50000C)"
   CPVC (A60):                                                 "ASTM F 441"
-  Tubing (T80A/B/C, T90A/B/C):                                "ASTM A 269"
+  Tubing (T80A/T80B/T80C, T90A/T90B/T90C):                    "ASTM A 269"  ← same for all 6 variants
 Mill Tolerance: {MILL_TOLERANCE_PERCENT}% (standard) — {MILL_TOLERANCE_PERCENT / 100}
 Branch Chart:
   CS/LTCS/SS/DSS/SDSS (all numbered/N/L/LN variants): Ref. APPENDIX-1, Chart 1
   GALV (A3/A4/B4/D4/A5):                              Ref. APPENDIX-1, Chart 2
   CuNi (A30):                                         Ref. APPENDIX-1, Chart 3
-  Copper (A40):                                       Ref. APPENDIX-1, Chart 3  (same as CuNi)
+  Copper (A31):                                       Ref. APPENDIX-1, Chart 3  (same as CuNi)
   GRE (A50/A51/A52), Epoxy-lined CS (A6):             Ref. APPENDIX-1, Chart 4
   CPVC (A60):                                         Ref. APPENDIX-1, Chart 4  (manufacturer sockets)
   Tubing (T80/T90):                                   "" (no branch chart — compression fittings only)
@@ -1296,7 +1368,7 @@ IMPORTANT:
           "mold_tee_standard": "", "red_saddle_standard": "", "adaptor_standard": ""}}
     ],
     // Optional fittings fields (auto-hidden row when ALL sizes empty):
-    //   Copper A40  → populate coupling_standard / union_standard / sockolet_standard /
+    //   Copper A31  → populate coupling_standard / union_standard / sockolet_standard /
     //                 nipple_standard / swage_standard with MOC split values.
     //   CuNi A30    → similar pattern (EEMUA 234 values).
     //   GRE A50/A52 → populate mold_tee_standard / red_saddle_standard / adaptor_standard.
@@ -1358,9 +1430,11 @@ CRITICAL:
 
 {ref_section}
 === WEB SEARCH STRATEGY (if web_search tool is available) ===
-Use web_search to verify exact standard values you are uncertain about. Targeted queries only:
+  Use web_search to verify exact standard values you are uncertain about. Targeted queries only:
   • P-T table (custom class): "ASME B16.5 Table 2-1.1 {rating} bar pressure temperature group 1.1"
     or for API 6A: "API 6A {rating} psi working pressure class P rating barg"
+  • Valve VDS exact project row: "40801-SPE-80000-PP-SP-0002 {piping_class} valve VDS"
+    or "{piping_class} BLRP BLFP GAYM GLYM CHPM CHSM CHDM BFTP valve code"
   • Material allowable stress: "ASME B31.3 Appendix A {material} allowable stress table"
   • Fitting or flange standard: "ASME B16.9 butt weld fittings {rating} {material}"
   Search at most 2 times per generation. If your training knowledge is confident, skip the search.
@@ -1586,7 +1660,7 @@ def _derive_class_code_fallback(rating: str, material: str, ca: str) -> str:
         'SS316L': '10', 'SS316': '9', 'SS': '10',
         'LTCS': '1L', 'CS': '1',
         'DSS': '20', 'SDSS': '25',
-        'CUNI': '30', 'COPPER': '40', 'GRE': '50', 'CPVC': '60', 'TITANIUM': '70',
+        'CUNI': '30', 'COPPER': '31', 'GRE': '50', 'CPVC': '60', 'TITANIUM': '70',
     }
     series = RATING_SERIES.get(rating, rating.replace('#', '').replace(' ', ''))
     mat_up = material.upper()

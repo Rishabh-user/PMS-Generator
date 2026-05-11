@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-sonnet-4-6"
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY")
     rag_enabled: bool = True
@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # Entries live in the L1 dict for the process lifetime and in the L2
     # PostgreSQL table forever. Regenerate-pms overwrites; the Admin UI
     # trash button or /api/clear-cache is the only way to remove entries.
+    # Master PMS cache switch. When false, generation bypasses L1 + L2 reads
+    # and skips all cache writes, so /generate-pms behaves like fresh AI
+    # generation without touching existing DB rows. Toggle via
+    # PMS_CACHE_ENABLED in .env or POST /api/cache/enabled at runtime.
+    pms_cache_enabled: bool = True
 
     database_url: str = ""  # PostgreSQL DSN, e.g. postgresql://user:pass@localhost:5432/pms_generator
 

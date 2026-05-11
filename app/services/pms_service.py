@@ -22,7 +22,6 @@ from app.services.ai_service import generate_pms_with_ai, generate_class_code_wi
 from app.services.rag_service import retrieve_context
 from app.services.branch_chart_service import get_charts_for_class
 from app.services.excel_generator import generate_pms_excel_bytes
-from app.services.tubing_service import build_tubing_pms, is_tubing_class
 from app.services import data_service
 from app.services import db_service
 from app.services import valvesheet_sync_service
@@ -212,7 +211,7 @@ def _build_pattern_guidance(
     target_family = data_service.material_family(req.material)
     pressure_system = (
         "API 6A high-pressure"
-        if normalized_rating in {"2500#", "5000#", "10000#"}
+        if normalized_rating in {"5000#", "10000#"}
         else "ASME B16.5 / B31.3"
     )
     target_traits: list[str] = []
@@ -277,7 +276,7 @@ def _apply_hydrotest(pms: PMSResponse) -> PMSResponse:
     non_zero = [p for p in pressures if (p or 0) > 0]
     if non_zero:
         pms.hydrotest_pressure = str(round(non_zero[0] * HYDROTEST_FACTOR, 2))
-    return pms
+    return _enforce_pms_pipe_moc_splits(pms)
 
 
 def _cache_key(req: PMSRequest) -> str:
@@ -462,6 +461,62 @@ def _normalize_pt_table(pt_data: dict) -> dict:
         "pressures": deduped_presses,
         "temp_labels": labels,
     }
+
+
+def _as_float_size(size: str) -> float | None:
+    try:
+        return float(str(size).replace('"', '').strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _enforce_pipe_moc_splits(piping_class: str, ai_data: dict) -> None:
+    """Apply deterministic project MOC splits that the model often compresses.
+
+    The class sheets for CS B/D/E 1-series use three pipe MOC bands: standard
+    CS seamless, an LTCS seamless transition band, then welded A671. The LLM
+    commonly collapses the middle A333 band into the neighbouring rows because
+    the pipe type still reads as seamless. Keep this as data-shape correction,
+    not valve/fitting inference.
+    """
+    cls = (piping_class or "").upper().strip()
+    if cls not in {"B1", "B1N", "D1", "D1N", "E1", "E1N"}:
+        return
+
+    rows = ai_data.get("pipe_data")
+    if not isinstance(rows, list):
+        return
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        size = _as_float_size(row.get("size_inch", ""))
+        if size is None:
+            continue
+        if size <= 12:
+            row["material_spec"] = "ASTM A 106 Gr. B"
+        elif size <= 16:
+            row["material_spec"] = "ASTM A 333 Gr.6"
+        else:
+            row["material_spec"] = "ASTM A 671 - CC60 Class 22"
+
+
+def _enforce_pms_pipe_moc_splits(pms: PMSResponse) -> PMSResponse:
+    cls = (pms.piping_class or "").upper().strip()
+    if cls not in {"B1", "B1N", "D1", "D1N", "E1", "E1N"}:
+        return pms
+
+    for row in pms.pipe_data or []:
+        size = _as_float_size(row.size_inch)
+        if size is None:
+            continue
+        if size <= 12:
+            row.material_spec = "ASTM A 106 Gr. B"
+        elif size <= 16:
+            row.material_spec = "ASTM A 333 Gr.6"
+        else:
+            row.material_spec = "ASTM A 671 - CC60 Class 22"
+    return pms
 
 
 def _build_pms_response(entry: dict, ai_data: dict, req: PMSRequest, piping_class_override: str | None = None) -> PMSResponse:
@@ -814,6 +869,7 @@ async def _generate_from_ai(req: PMSRequest) -> PMSResponse:
             material_for_correction, design_pressure, design_temp,
             req.corrosion_allowance,
         )
+        _enforce_pipe_moc_splits(effective_piping_class, ai_data)
 
     # Merge P-T from JSON + AI-generated data
     pms = _build_pms_response(entry, ai_data, req, piping_class_override=effective_piping_class)
@@ -984,24 +1040,7 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
       * POST /api/clear-cache (nukes both L1 and L2)
       * Manual SQL DELETE on the pms_cache table
     """
-    # ── Tubing classes (T80A/B/C, T90A/B/C) bypass the AI entirely ──
-    # Tubing specs are fully deterministic per the project sheet workbook
-    # and don't have any flexibility the AI could add value to. We build
-    # the response from app/data/tubing_specs.json instead. Still cache
-    # it so subsequent requests hit L1 directly.
     key = _cache_key(req)
-    if is_tubing_class(req.piping_class):
-        if key in _pms_cache:
-            logger.info("L1 memory cache HIT for %s (tubing)", req.piping_class)
-            return _pms_cache[key]
-        logger.info("Building %s deterministically from tubing_specs.json", req.piping_class)
-        pms = build_tubing_pms(req)
-        _pms_cache[key] = pms
-        # Note: tubing classes are NOT persisted to the L2 Postgres cache
-        # because the JSON file IS the source of truth — re-deploys with
-        # an updated spec sheet should pick up the new values immediately,
-        # not be shadowed by stale DB rows.
-        return pms
 
     # L1: In-memory cache
     if key in _pms_cache:
@@ -1066,19 +1105,8 @@ async def generate_pms(req: PMSRequest) -> PMSResponse:
 
 
 async def regenerate_pms(req: PMSRequest) -> PMSResponse:
-    """Force fresh AI generation, bypassing all caches. Overwrites cache.
-
-    Tubing classes (T80A/B/C, T90A/B/C) are still deterministic — Regenerate
-    just refreshes the L1 entry from tubing_specs.json (in case the file
-    was edited at runtime).
-    """
+    """Force fresh AI + RAG generation, bypassing all caches. Overwrites cache."""
     key = _cache_key(req)
-    if is_tubing_class(req.piping_class):
-        logger.info("Regenerating %s deterministically (tubing — refresh from JSON)", req.piping_class)
-        pms = build_tubing_pms(req)
-        _pms_cache[key] = pms
-        return pms
-
     logger.info("Regenerating PMS for %s via AI (forced, bypassing cache)", req.piping_class)
     pms = await _generate_from_ai(req)
     _apply_hydrotest(pms)

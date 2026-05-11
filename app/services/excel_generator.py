@@ -454,6 +454,144 @@ def _lvcf_by_size(by_size, pipe_sizes: list) -> list:
     return out
 
 
+def _dedupe_carried_valve_codes(values: list) -> list:
+    """Normalize valve-code lists without dropping distinct VDS codes.
+
+    A cell can legitimately contain multiple comma-separated VDS codes for the
+    same valve type and size range, e.g. "CHSMD2NR, CHDMD2NR". Earlier logic
+    compared each range with the previous range and removed overlapping codes;
+    that caused valid alternatives such as BLFP/CHDM variants to disappear from
+    the generated PMS. Keep all distinct codes in each range, and only remove
+    accidental duplicates inside the same comma-separated value.
+    """
+    def _split_codes(value) -> list[str]:
+        return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+    cleaned = []
+    for raw in values:
+        codes = _split_codes(raw)
+        if not codes:
+            cleaned.append(raw)
+            continue
+
+        seen = set()
+        distinct_codes = []
+        for code in codes:
+            if code in seen:
+                continue
+            seen.add(code)
+            distinct_codes.append(code)
+        cleaned.append(", ".join(distinct_codes))
+    return cleaned
+
+
+def _valve_variant_group_key(code: str) -> str:
+    """Return the variant group used to restore partial per-size valve cells.
+
+    The AI sometimes emits only one member of an equivalent project-sheet
+    variant group in *_by_size while the class-level fallback still has the
+    complete comma-separated group. Example: the Check fallback contains
+    "CHSMD2NR, CHDMD2NR", but check_by_size only carries "CHSMD2NR".
+    """
+    token = str(code or "").strip().upper()
+    if len(token) < 4:
+        return token
+
+    valve_type = token[:2]
+    design_or_bore = token[2]
+
+    if valve_type in {"BL", "DB", "BF"}:
+        return valve_type
+    if valve_type == "CH":
+        if design_or_bore in {"S", "D"}:
+            return "CH-LARGE"
+        return f"CH-{design_or_bore}"
+    return token[:4]
+
+
+def _expand_partial_valve_variant_groups(values: list, fallback: str, by_size=None) -> list:
+    """Restore complete variant groups in sparse valve rows.
+
+    Builds a combined code inventory from the class-level fallback AND every
+    by_size entry so that companions that appear only in by_size (not in the
+    class-level fallback string) are still included. This resolves the common
+    AI failure where the class-level fallback holds only the primary code (e.g.
+    "CHPMD2NR") while by_size carries further variants at other size boundaries,
+    causing the old `len < 2` early-return to skip all expansion.
+
+    Conservative guard — groups that are already complete in at least one cell
+    are not force-expanded in other cells. Example: if large bore already has
+    "BLRP, BLFP" correctly the AI emitted the full group there, so small-bore
+    cells that intentionally carry "BLRP" only are left untouched.
+    """
+    # 1. Build comprehensive inventory: fallback codes first, then all by_size codes
+    ordered_inventory: list[str] = []
+    upper_seen: set[str] = set()
+
+    def _register(code: str) -> None:
+        key = code.upper()
+        if key not in upper_seen:
+            upper_seen.add(key)
+            ordered_inventory.append(code)
+
+    for code in [p.strip() for p in str(fallback or "").split(",") if p.strip()]:
+        _register(code)
+
+    for entry in (by_size or []):
+        entry_code = getattr(entry, "code", None)
+        if entry_code is None and isinstance(entry, str):
+            entry_code = entry
+        for code in [p.strip() for p in str(entry_code or "").split(",") if p.strip()]:
+            _register(code)
+
+    if len(ordered_inventory) < 2:
+        return values
+
+    # 2. Group codes by variant key
+    groups: dict[str, list[str]] = {}
+    for code in ordered_inventory:
+        groups.setdefault(_valve_variant_group_key(code), []).append(code)
+
+    inventory_lookup = {code.upper(): code for code in ordered_inventory}
+
+    # 3. Find groups that are already complete in at least one cell.
+    #    For those, trust the AI's per-size split and leave other cells alone.
+    complete_groups: set[str] = set()
+    for raw in values:
+        cell_upper = {p.strip().upper() for p in str(raw or "").split(",") if p.strip()}
+        for gk, members in groups.items():
+            if all(m.upper() in cell_upper for m in members):
+                complete_groups.add(gk)
+
+    # 4. Expand each cell
+    expanded_values = []
+    for raw in values:
+        cell_codes = [p.strip() for p in str(raw or "").split(",") if p.strip()]
+        if not cell_codes:
+            expanded_values.append(raw)
+            continue
+
+        expanded: list[str] = []
+        seen: set[str] = set()
+        for code in cell_codes:
+            inv_code = inventory_lookup.get(code.upper())
+            if inv_code:
+                gk = _valve_variant_group_key(inv_code)
+                # Group already has a complete cell somewhere → preserve split
+                candidates = groups.get(gk) if gk not in complete_groups else [inv_code]
+            else:
+                candidates = [code]
+            for candidate in (candidates or [code]):
+                key = candidate.upper()
+                if key in seen:
+                    continue
+                seen.add(key)
+                expanded.append(candidate)
+
+        expanded_values.append(", ".join(expanded))
+    return expanded_values
+
+
 def _write_merged_data_row(ws, row: int, label: str, values: list, col_start: int = 2,
                            total_cols: int = 20, font=DATA_FONT, fill=DATA_FILL):
     """Write a data row that auto-merges consecutive cells with identical values.
@@ -1010,9 +1148,30 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
 
     # Compact Flange / Hub Connector values only apply from the 3" size column onward.
     offset_col = _size_column_index(pipe_sizes, "3", pipe_col_start=pipe_col_start)
+    # Face split boundary: small bore (≤1.5") vs large bore (≥2") — used when
+    # face_type_small is populated (E-series: "1500#, RTJ" small / "900#, RTJ" large).
+    face_small = (pms.flange.face_type_small or "").strip()
+    face_split_idx = None
+    if face_small:
+        for _i, _s in enumerate(pipe_sizes):
+            try:
+                if float(str(_s).strip().rstrip('"')) > 1.5:
+                    face_split_idx = _i
+                    break
+            except (ValueError, TypeError):
+                pass
+
     for i, (label, value, offset) in enumerate(flange_rows):
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-        if offset and value:
+        if label == "Face" and face_split_idx is not None:
+            # Render Face row with a size-based split under NPS columns
+            face_values = [
+                face_small if idx < face_split_idx else value
+                for idx, _ in enumerate(pipe_sizes)
+            ]
+            _write_merged_data_row(ws, row, label, face_values,
+                                   col_start=pipe_col_start, total_cols=total_cols, fill=fill)
+        elif offset and value:
             _write_label_offset_value_row(ws, row, label, value,
                                           value_start_col=offset_col,
                                           col_end=total_cols, fill=fill)
@@ -1085,6 +1244,8 @@ def generate_pms_excel(pms: PMSResponse, output_path: Path) -> Path:
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
             values = _lvcf_by_size(by_size, pipe_sizes)
+            values = _expand_partial_valve_variant_groups(values, fallback, by_size)
+            values = _dedupe_carried_valve_codes(values)
             _write_merged_data_row(ws, row, label, values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         else:
@@ -1322,9 +1483,27 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         flange_items.append(("Hub Connector", pms.flange.hub_connector, True))
 
     offset_col = _size_column_index(pipe_sizes, "3", pipe_col_start=pipe_col_start)
+    _face_small_b = (pms.flange.face_type_small or "").strip()
+    _face_split_idx_b = None
+    if _face_small_b:
+        for _bi, _bs in enumerate(pipe_sizes):
+            try:
+                if float(str(_bs).strip().rstrip('"')) > 1.5:
+                    _face_split_idx_b = _bi
+                    break
+            except (ValueError, TypeError):
+                pass
+
     for i, (lbl, val, offset) in enumerate(flange_items):
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
-        if offset and val:
+        if lbl == "Face" and _face_split_idx_b is not None:
+            _face_vals = [
+                _face_small_b if idx < _face_split_idx_b else val
+                for idx, _ in enumerate(pipe_sizes)
+            ]
+            _write_merged_data_row(ws, row, lbl, _face_vals,
+                                   col_start=pipe_col_start, total_cols=total_cols, fill=fill)
+        elif offset and val:
             _write_label_offset_value_row(ws, row, lbl, val,
                                           value_start_col=offset_col,
                                           col_end=total_cols, fill=fill)
@@ -1391,6 +1570,8 @@ def generate_pms_excel_bytes(pms: PMSResponse) -> bytes:
         fill = ALT_FILL if i % 2 == 0 else DATA_FILL
         if by_size:
             values = _lvcf_by_size(by_size, pipe_sizes)
+            values = _expand_partial_valve_variant_groups(values, fallback, by_size)
+            values = _dedupe_carried_valve_codes(values)
             _write_merged_data_row(ws, row, lbl, values, col_start=pipe_col_start,
                                    total_cols=total_cols, fill=fill)
         else:

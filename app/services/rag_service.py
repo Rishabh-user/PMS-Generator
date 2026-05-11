@@ -157,7 +157,7 @@ _RATING_TERMS = {
     "600#":   "Class 600 600 pound 600# flange pressure-temperature ASME B16.5",
     "900#":   "Class 900 900 pound 900# RTJ ring type joint flange ASME B16.5",
     "1500#":  "Class 1500 1500 pound 1500# RTJ ring type joint flange ASME B16.5",
-    "2500#":  "Class 2500 2500 pound 2500# RTJ ring type joint flange API 6A wellhead",
+    "2500#":  "Class 2500 2500 pound 2500# RTJ ring type joint flange ASME B16.5",
     "5000#":  "Class 5000 5000 pound 5000 psi API 6A wellhead Christmas tree equipment working pressure",
     "10000#": "Class 10000 10000 pound 10000 psi API 6A wellhead high pressure working pressure",
 }
@@ -176,13 +176,45 @@ _MATERIAL_TERMS = {
 }
 
 _COMMON_STANDARDS = (
+    "Project PMS class sheet valve table "
+    "Project Valve Material Specification VMS VDS valve code "
+    "40801-SPE-80000-PP-SP-0002 valve data sheet "
     "ASME B16.5 flange dimensions pressure rating "
     "ASME B36.10M B36.19M pipe wall thickness schedule "
     "ASME B16.9 butt weld fittings elbow tee reducer "
     "ASME B16.20 spiral wound gasket flexible graphite "
     "ASME B16.48 spectacle blind spacer "
+    "ASME B16.34 valves API 6D ball valve API 600 gate valve "
+    "API 602 globe valve API 594 check valve API 609 butterfly valve "
     "ASME B31.3 process piping design code"
 )
+
+
+def _valve_query_terms(piping_class: str, rating: str) -> str:
+    """Add exact VDS-code terms so RAG keeps valve rows near the top.
+
+    The standard query is intentionally broad across pipe, flange, fittings,
+    and P-T data. Valve rows are compact and easy for BM25/rerank to miss, so
+    we add the exact class-bearing prefixes the project sheet is expected to
+    contain. This improves retrieval without hardcoding a completed valve row.
+    """
+    cls = (piping_class or "").strip().upper()
+    if not cls:
+        return ""
+
+    end = "J" if (rating or "").strip() in {"900#", "1500#", "2500#", "5000#", "10000#"} else "R"
+    if cls.startswith(("A30", "A40", "A50", "A51", "A52", "A60")):
+        end = "F"
+
+    generic = [
+        f"BLRT{cls}{end}", f"BLFT{cls}{end}",
+        f"BLRP{cls}{end}", f"BLFP{cls}{end}",
+        f"GAYM{cls}{end}", f"GLYM{cls}{end}",
+        f"CHPM{cls}{end}", f"CHSM{cls}{end}", f"CHDM{cls}{end}",
+        f"BFWT{cls}{end}", f"BFTP{cls}{end}", f"BFTT{cls}{end}",
+        f"DBRP{cls}{end}", f"DBRM{cls}{end}", f"DBRP{cls}{end}T",
+    ]
+    return " ".join(generic)
 
 
 def _build_query(
@@ -228,6 +260,7 @@ def _build_query(
         f"corrosion allowance {corrosion_allowance}",
         f"service {service}",
         svc_extras,
+        _valve_query_terms(piping_class, rating),
         _COMMON_STANDARDS,
     ]
     return " ".join(p for p in parts if p)

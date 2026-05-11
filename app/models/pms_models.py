@@ -97,7 +97,8 @@ class ExtraFittings(BaseModel):
 
 class FlangeData(BaseModel):
     material_spec: str = Field(default="", description="ASTM material specification")
-    face_type: str = Field(default="", description="Flange face type")
+    face_type: str = Field(default="", description="Flange face type (large-bore / all sizes when no small-bore variant)")
+    face_type_small: str = Field(default="", description="Small-bore face type override for ≤1.5\" sizes (E-series: '1500#, RTJ'). Leave empty when face is uniform across all sizes.")
     flange_type: str = Field(default="", description="Flange type and standard (WN Flange)")
     standard: str = Field(default="", description="Flange standard")
     compact_flange: str = Field(default="", description="Compact Flange description (F/G-series 1500#/2500#)")
